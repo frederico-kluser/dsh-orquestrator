@@ -111,5 +111,136 @@ if (phase === 'cancel') {
   await finish()
 }
 
+
+/** Open a picker (by the text of its trigger), then choose the entry whose text matches. */
+async function pick(triggerText, entryPattern) {
+  await dialog().getByRole('button', { name: triggerText }).first().click()
+  const entry = page.getByRole('menuitem', { name: entryPattern }).or(page.getByRole('option', { name: entryPattern })).or(page.locator('[role=menu]').getByText(entryPattern)).first()
+  await entry.waitFor({ state: 'visible', timeout: 8_000 })
+  await entry.click()
+}
+
+const TASK_CONFIRM = 'Use the subagent tool exactly once to do this work: in the current directory create wordcount.js (CommonJS) exporting wordCount(text) that returns how many words the text has, where a word is a run of non-whitespace characters, hyphenated words count as one, and an empty or whitespace-only string returns 0. Also create wordcount.test.js with node:test cases covering those rules. Run the tests with `node --test`. When the subagent tool returns, reply with its result verbatim and nothing else.'
+
+if (phase === 'confirm') {
+  await open()
+  await typeTask(TASK_CONFIRM)
+  await page.keyboard.press('Enter')
+  await dialog().waitFor({ state: 'visible', timeout: 15_000 })
+  check('modal appears for the delegation task', true)
+
+  const switches = dialog().getByRole('switch')
+  await switches.nth(0).click()
+  check('subagent switch on reveals the model picker', await dialog().getByText('Model for subagents').isVisible())
+  check('confirm is disabled until a subagent model is chosen', await dialog().getByRole('button', { name: 'Send with these options' }).isDisabled())
+  await pick(/Choose a model/, /Gemini 3\.8 Flash/i)
+  check('subagent model chosen', await dialog().getByRole('button', { name: /Gemini 3\.8 Flash/i }).first().isVisible())
+
+  await switches.nth(1).click()
+  check('reviewer switch reveals the four-step description and its picker', (await dialog().getByText('Fixes only what is actually broken').isVisible()) && (await dialog().getByText('Model for the reviewer').isVisible()))
+  check('reviewer defaults to "same as the subagent"', await dialog().getByRole('button', { name: /Same model as the subagent/ }).isVisible())
+  await pick(/Same model as the subagent/, /Haiku 4\.5/i)
+  await page.waitForTimeout(400)
+  await shot('01-modal-filled')
+  check('confirm is enabled', await dialog().getByRole('button', { name: 'Send with these options' }).isEnabled())
+
+  await dialog().getByRole('button', { name: 'Send with these options' }).click()
+  await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('modal closes after confirm', true), () => check('modal closes after confirm', false))
+  const posts = wire.filter((item) => item.method === 'POST')
+  const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
+  check('POST stored the chosen routes', saved !== null && saved.subagentModel?.model === 'google/gemini-3.8-flash' && saved.reviewer?.enabled === true && /haiku/i.test(saved.reviewer?.model?.model ?? ''), JSON.stringify(saved))
+  check('host accepted the config (200)', posts.at(-1)?.status === 200, posts.at(-1)?.status)
+  await shot('02-running')
+
+  // The real thing: the main agent delegates, the worker runs on Gemini, the reviewer on Haiku,
+  // and the tool result the main agent receives is the reviewer's report.
+  const delivered = await page.getByText('Reviewed delivery', { exact: false }).first().waitFor({ state: 'visible', timeout: 20 * 60_000 }).then(() => true, () => false)
+  check('the main agent received a "Reviewed delivery" result', delivered)
+  await page.waitForTimeout(1500)
+  await shot('03-delivered')
+  const transcript = await page.locator('body').innerText()
+  check('the transcript carries a reviewer verdict', /verdict:\s*(APPROVED|APPROVED_WITH_FIXES|NOT_RESOLVED)/i.test(transcript))
+  check('no page errors', pageErrors.length === 0, pageErrors.join(' | '))
+  await finish()
+}
+
+if (phase === 'light') {
+  await open()
+  await typeTask('Reply with exactly the word: light')
+  await page.keyboard.press('Enter')
+  await dialog().waitFor({ state: 'visible', timeout: 15_000 })
+  await shot('01-modal-light')
+  check('modal renders in the light theme', await dialog().isVisible())
+
+  // Focus stays inside the dialog while tabbing (a modal must trap focus).
+  let escaped = 0
+  for (let index = 0; index < 14; index += 1) {
+    await page.keyboard.press('Tab')
+    const inside = await page.evaluate(() => document.activeElement !== null && document.activeElement.closest('[role=dialog]') !== null)
+    if (!inside) escaped += 1
+  }
+  check('Tab never leaves the dialog (focus trap)', escaped === 0, `${String(escaped)} of 14 tabs escaped`)
+
+  // Escape belongs to an open menu first; the dialog survives and closes on the next Escape.
+  const switches = dialog().getByRole('switch')
+  await switches.nth(0).click()
+  await dialog().getByRole('button', { name: /Choose a model/ }).first().click()
+  await page.getByRole('menuitem').or(page.getByRole('option')).or(page.locator('[role=menu] *')).first().waitFor({ state: 'visible', timeout: 8_000 })
+  await shot('02-menu-open-light')
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(500)
+  check('Escape closes the open menu but keeps the dialog', await dialog().isVisible())
+  await page.keyboard.press('Escape')
+  await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('a second Escape closes the dialog', true), () => check('a second Escape closes the dialog', false))
+  check('no page errors', pageErrors.length === 0, pageErrors.join(' | '))
+  await finish()
+}
+
+if (phase === 'command') {
+  await open()
+  await newSession()
+  await typeTask('/orquestrar')
+  await page.waitForTimeout(800)
+  await shot('01-palette')
+  const listed = await page.getByText('Orchestrate subagents').first().isVisible().catch(() => false)
+  check('the /orquestrar command is offered by the slash palette', listed)
+  await page.keyboard.press('Enter')
+  const opened = await dialog().waitFor({ state: 'visible', timeout: 10_000 }).then(() => true, () => false)
+  check('the command opens the dialog in configure mode', opened && (await dialog().getByText('The options apply from the next task.').isVisible()))
+  await shot('02-configure')
+  if (opened) {
+    await dialog().getByRole('switch').nth(1).click()
+    await dialog().getByRole('checkbox').check()
+    await dialog().getByRole('button', { name: 'Save' }).click()
+    await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('Save closes the dialog', true), () => check('Save closes the dialog', false))
+    const posts = wire.filter((item) => item.method === 'POST')
+    const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
+    check('Save stored reviewer + "do not ask again"', saved?.reviewer?.enabled === true && saved?.remember === true, JSON.stringify(saved))
+    // With "do not ask again" on, the next task goes out without a modal.
+    await typeTask('Reply with exactly the word: quiet')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(4000)
+    check('the next task is sent without a modal', !(await dialog().isVisible().catch(() => false)))
+    await shot('03-quiet')
+  }
+  check('no page errors', pageErrors.length === 0, pageErrors.join(' | '))
+  await finish()
+}
+
+if (phase === 'debug') {
+  await open()
+  await typeTask('Reply with exactly the word: debug')
+  await page.keyboard.press('Enter')
+  await dialog().waitFor({ state: 'visible', timeout: 15_000 })
+  await dialog().getByRole('switch').nth(0).click()
+  await page.waitForTimeout(1500)
+  await shot('01-debug-after-switch')
+  console.log((await dialog().innerText()).replace(/\s+/g, ' ').slice(0, 600))
+  const buttons = await dialog().getByRole('button').evaluateAll((els) => els.map((el) => `${el.getAttribute('aria-label') ?? ''}|${(el.textContent ?? '').trim().slice(0, 40)}|disabled=${String(el.disabled)}`))
+  console.log(JSON.stringify(buttons))
+  await browser.close()
+  process.exit(0)
+}
+
 console.error(`unknown phase: ${phase}`)
 process.exit(2)

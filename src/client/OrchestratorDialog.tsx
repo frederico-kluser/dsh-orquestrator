@@ -14,13 +14,14 @@
  * @module dsh-orquestrator/client/OrchestratorDialog
  */
 
-import { useCallback, useId, useMemo, useRef, useState, type JSX } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type JSX } from 'react'
 import {
   Button, Checkbox, IconAgentPresetOutline16, IconShieldOutline16, Modal, Switch,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { buildConfig, routeKey, type ModelRoute } from '../shared.ts'
 import { modelName, type CatalogState } from './catalog.ts'
 import type { DialogRequest } from './dialogs.ts'
+import { installFocusTrap } from './focus-trap.ts'
 import type { OrchestratorKey } from './locales.ts'
 import { ModelPicker } from './ModelPicker.tsx'
 
@@ -66,6 +67,9 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
     menuOpen.current = open
     if (!open) menuClosedAt.current = Date.now()
   }, [])
+
+  // The DSH Modal does not contain Tab; keep keyboard focus inside while it is open.
+  useEffect(() => installFocusTrap(() => menuOpen.current), [])
 
   const mainRoute = catalog.current
   const mainName = mainRoute === null ? undefined : modelName(catalog.groups, mainRoute)

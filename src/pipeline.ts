@@ -19,7 +19,7 @@ import type {
 } from './host-services.ts'
 import type { DelegationTool, PluginConfig } from './config.ts'
 import type { ModelRoute, OrchestratorConfig } from './shared.ts'
-import { REVIEWER_PERSONA, buildReviewerPacket, parseVerdict, withHandoffContract, type Verdict } from './reviewer-protocol.ts'
+import { REVIEWER_PERSONA, buildReviewerPacket, normalizeReport, parseVerdict, withHandoffContract, type Verdict } from './reviewer-protocol.ts'
 
 /** The parsed model-facing arguments of a delegation call. */
 export interface DelegationArgs {
@@ -259,8 +259,12 @@ export async function orchestrate(deps: PipelineDeps, input: PipelineInput): Pro
     const text = `${bannerFor(false, worker.id, reviewerId, undefined, failure)}\n\n${workerReport}`
     return { kind: 'foreground', runId: worker.id, output: [{ type: 'text', text }] }
   }
-  const verdict = parseVerdict(reviewText)
-  const text = `${bannerFor(true, worker.id, reviewerId, verdict)}\n\n${reviewText}`
+  const normalized = normalizeReport(reviewText)
+  if (normalized.dropped > 0) {
+    deps.logger.info(`dsh-orquestrator: dropped ${String(normalized.dropped)} characters of preamble before the reviewer's verdict (run ${reviewerId ?? 'n/a'})`)
+  }
+  const verdict = parseVerdict(normalized.text)
+  const text = `${bannerFor(true, worker.id, reviewerId, verdict)}\n\n${normalized.text}`
   return { kind: 'foreground', runId: reviewerId ?? worker.id, output: [{ type: 'text', text }] }
 }
 

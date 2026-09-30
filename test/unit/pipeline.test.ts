@@ -163,6 +163,18 @@ describe('reviewed orchestration', () => {
     assert.equal(subagents.continuables.length, 0)
   })
 
+  it('delivers the report from the verdict line when the reviewer narrated its analysis first', async () => {
+    const preamble = '## D. Analysis\nLet me verify each criterion.\n\n'
+    const report = `**VERDICT: APPROVED**\nCRITERIA: c1 VERIFIED by node --test\nDELIVERABLE: `.padEnd(320, 'y')
+    const subagents = new FakeSubagents({ results: [textResult('worker report'), textResult(`${preamble}${report}`)] })
+    const value = await orchestrate(deps(subagents), { tool, args, parent: fakeAgent(), signal: signal(), config: reviewedConfig })
+    const text = value.kind === 'foreground' ? value.output[0]?.text ?? '' : ''
+    assert.match(text, /\[verdict: APPROVED\]/)
+    assert.equal(text.includes('Let me verify each criterion'), false)
+    assert.ok(text.includes('**VERDICT: APPROVED**'))
+    assert.ok(logs.some(line => /dropped \d+ characters of preamble/.test(line)))
+  })
+
   it('does not leak the worker model identity to the reviewer', async () => {
     const subagents = new FakeSubagents({ results: [textResult('report'), textResult('VERDICT: APPROVED\nok')] })
     await orchestrate(deps(subagents), { tool, args, parent: fakeAgent(), signal: signal(), config: reviewedConfig })

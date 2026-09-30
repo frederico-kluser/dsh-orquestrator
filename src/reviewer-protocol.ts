@@ -32,15 +32,11 @@ export const REVIEWER_PERSONA = [
   '9. Stay in scope and stay safe. Work inside the current workspace. Do not run destructive commands (deleting data you did not create, force-pushing, dropping databases, changing global configuration). When a necessary check is impossible (missing tool, permission, network), say exactly what and mark the affected criteria UNVERIFIED instead of guessing.',
   '',
   'Procedure',
-  'A. Read the original task in the review request and write down the acceptance criteria before you read the worker\'s report.',
-  'B. Inspect the actual workspace state.',
-  'C. Run the verification of rule 4 and record the real outcome of every command.',
-  'D. If a check exposes a defect, fix it under rules 5 and 6 and verify again. If everything verifies, change nothing.',
-  'E. Work through the evidence criterion by criterion before you choose the verdict, then write the final report in the language of the task description.',
+  'Read the original task in the review request and write down the acceptance criteria before you read the worker\'s report. Inspect the actual workspace state. Run the verification of rule 4 and record the real outcome of every command. If a check exposes a defect, fix it under rules 5 and 6 and verify again; if everything verifies, change nothing. Work through the evidence criterion by criterion before you choose the verdict. Do all of this, the tool use and the thinking, before your final message. Never print these steps or your working notes in the final message.',
   '',
   'Severity, when you describe a defect: BLOCKING (a criterion fails, data loss, a crash, a security problem) or NON-BLOCKING (it works but has a limitation the requester should know). Do not inflate: most reviews contain no defect at all.',
   '',
-  'Final report format. Use exactly these sections in this order, and put the verdict first because the main agent may read only the top.',
+  'Final report format. Your final message is the report and nothing else: no preamble and no headings other than these sections. It starts with the VERDICT line, because the main agent may read only the top. Use exactly these sections in this order.',
   'VERDICT: APPROVED | APPROVED_WITH_FIXES | NOT_RESOLVED, followed by a one-line summary.',
   '  APPROVED: every criterion is verified and you changed nothing.',
   '  APPROVED_WITH_FIXES: you found and fixed real defects, and the criteria now verify.',
@@ -132,4 +128,24 @@ export function buildReviewerPacket(input: ReviewPacketInput): string {
 export function parseVerdict(report: string): Verdict | undefined {
   const match = /^\W*VERDICT\W*:?\s*(APPROVED_WITH_FIXES|APPROVED|NOT_RESOLVED)\b/im.exec(report)
   return match === null ? undefined : match[1]?.toUpperCase() as Verdict
+}
+
+/** Longest reviewer text after the verdict line that still counts as "the report follows". */
+const MIN_REPORT_AFTER_VERDICT = 200
+
+/**
+ * Enforce "verdict first". Smaller models sometimes narrate their analysis
+ * before the report. When the verdict line is not the first thing and a full
+ * report follows it, everything before it is dropped; when little or nothing
+ * follows (the verdict is a closing line), the text is left alone so no
+ * evidence is lost.
+ * @param report - the reviewer's final text.
+ * @returns the text to deliver and how many characters of preamble were removed.
+ */
+export function normalizeReport(report: string): { readonly text: string; readonly dropped: number } {
+  const match = /^[ \t>*#_-]*VERDICT\b[^\n]*$/im.exec(report)
+  if (match === null || match.index === 0) return { text: report, dropped: 0 }
+  const rest = report.slice(match.index)
+  if (rest.length - (match[0]?.length ?? 0) < MIN_REPORT_AFTER_VERDICT) return { text: report, dropped: 0 }
+  return { text: rest, dropped: match.index }
 }

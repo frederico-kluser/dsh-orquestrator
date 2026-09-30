@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Unit and integration tests
+        # The DSH source contract suite is skipped here (it needs a DSH
+        # checkout); it runs on the validation machine with DSH_CHECKOUT set.
+        run: pnpm test
+
+      - name: Committed build artifacts match a fresh build
+        run: node scripts/check-lib.mjs

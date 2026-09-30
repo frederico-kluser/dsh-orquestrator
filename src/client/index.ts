@@ -103,8 +103,9 @@ export function apply(ctx: ClientContext): void {
     },
     loadCatalog(sessionId): Promise<CatalogState> {
       return loadCatalog({
-        modelDirectories: ctx.get('modelDirectories') as unknown as ModelDirectoriesLike | undefined,
-        remoteSession: (ctx as unknown as { remote?: { session?: RemoteSessionLike } }).remote?.session,
+        modelDirectories: () => ctx.get('modelDirectories') as unknown as ModelDirectoriesLike | undefined,
+        // `ctx.remote` would throw for a plugin that did not inject it; `get` does not.
+        remoteSession: () => (ctx.get('remote') as unknown as { session?: RemoteSessionLike } | undefined)?.session,
       }, sessionId)
     },
   }

@@ -23,42 +23,53 @@ export interface CatalogState {
 /** The initial, empty state. */
 export const LOADING_CATALOG: CatalogState = { status: 'loading', groups: [], current: null, error: null }
 
-/** The services the loader may use (each optional: the composition decides). */
-export interface CatalogServices {
-  readonly modelDirectories?: ModelDirectoriesLike | undefined
-  readonly remoteSession?: RemoteSessionLike | undefined
+/**
+ * Where the loader may look. Each source is a RESOLVER, evaluated inside the
+ * loader's own error handling: Cordis refuses to hand out a service the plugin
+ * did not `inject` (it throws on access), and that must degrade to "no such
+ * source", never crash the dialog.
+ */
+export interface CatalogSources {
+  readonly modelDirectories?: (() => ModelDirectoriesLike | undefined) | undefined
+  readonly remoteSession?: (() => RemoteSessionLike | undefined) | undefined
 }
 
 /**
  * Load the catalog for one session.
- * @param services - the model-directory service and/or the remote catalog call.
+ * @param sources - resolvers for the model-directory service and the remote catalog call.
  * @param sessionId - the session whose current route to report.
- * @returns a ready state, or an error state when no source could answer.
+ * @returns a ready state, or an error state when no source could answer. Never throws.
  */
-export async function loadCatalog(services: CatalogServices, sessionId: string): Promise<CatalogState> {
+export async function loadCatalog(sources: CatalogSources, sessionId: string): Promise<CatalogState> {
   let failure: string | null = null
-  if (services.modelDirectories !== undefined) {
-    try {
-      const state = await services.modelDirectories.directoryFor(sessionId).load()
+  const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+  try {
+    const directories = sources.modelDirectories?.()
+    if (directories !== undefined) {
+      const state = await directories.directoryFor(sessionId).load()
       if (state.status !== 'error' && state.groups.length > 0) {
         return { status: 'ready', groups: state.groups, current: state.current, error: null }
       }
       failure = state.error
-    } catch (error: unknown) {
-      failure = error instanceof Error ? error.message : String(error)
     }
+  } catch (error: unknown) {
+    failure = describe(error)
   }
-  if (services.remoteSession !== undefined) {
-    try {
-      const response = await services.remoteSession.modelCatalog()
+
+  try {
+    const remote = sources.remoteSession?.()
+    if (remote !== undefined) {
+      const response = await remote.modelCatalog()
       if (response.ok) {
         return { status: 'ready', groups: response.value.groups, current: response.value.default, error: null }
       }
       failure = response.error.message
-    } catch (error: unknown) {
-      failure = error instanceof Error ? error.message : String(error)
     }
+  } catch (error: unknown) {
+    failure = describe(error)
   }
+
   return { status: 'error', groups: [], current: null, error: failure ?? 'no model catalog is available' }
 }
 

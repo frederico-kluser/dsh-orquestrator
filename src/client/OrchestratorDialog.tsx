@@ -193,6 +193,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                 />
               )
             : undefined}
+          {needsModel && catalog.status === 'ready' ? <p className="dsh-orq-hint" role="status">{t('subagents.needModel')}</p> : undefined}
         </section>
 
         <section className="dsh-orq-section" aria-labelledby={`${uid}-reviewer`}>

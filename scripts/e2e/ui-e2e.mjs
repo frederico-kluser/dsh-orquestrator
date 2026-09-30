@@ -231,6 +231,30 @@ if (phase === 'command') {
   await finish()
 }
 
+if (phase === 'small') {
+  // A short laptop screen with both sections open: the actions must stay reachable.
+  await page.setViewportSize({ width: 1024, height: 600 })
+  await open()
+  await typeTask('Reply with exactly the word: small')
+  await page.keyboard.press('Enter')
+  await dialog().waitFor({ state: 'visible', timeout: 15_000 })
+  const switches = dialog().getByRole('switch')
+  await switches.nth(0).click()
+  await switches.nth(1).click()
+  await page.waitForTimeout(600)
+  await shot('01-both-open-600px')
+  const box = await dialog().boundingBox()
+  const send = dialog().getByRole('button', { name: 'Send with these options' })
+  const sendBox = await send.boundingBox()
+  check('dialog is not taller than the viewport', box !== null && box.height <= 600, JSON.stringify(box))
+  check('primary action is inside the viewport', sendBox !== null && sendBox.y >= 0 && sendBox.y + sendBox.height <= 600, JSON.stringify(sendBox))
+  const scrollable = await dialog().evaluate((el) => { const nodes = [el, ...el.querySelectorAll('*')]; return nodes.some((n) => n.scrollHeight > n.clientHeight + 1 && ['auto', 'scroll'].includes(getComputedStyle(n).overflowY)) })
+  console.log('DEBUG scrollable region inside dialog:', scrollable)
+  await page.keyboard.press('Escape')
+  check('no page errors', pageErrors.length === 0, pageErrors.join(' | '))
+  await finish()
+}
+
 if (phase === 'debug') {
   await open()
   await typeTask('Reply with exactly the word: debug')

@@ -1,0 +1,79 @@
+{
+  "interface_type": "modal",
+  "interface_type_note": "Same dialog after fixing finding-1 and finding-2 (commit 'fix(ux): state what the switch does; show why the primary action is blocked').",
+  "overall_score": 94,
+  "band": "excellent",
+  "findings": [
+    {
+      "id": "finding-3",
+      "principle": {
+        "code": "C.1.1.01",
+        "slug": "consistency-and-standards",
+        "title": "Consistency and Standards",
+        "part": "part-2"
+      },
+      "severity": "suggestion",
+      "message": "'Cancel' normally aborts; here it sends the task. Accepted trade-off: the requirement is that dismissing the dialog must leave DSH behaving as before, and the description line and the button's title say so.",
+      "remediation": "Keep 'Cancel' (user's wording); if usage shows surprise, rename to 'Send as usual'.",
+      "business_impact": null
+    },
+    {
+      "id": "finding-4",
+      "principle": {
+        "code": "F.1.1.02",
+        "slug": "cognitive-load",
+        "title": "Cognitive Load",
+        "part": "part-1"
+      },
+      "severity": "suggestion",
+      "message": "With both sections open the dialog holds two switches, two pickers, four bullets, a tip, a checkbox and two buttons. Verified at 1024x600: the body scrolls and the footer stays pinned.",
+      "remediation": "Keep the bullets: they are the behavior the user asked to be told. Revisit if a fifth step is ever added.",
+      "business_impact": null
+    }
+  ],
+  "strengths": [
+    {
+      "principle": {
+        "code": "D.1.1.01",
+        "slug": "progressive-disclosure",
+        "title": "Progressive Disclosure"
+      },
+      "message": "A model picker appears only when its switch is on, and the reviewer's four-step behavior only when the reviewer is on, so the default state shows two decisions and one checkbox."
+    },
+    {
+      "principle": {
+        "code": "S.1.3.01",
+        "slug": "ai-transparency",
+        "title": "AI Transparency"
+      },
+      "message": "The dialog states exactly what the reviewer does (starts right after the subagent, runs or writes tests, fixes only what is broken, delivers in place of the subagent) and what Cancel does (sends the task as usual)."
+    },
+    {
+      "principle": {
+        "code": "D.2.1.02",
+        "slug": "visual-hierarchy",
+        "title": "Visual Hierarchy"
+      },
+      "message": "One primary action (filled, autofocused) and one outline action, cards with icons per decision, and the task preview in a quiet field, all from the host's own tokens."
+    },
+    {
+      "principle": {
+        "code": "C.1.1.01",
+        "slug": "consistency-and-standards",
+        "title": "Consistency and Standards"
+      },
+      "message": "Built only from the DSH Modal, Switch, Checkbox, Button and Menu primitives; the model list is the composer's own catalog, so names and grouping match what the user already knows."
+    },
+    {
+      "principle": {
+        "code": "F.6.1.01",
+        "slug": "accessibility",
+        "title": "Accessibility"
+      },
+      "message": "Focus is trapped in the dialog, Escape closes an open menu before the dialog, the picker's accessible name is label plus current value, loading and error states use status and alert roles, and reduced-motion is respected."
+    }
+  ],
+  "priority_fixes": [],
+  "api_enriched": false,
+  "api_note": "No UXUI_API_KEY was available; the framework was applied from internal knowledge, so there are no citations or business-impact data. Self-assessment by the plugin author's agent, not an independent audit."
+}

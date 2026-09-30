@@ -34,16 +34,23 @@ whole suite with `DSH_CHECKOUT` pointing at that machine's DSH source.
   `resolveMaxDepth`, `getProvider`), `SessionFace.prompt`, the composer overlay slot,
   the primitives and their props, and the shell's module table.
 
-### 2. Real delegation, headless (`runs/`)
+### 2. Real delegation, headless ([`runs/`](runs))
 
-| Run | What it proves |
+Main agent `openrouter-extra/xiaomi/mimo-v2.6-pro`, worker `openrouter/google/gemini-3.8-flash`,
+reviewer `azure-opencode-claude/claude-haiku-4-5` (three families). Each run is a fresh
+git workspace and a real `dsh --profile headless` process.
+
+| Run | Outcome |
 | --- | --- |
-| **A** worker + reviewer | The main agent's `subagent` call is intercepted at the root context; a worker child runs on the chosen model, a reviewer child on another; the tool result the main agent receives is the **reviewer's** report under a `Reviewed delivery ... [verdict: ...]` banner; the worker's own report does not reach the main agent. |
-| **B** model only | Only the child's model changes; the main agent gets the worker's own result, as stock. |
-| **B2** model only, background | The `continuable` path: the main agent starts the subagent in the background and is notified when it finishes. |
-| **C** stock | The plugin loaded with no choice and no defaults leaves delegation exactly as stock DSH. |
-| **D / D2** reviewer on a spec with easy-to-miss rules | Whether the reviewer catches and fixes what the worker missed, and whether the report is verdict-first. |
-| **E** reviewer cannot start | The worker's report is delivered under `WARNING - UNREVIEWED` instead of being lost. |
+| [**A**](runs/A-reviewed.md) worker + reviewer | 396 s. The main agent's `subagent` call was intercepted at the root context; a worker child ran on Gemini and a reviewer child on Haiku; the tool result the main agent received was the **reviewer's** report under `Reviewed delivery ... [verdict: APPROVED]`, and the worker's own report did not reach it. Re-running the tests independently in the workspace: 6 of 6 pass. |
+| [**B**](runs/B-model-only.md) model only | 266 s. Only the child's model changed (Gemini); the main agent received the worker's own result, as stock. |
+| [**B2**](runs/B2-background.md) model only, background | 162 s. The `continuable` path: the main agent got `started subagent ...`, the child ran on Gemini, and the main agent later reported the file's content. |
+| [**C**](runs/C-stock.md) stock | 67 s. Plugin loaded with an empty config: the child ran on the **main agent's** model and delegation behaved exactly like stock DSH. |
+| [**D**](runs/D-reviewer-fixes.md) seven easy-to-miss rules | 612 s. The worker met them all; the reviewer verified and returned `APPROVED` without inventing defects. |
+| [**D2**](runs/D2-final.md) same task | 658 s. The worker ran out of tokens; the plugin reported it as the stock tool does (`subagent run hit its token limit ...`) and did **not** start a reviewer. |
+| [**E**](runs/E-unreviewed.md) reviewer cannot start | 124 s. The main agent received `WARNING - UNREVIEWED: the independent review did not complete ...` followed by the worker's raw report. |
+| [**F**](runs/F-planted-defect.md) planted defect | 381 s. The request pushed the worker into a wrong `fizzbuzz` (15 gives `Fizz`) and forbade tests. The reviewer ran `fizzbuzz(15)`, saw the wrong output, named the contradiction, and still returned `APPROVED` because the request said the build style took precedence. **A real defect in the protocol, fixed (finding 8).** |
+| [**F2**](runs/F2-conflict-rule.md) same task, new rule | 159 s. `VERDICT: APPROVED_WITH_FIXES`: the reviewer reordered the chain to 15, 3, 5 and reported the departure from the style rule. The main agent received the reviewer's report. |
 
 ### 3. The dialog, in a real browser against the real web server
 
@@ -91,6 +98,12 @@ Each of these was invisible to the mocks and surfaced only on the real DSH:
    workspace by someone else".
 6. **Copy.** Double colons ("model: Xiaomi: MiMo") and a switch whose ON meaning was
    only discoverable by toggling.
+8. **A reviewer approved a result whose behavior was wrong** (scenario F). Instruction
+   priority explained the failure, and the caveat sat in the middle of the report where
+   a top-only reader would miss it. The persona now says a conflict between requirements
+   is not a pass: a failed behavior is a FAILED criterion and cannot be approved; the
+   reviewer fixes it minimally and reports the departure, or returns `NOT_RESOLVED` with
+   the conflict named in the verdict line. Scenario F2 re-ran it on the new build.
 7. **Runner bugs, not plugin bugs.** An empty profile overlay is not a valid patch (it
    must be `[]`); `git pull` aborted over files copied by hand; a burst of 36 parallel
    research verifiers exhausted the search API's key pool (see the dossier, section 8).

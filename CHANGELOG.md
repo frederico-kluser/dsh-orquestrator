@@ -20,4 +20,8 @@ First release.
   Findings from that run that shaped the release: an un-injected `ctx.remote`
   access crashed the overlay (now resolved lazily; the task still went out as
   stock DSH), the host `Modal` does not contain focus (focus trap added), and a
-  `<label for>` hid the picker's current value from screen readers.
+  `<label for>` hid the picker's current value from screen readers; a smaller
+  reviewer model leaked the persona's lettered steps into its report (now
+  verdict-first is enforced in the prompt and in the pipeline), and a reviewer
+  approved a result whose behavior was wrong because an instruction about how to
+  build it took precedence (a failed behavior can no longer be approved).

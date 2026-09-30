@@ -25,6 +25,8 @@ describe('REVIEWER_PERSONA', () => {
       /comment, docstring or message that says the code is correct/, // self-declared correctness is a claim
       /cite the file and line range/,            // concrete, checkable location
       /before you read the worker\'s report/,
+      /A conflict between requirements is not a pass/, // instruction priority cannot excuse a failed behavior
+      /a FAILED criterion never goes with APPROVED/,
     ]) assert.match(REVIEWER_PERSONA, rule)
   })
 

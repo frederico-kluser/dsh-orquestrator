@@ -1,0 +1,59 @@
+{
+  "phase": "command",
+  "checks": [
+    {
+      "name": "the /orquestrar command is offered by the slash palette",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the command opens the dialog in configure mode",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Save closes the dialog",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Save stored reviewer + \"do not ask again\"",
+      "ok": true,
+      "detail": "{\"version\":1,\"subagentModel\":null,\"reviewer\":{\"enabled\":true,\"model\":null},\"remember\":true}"
+    },
+    {
+      "name": "the next task is sent without a modal",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "wire": [
+    {
+      "method": "GET",
+      "path": "/dsh-orquestrator/config",
+      "query": "?sessionId=session-980abbd1-7db7-4ede-a186-ac6011d4c6d3",
+      "body": null,
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/dsh-orquestrator/config",
+      "query": "",
+      "body": "{\"sessionId\":\"session-980abbd1-7db7-4ede-a186-ac6011d4c6d3\",\"config\":{\"version\":1,\"subagentModel\":null,\"reviewer\":{\"enabled\":true,\"model\":null},\"remember\":true}}",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/dsh-orquestrator/config",
+      "query": "?sessionId=session-980abbd1-7db7-4ede-a186-ac6011d4c6d3",
+      "body": null,
+      "status": 200
+    }
+  ],
+  "pageErrors": []
+}

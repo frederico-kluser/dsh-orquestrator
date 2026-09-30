@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+*.log
+# Local validation evidence stays out of git unless copied to docs/validation/.
+.validation-tmp/
+# Built artifacts in lib/ are COMMITTED on purpose (git installs need no build);
+# only source maps and intermediate output are ignored.
+lib/*.map
+lib/types/

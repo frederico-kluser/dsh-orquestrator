@@ -1,0 +1,80 @@
+{
+  "name": "dsh-orquestrator",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness plugin: a native-looking modal on task send lets you pick a different model for subagents and an independent reviewer (own model) that validates each subagent's work, fixes only real defects, and delivers the result to the main agent.",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.cjs",
+    "cordis.patch.yml",
+    "README.md",
+    "README.pt-BR.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-renderer"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0 <5"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsdown": "^0.22.2",
+    "typescript": "^6.0.3"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "pnpm run typecheck && tsdown --config tsdown.config.ts",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "check": "pnpm run build && pnpm run test && node scripts/check-lib.mjs",
+    "check:lib": "node scripts/check-lib.mjs"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frederico-kluser/dsh-orquestrator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/frederico-kluser/dsh-orquestrator/issues"
+  },
+  "homepage": "https://github.com/frederico-kluser/dsh-orquestrator#readme",
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "cordis",
+    "deepseek-harness",
+    "subagents",
+    "reviewer",
+    "orchestration",
+    "multi-model"
+  ]
+}

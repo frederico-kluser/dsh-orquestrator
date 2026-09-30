@@ -1,0 +1,130 @@
+/**
+ * Dictionaries of the dialog and the command (English, Portuguese, Chinese).
+ * English is the fallback the locale system requires; Simplified Chinese is a
+ * built-in locale; Portuguese is registered as an extra language when no other
+ * plugin already did. Copy avoids em dashes and filler verbs on purpose.
+ * @module dsh-orquestrator/client/locales
+ */
+
+/** Dictionary namespace owned by this plugin. */
+export const NS = 'orquestrator'
+
+/** English dictionary (source of the key union). */
+export const en = {
+  'dialog.title': 'Orchestrate subagents',
+  'dialog.close': 'Close',
+  'dialog.description.gate': 'Choose how subagents handle this task. Cancel sends the task as usual.',
+  'dialog.description.configure': 'Choose how subagents work in this conversation. The options apply from the next task.',
+  'task.label': 'Task',
+  'subagents.title': 'Subagent model',
+  'subagents.switch': 'Use a different model for subagents',
+  'subagents.same': 'Subagents use the main agent\'s model: {model}.',
+  'subagents.same.unknown': 'Subagents use the main agent\'s model.',
+  'subagents.modelLabel': 'Model for subagents',
+  'subagents.main': 'Main agent: {model}',
+  'reviewer.title': 'Independent reviewer',
+  'reviewer.description': 'Checks each subagent\'s work before it reaches the main agent.',
+  'reviewer.switch': 'Review the work of each subagent',
+  'reviewer.how.1': 'Starts right after each subagent finishes',
+  'reviewer.how.2': 'Runs or writes tests to validate the work',
+  'reviewer.how.3': 'Fixes only what is actually broken',
+  'reviewer.how.4': 'Delivers the result to the main agent in place of the subagent',
+  'reviewer.modelLabel': 'Model for the reviewer',
+  'reviewer.sameAsSubagent': 'Same model as the subagent',
+  'reviewer.tip.sameModel': 'Tip: a reviewer on a different model tends to catch different mistakes than the model that did the work.',
+  'remember.label': 'Do not ask again in this conversation',
+  'button.cancel': 'Cancel',
+  'button.cancelHint': 'Sends the task as usual',
+  'button.confirm.gate': 'Send with these options',
+  'button.confirm.configure': 'Save',
+  'button.saving': 'Saving...',
+  'button.needModel': 'Choose a subagent model first',
+  'picker.placeholder': 'Choose a model',
+  'picker.loading': 'Loading models...',
+  'picker.error': 'Could not load the models',
+  'picker.retry': 'Try again',
+  'error.save': 'Could not save the options: {message}',
+  'command.label': 'Orchestrate subagents',
+  'command.description': 'Choose the subagent model and an independent reviewer for this conversation',
+} as const
+
+/** Every key of the dictionary. */
+export type OrchestratorKey = keyof typeof en
+
+/** Portuguese (Brazil) dictionary. */
+export const pt: Record<OrchestratorKey, string> = {
+  'dialog.title': 'Orquestrar subagentes',
+  'dialog.close': 'Fechar',
+  'dialog.description.gate': 'Escolha como os subagentes tratam esta tarefa. Cancelar envia a tarefa normalmente.',
+  'dialog.description.configure': 'Escolha como os subagentes trabalham nesta conversa. As opções valem a partir da próxima tarefa.',
+  'task.label': 'Tarefa',
+  'subagents.title': 'Modelo dos subagentes',
+  'subagents.switch': 'Usar outro modelo nos subagentes',
+  'subagents.same': 'Os subagentes usam o modelo do agente principal: {model}.',
+  'subagents.same.unknown': 'Os subagentes usam o modelo do agente principal.',
+  'subagents.modelLabel': 'Modelo dos subagentes',
+  'subagents.main': 'Agente principal: {model}',
+  'reviewer.title': 'Revisor independente',
+  'reviewer.description': 'Confere o trabalho de cada subagente antes de entregar ao agente principal.',
+  'reviewer.switch': 'Revisar o trabalho de cada subagente',
+  'reviewer.how.1': 'Entra logo depois que cada subagente termina',
+  'reviewer.how.2': 'Executa ou cria testes para validar o trabalho',
+  'reviewer.how.3': 'Corrige apenas o que realmente estiver quebrado',
+  'reviewer.how.4': 'Entrega o resultado ao agente principal, no lugar do subagente',
+  'reviewer.modelLabel': 'Modelo do revisor',
+  'reviewer.sameAsSubagent': 'Mesmo modelo do subagente',
+  'reviewer.tip.sameModel': 'Dica: um revisor em outro modelo tende a pegar erros diferentes dos do modelo que fez o trabalho.',
+  'remember.label': 'Não perguntar de novo nesta conversa',
+  'button.cancel': 'Cancelar',
+  'button.cancelHint': 'Envia a tarefa normalmente',
+  'button.confirm.gate': 'Enviar com estas opções',
+  'button.confirm.configure': 'Salvar',
+  'button.saving': 'Salvando...',
+  'button.needModel': 'Escolha antes o modelo dos subagentes',
+  'picker.placeholder': 'Escolha um modelo',
+  'picker.loading': 'Carregando modelos...',
+  'picker.error': 'Não foi possível carregar os modelos',
+  'picker.retry': 'Tentar de novo',
+  'error.save': 'Não foi possível salvar as opções: {message}',
+  'command.label': 'Orquestrar subagentes',
+  'command.description': 'Escolha o modelo dos subagentes e um revisor independente nesta conversa',
+}
+
+/** Simplified Chinese dictionary. */
+export const zh: Record<OrchestratorKey, string> = {
+  'dialog.title': '编排子智能体',
+  'dialog.close': '关闭',
+  'dialog.description.gate': '选择子智能体如何处理这项任务。取消将按常规发送任务。',
+  'dialog.description.configure': '选择子智能体在此对话中的工作方式。选项从下一个任务开始生效。',
+  'task.label': '任务',
+  'subagents.title': '子智能体模型',
+  'subagents.switch': '为子智能体使用其他模型',
+  'subagents.same': '子智能体使用主智能体的模型：{model}。',
+  'subagents.same.unknown': '子智能体使用主智能体的模型。',
+  'subagents.modelLabel': '子智能体模型',
+  'subagents.main': '主智能体：{model}',
+  'reviewer.title': '独立审查员',
+  'reviewer.description': '在结果交给主智能体之前，检查每个子智能体的工作。',
+  'reviewer.switch': '审查每个子智能体的工作',
+  'reviewer.how.1': '在每个子智能体完成后立即开始',
+  'reviewer.how.2': '运行或编写测试来验证工作',
+  'reviewer.how.3': '只修复确实有问题的地方',
+  'reviewer.how.4': '由审查员代替子智能体，把结果交给主智能体',
+  'reviewer.modelLabel': '审查员模型',
+  'reviewer.sameAsSubagent': '与子智能体相同的模型',
+  'reviewer.tip.sameModel': '提示：使用不同模型的审查员，往往能发现与执行工作的模型不同的错误。',
+  'remember.label': '在此对话中不再询问',
+  'button.cancel': '取消',
+  'button.cancelHint': '按常规发送任务',
+  'button.confirm.gate': '按这些选项发送',
+  'button.confirm.configure': '保存',
+  'button.saving': '正在保存...',
+  'button.needModel': '请先选择子智能体模型',
+  'picker.placeholder': '选择模型',
+  'picker.loading': '正在加载模型...',
+  'picker.error': '无法加载模型',
+  'picker.retry': '重试',
+  'error.save': '无法保存选项：{message}',
+  'command.label': '编排子智能体',
+  'command.description': '为此对话选择子智能体模型和独立审查员',
+}

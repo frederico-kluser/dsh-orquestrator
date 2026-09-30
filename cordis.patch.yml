@@ -1,0 +1,23 @@
+# dsh-orquestrator bundle layer. Applied automatically to any composition that
+# installs this package as a bundle (`dsh plugin --profile web add <path>`).
+#
+# Row order carries no load semantics: activation is service-availability
+# driven (the row injects webServer/connection/tools/subagents and waits for
+# the web composition). The id is this plugin's own; it never targets another
+# package's row.
+#
+# The plugin ships INERT until the user confirms the modal on a task: no
+# session is orchestrated by default and cancelling the modal keeps the
+# stock DSH behavior. To pre-configure headless runs or change deployment
+# defaults, restate this whole entry (whole-entry replace, not deep merge) in
+# $DSH_HOME/profiles/<profile>/cordis.patch.yml, e.g.:
+#
+#   - id: orquestrator
+#     name: 'dsh-orquestrator'
+#     config:
+#       defaults:
+#         subagentModel: { provider: openrouter, model: google/gemini-3.8-flash }
+#         reviewer: { enabled: true }
+- insert:
+    - id: orquestrator
+      name: './lib/index.js'

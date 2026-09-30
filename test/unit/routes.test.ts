@@ -1,0 +1,128 @@
+import assert from 'node:assert/strict'
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { after, before, describe, it } from 'node:test'
+import { registerRoutes } from '../../src/routes.ts'
+import { CONFIG_ROUTE, buildConfig } from '../../src/shared.ts'
+import { ConfigStore } from '../../src/store.ts'
+import type { ConnectionLike, LlmLike, WebServerLike } from '../../src/host-services.ts'
+
+const route = { provider: 'openrouter', model: 'google/gemini-3.8-flash' }
+const valid = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: null, remember: false })
+
+let server: Server
+let base: string
+let fence: 401 | 403 | undefined
+let llm: LlmLike | undefined
+const llmCalls: unknown[] = []
+const store = new ConfigStore({ maxSessions: 100 })
+
+before(async () => {
+  let handler: Parameters<WebServerLike['register']>[0]['handler'] | undefined
+  const webServer: WebServerLike = {
+    register(registration) {
+      assert.equal(registration.kind, 'exact')
+      assert.equal(registration.path, CONFIG_ROUTE)
+      handler = registration.handler
+      return () => undefined
+    },
+  }
+  const connection: ConnectionLike = { requestRejection: () => fence }
+  registerRoutes(webServer, {
+    store,
+    connection,
+    get llm() { return llm },
+    timeoutSignal: () => new AbortController().signal,
+  })
+  server = createServer((req, res) => { void handler?.(req, res) })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  base = `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`
+})
+after(() => { server.close() })
+
+const post = (body: unknown, headers: Record<string, string> = { 'content-type': 'application/json' }): Promise<Response> =>
+  fetch(`${base}${CONFIG_ROUTE}`, { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body) })
+
+describe('config route', () => {
+  it('answers the trust fence rejection with its status and no body, touching nothing', async () => {
+    fence = 403
+    const response = await post({ sessionId: 's-fence', config: valid })
+    assert.equal(response.status, 403)
+    assert.equal(await response.text(), '')
+    assert.equal(store.get('s-fence'), undefined)
+    fence = 401
+    assert.equal((await fetch(`${base}${CONFIG_ROUTE}?sessionId=x`)).status, 401)
+    fence = undefined
+  })
+
+  it('reads null for an unknown session and the stored value afterwards', async () => {
+    const empty = await fetch(`${base}${CONFIG_ROUTE}?sessionId=s-read`)
+    assert.equal(empty.status, 200)
+    assert.deepEqual(await empty.json(), { sessionId: 's-read', config: null })
+    assert.equal((await post({ sessionId: 's-read', config: valid })).status, 200)
+    const filled = await fetch(`${base}${CONFIG_ROUTE}?sessionId=s-read`)
+    assert.deepEqual(await filled.json(), { sessionId: 's-read', config: valid })
+    assert.equal(filled.headers.get('cache-control'), 'no-store')
+  })
+
+  it('requires a sessionId on GET', async () => {
+    const response = await fetch(`${base}${CONFIG_ROUTE}`)
+    assert.equal(response.status, 400)
+    assert.equal(((await response.json()) as { code: string }).code, 'bad-request')
+  })
+
+  it('clears a session when config is null', async () => {
+    await post({ sessionId: 's-clear', config: valid })
+    const response = await post({ sessionId: 's-clear', config: null })
+    assert.deepEqual(await response.json(), { sessionId: 's-clear', config: null })
+    assert.equal(store.get('s-clear'), undefined)
+  })
+
+  it('rejects wrong content types, bad JSON, missing fields and malformed configs', async () => {
+    assert.equal((await post('x', { 'content-type': 'text/plain' })).status, 415)
+    assert.equal((await post('{nope')).status, 400)
+    assert.equal((await post({ config: valid })).status, 400)
+    assert.equal((await post({ sessionId: 's' })).status, 400)
+    assert.equal((await post({ sessionId: 's'.repeat(300), config: valid })).status, 400)
+    const bad = await post({ sessionId: 's-bad', config: { version: 1, reviewer: { enabled: 'x' } } })
+    assert.equal(bad.status, 422)
+    assert.equal(((await bad.json()) as { code: string }).code, 'invalid-config')
+    assert.equal(store.get('s-bad'), undefined)
+  })
+
+  it('rejects an oversized body with 413 and stays usable', async () => {
+    const response = await post(`{"sessionId":"s","config":null,"pad":"${'x'.repeat(70 * 1024)}"}`)
+    assert.equal(response.status, 413)
+    assert.equal((await fetch(`${base}${CONFIG_ROUTE}?sessionId=alive`)).status, 200)
+  })
+
+  it('answers 405 with the allowed methods', async () => {
+    const response = await fetch(`${base}${CONFIG_ROUTE}`, { method: 'PUT' })
+    assert.equal(response.status, 405)
+    assert.equal(response.headers.get('allow'), 'GET, POST')
+  })
+
+  it('validates every named route against the live LLM runtime before storing', async () => {
+    llm = {
+      resolveCallConfig: (config) => {
+        llmCalls.push(config)
+        return config.model === 'ghost' ? Promise.reject(new Error('unknown model')) : Promise.resolve({})
+      },
+    }
+    const both = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: { provider: 'p', model: 'other', reasoningEffort: 'high' }, remember: true })
+    assert.equal((await post({ sessionId: 's-llm', config: both })).status, 200)
+    assert.deepEqual(llmCalls, [
+      { provider: 'openrouter', model: 'google/gemini-3.8-flash' },
+      { provider: 'p', model: 'other', reasoningEffort: 'high' },
+    ])
+
+    const ghost = buildConfig({ subagentModel: { provider: 'p', model: 'ghost' }, reviewerEnabled: false, reviewerModel: null, remember: false })
+    const refused = await post({ sessionId: 's-ghost', config: ghost })
+    assert.equal(refused.status, 422)
+    const payload = (await refused.json()) as { code: string; message: string }
+    assert.equal(payload.code, 'invalid-model')
+    assert.match(payload.message, /p\/ghost: unknown model/)
+    assert.equal(store.get('s-ghost'), undefined)
+    llm = undefined
+  })
+})

@@ -49,7 +49,7 @@ git workspace and a real `dsh --profile headless` process.
 | [**D**](runs/D-reviewer-fixes.md) seven easy-to-miss rules | 612 s. The worker met them all; the reviewer verified and returned `APPROVED` without inventing defects. |
 | [**D2**](runs/D2-final.md) same task | 658 s. The worker ran out of tokens; the plugin reported it as the stock tool does (`subagent run hit its token limit ...`) and did **not** start a reviewer. |
 | [**E**](runs/E-unreviewed.md) reviewer cannot start | 124 s. The main agent received `WARNING - UNREVIEWED: the independent review did not complete ...` followed by the worker's raw report. |
-| [**F**](runs/F-planted-defect.md) planted defect | 381 s. The request pushed the worker into a wrong `fizzbuzz` (15 gives `Fizz`) and forbade tests. The reviewer ran `fizzbuzz(15)`, saw the wrong output, named the contradiction, and still returned `APPROVED` because the request said the build style took precedence. **A real defect in the protocol, fixed (finding 8).** |
+| [**F**](runs/F-planted-defect.md) planted defect | 381 s. The request pushed the worker into a wrong `fizzbuzz` (15 gives `Fizz`) and forbade tests. The reviewer ran `fizzbuzz(15)`, saw the wrong output, named the contradiction, and still returned `APPROVED` because the request said the build style took precedence. **A real defect in the protocol, fixed (finding 7).** |
 | [**F2**](runs/F2-conflict-rule.md) same task, new rule | 159 s. `VERDICT: APPROVED_WITH_FIXES`: the reviewer reordered the chain to 15, 3, 5 and reported the departure from the style rule. The main agent received the reviewer's report. |
 
 ### 3. The dialog, in a real browser against the real web server
@@ -98,13 +98,13 @@ Each of these was invisible to the mocks and surfaced only on the real DSH:
    workspace by someone else".
 6. **Copy.** Double colons ("model: Xiaomi: MiMo") and a switch whose ON meaning was
    only discoverable by toggling.
-8. **A reviewer approved a result whose behavior was wrong** (scenario F). Instruction
+7. **A reviewer approved a result whose behavior was wrong** (scenario F). Instruction
    priority explained the failure, and the caveat sat in the middle of the report where
    a top-only reader would miss it. The persona now says a conflict between requirements
    is not a pass: a failed behavior is a FAILED criterion and cannot be approved; the
    reviewer fixes it minimally and reports the departure, or returns `NOT_RESOLVED` with
    the conflict named in the verdict line. Scenario F2 re-ran it on the new build.
-7. **Runner bugs, not plugin bugs.** An empty profile overlay is not a valid patch (it
+8. **Runner bugs, not plugin bugs.** An empty profile overlay is not a valid patch (it
    must be `[]`); `git pull` aborted over files copied by hand; a burst of 36 parallel
    research verifiers exhausted the search API's key pool (see the dossier, section 8).
 

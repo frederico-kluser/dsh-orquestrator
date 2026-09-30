@@ -21,6 +21,10 @@ Nothing else about DSH changes.
 | --- | --- |
 | ![Dialog, dark theme](docs/img/modal-dark.png) | ![Dialog, light theme](docs/img/modal-light.png) |
 
+Both sections open, with the models picked from the composer's own list:
+
+![Dialog with a subagent model and a reviewer model chosen](docs/img/modal-filled.png)
+
 > Português: [README.pt-BR.md](README.pt-BR.md)
 
 ## Install

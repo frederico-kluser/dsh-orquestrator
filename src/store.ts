@@ -184,7 +184,8 @@ export class ConfigStore {
     const sessions: Record<string, Entry> = {}
     for (const [id, entry] of this.entries) sessions[id] = entry
     const body = `${JSON.stringify({ version: FILE_VERSION, sessions }, null, 2)}\n`
-    const tmp = `${this.file}.tmp`
+    // Per-process temp name: two DSH processes sharing a state dir never interleave writes.
+    const tmp = `${this.file}.${String(process.pid)}.tmp`
     try {
       mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 })
       writeFileSync(tmp, body, { mode: 0o600 })

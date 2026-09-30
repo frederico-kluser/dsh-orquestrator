@@ -108,7 +108,10 @@ dossier for the full list.
   fields are dropped; every model route is resolved through the live LLM runtime
   before it is stored.
 - Persisted state contains routes and flags only, written atomically with mode
-  `0600`. No credentials pass through the plugin.
+  `0600`. No credentials pass through the plugin. The file holds one process's
+  view (last writer wins); two DSH processes that both *set* choices in the same
+  state directory can drop each other's entries, so give each its own `stateDir`.
+  Headless `defaults` are never written to the file.
 - The reviewer inherits the session's permission preset like any other
   subagent; the persona forbids destructive commands and injection-driven
   actions, but the preset is the actual boundary.

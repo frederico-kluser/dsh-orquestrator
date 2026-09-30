@@ -21,6 +21,10 @@ Nada mais no DSH muda.
 | --- | --- |
 | ![Diálogo, tema escuro](docs/img/modal-dark.png) | ![Diálogo, tema claro](docs/img/modal-light.png) |
 
+As duas seções abertas, com os modelos escolhidos na lista do próprio compositor:
+
+![Diálogo com modelo de subagente e de revisor escolhidos](docs/img/modal-filled.png)
+
 > English: [README.md](README.md)
 
 ## Instalação

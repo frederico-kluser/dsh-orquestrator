@@ -1,0 +1,74 @@
+{
+  "M1": {
+    "questao": "Q1",
+    "texto": "In Huang et al. (ICLR 2024), intrinsic self-correction without oracle labels or tools did not improve reasoning and sometimes degraded it: GPT-4 on GSM8K 95.5 -> 91.5 (round 1) -> 89.0 (round 2); GPT-3.5 on CommonSenseQA 75.8 -> 38.1 -> 41.8.",
+    "fonte": "https://arxiv.org/pdf/2310.01798",
+    "citacao_literal": "GPT-4 Standard Prompting 1 95.5 82.0 49.0 Self-Correct (round 1) 3 91.5 79.5 49.0 Self-Correct (round 2) 5 89.0 80.0 43.0"
+  },
+  "M2": {
+    "questao": "Q1",
+    "texto": "Self-Debugging with unit tests improves baseline accuracy by up to 12% on TransCoder and MBPP; GPT-4 without unit-test execution improves MBPP accuracy by only 3.6%.",
+    "fonte": "https://proceedings.iclr.cc/paper_files/paper/2024/file/2460396f2d0d421885997dd1612ac56b-Paper-Conference.pdf",
+    "citacao_literal": "On TransCoder and MBPP where unit tests are available, SELF-DEBUGGING improves the baseline accuracy by up to 12%."
+  },
+  "M3": {
+    "questao": "Q1",
+    "texto": "In Reflexion, agent-generated internal tests had a 16.3% false-positive rate on MBPP Python versus 1.4% on HumanEval Python, and Reflexion's MBPP pass@1 (77.1) fell below the GPT-4 baseline (80.1).",
+    "fonte": "https://arxiv.org/html/2303.11366v4",
+    "citacao_literal": "the false positive test execution rate for MBPP Python is 16.3% while the rate for HumanEval Python is a mere 1.4%, leading to 91% overall accuracy"
+  },
+  "M4": {
+    "questao": "Q2",
+    "texto": "GPT-4 distinguishes its own summaries from those of two other LLMs and humans with 73.5% accuracy without fine-tuning, and self-preference correlates linearly with self-recognition when the fine-tuning task varies.",
+    "fonte": "https://arxiv.org/pdf/2404.13076",
+    "citacao_literal": "GPT-4 is 73.5% accurate distinguishing itself from two other LLMs and humans."
+  },
+  "M5": {
+    "questao": "Q2",
+    "texto": "On leaderboard data (71 LLMs, 14,042 multiple-choice questions), pairs of models agree about 60% of the time when both err, and being from the same company adds only a few percentage points on top of that baseline.",
+    "fonte": "https://arxiv.org/html/2506.07962",
+    "citacao_literal": "We find substantial correlation in model errors—on one leaderboard dataset, models agree 60% of the time when both models err."
+  },
+  "M9": {
+    "questao": "Q4",
+    "texto": "The verification-before-completion skill (obra/superpowers) states an evidence law and tells agents that when a delegated agent reports success they must check the VCS diff instead of trusting the report.",
+    "fonte": "https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md",
+    "citacao_literal": "NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE ... Agent reports success → Check VCS diff → Verify changes → Report actual state"
+  },
+  "M10": {
+    "questao": "Q4",
+    "texto": "Anthropic's Claude Code best-practices guide warns that a reviewer prompted to find gaps will usually report some even when the work is sound, and recommends a fresh-context reviewer that sees only the diff and the criteria.",
+    "fonte": "https://www.anthropic.com/engineering/claude-code-best-practices",
+    "citacao_literal": "A reviewer prompted to find gaps will usually report some, even when the work is sound, because that is what it was asked to do."
+  },
+  "M11": {
+    "questao": "Q5",
+    "texto": "In MT-Bench on 10 math questions (20 judgments with swapped positions), a GPT-4 judge with the default prompt declared incorrect answers correct in 70% of cases; showing the judge an independently generated reference answer cut that failure rate to 15%.",
+    "fonte": "https://arxiv.org/pdf/2306.05685",
+    "citacao_literal": "we first generate LLM judge’s answer independently, and then display it as a reference answer in the judge prompt. In Table 4, we see a significant improvement in failure rate (from 70% to 15%) over the default prompt."
+  },
+  "M12": {
+    "questao": "Q5",
+    "texto": "Under a prompt that requires explanation and repair, LLMs falsely rejected correct code on average 54.8% (HumanEval) and 69.0% (MBPP) of the time; a fix-guided, execution-based verification filter lowered this to 16.3% and 28.9%.",
+    "fonte": "https://arxiv.org/html/2603.00539v1",
+    "citacao_literal": "Averaged across models, FNR drops from 54.8% to 16.3% on HumanEval and 69.0% to 28.9% on MBPP, while QuixBugs also improves (51.0% to 24.0%)."
+  },
+  "M13": {
+    "questao": "Q5",
+    "texto": "In LLM judges for code evaluation, a self-declared-correctness comment (for example 'correct code') was the most pronounced positive bias across all evaluated models and programming languages.",
+    "fonte": "https://aclanthology.org/2026.findings-eacl.70.pdf",
+    "citacao_literal": "self-declared correctness exhibits the most pronounced effect across all evaluated models and programming languages"
+  },
+  "M14": {
+    "questao": "Q6",
+    "texto": "AOrchestra's context ablation on GAIA (50 samples): orchestrator-curated context for sub-agents scored 96.0, versus 86.0 with no context and 84.0 with full context.",
+    "fonte": "https://arxiv.org/html/2602.03786v2",
+    "citacao_literal": "whereas Full-Context often introduces irrelevant information and aggravates context degradation. In contrast, by allowing the orchestrator to select and compress only task-relevant history, our method provides a cleaner context and achieves the highest score."
+  },
+  "M15": {
+    "questao": "Q6",
+    "texto": "Cognition reports that in a generator-verifier loop the review agent worked best when it shared no prior context with the coding agent, provided a communication bridge lets the main agent filter the reviewer's findings using its broader context.",
+    "fonte": "https://cognition.com/blog/multi-agents-working",
+    "citacao_literal": "Interestingly, we found this technique to work best when the coding and review agents do not share any context beforehand."
+  }
+}

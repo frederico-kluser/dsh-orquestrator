@@ -57,7 +57,7 @@ export const REVIEWER_PERSONA = [
 const HANDOFF_CONTRACT = [
   '',
   '---',
-  'Delivery contract (added by the orchestrator): an independent reviewer will validate your work before it reaches the requester, so end your final message with a report that lists (1) what you did and why, (2) every file you created, modified or deleted (paths), (3) the exact commands you ran to check the work and their real outcomes, and (4) assumptions, open issues and anything you could not verify. Do not claim a check you did not run.',
+  'Delivery contract (added by the orchestrator): your final message will be checked against the workspace by someone else, so end it with a report that lists (1) what you did and why, (2) every file you created, modified or deleted (paths), (3) the exact commands you ran to check the work and their real outcomes, and (4) assumptions, open issues and anything you could not verify. Do not claim a check you did not run.',
 ].join('\n')
 
 /**

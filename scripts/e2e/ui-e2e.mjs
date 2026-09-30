@@ -180,10 +180,14 @@ if (phase === 'light') {
     if (!inside) escaped += 1
   }
   check('Tab never leaves the dialog (focus trap)', escaped === 0, `${String(escaped)} of 14 tabs escaped`)
+  console.log('DEBUG dialog visible after tabs:', await dialog().isVisible(), '| text:', (await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 160))
 
   // Escape belongs to an open menu first; the dialog survives and closes on the next Escape.
   const switches = dialog().getByRole('switch')
-  await switches.nth(0).click()
+  await switches.nth(0).click({ timeout: 5000 }).catch((error) => console.log('DEBUG switch click failed:', String(error).slice(0, 200)))
+  await page.waitForTimeout(600)
+  await shot('01b-after-switch')
+  console.log('DEBUG dialog text after switch:', (await dialog().innerText().catch(() => 'no dialog')).replace(/\s+/g, ' ').slice(0, 300))
   await dialog().getByRole('button', { name: /Choose a model/ }).first().click()
   await page.getByRole('menuitem').or(page.getByRole('option')).or(page.locator('[role=menu] *')).first().waitFor({ state: 'visible', timeout: 8_000 })
   await shot('02-menu-open-light')

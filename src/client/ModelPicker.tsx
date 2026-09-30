@@ -106,6 +106,11 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
     )
   }
 
+  // The visible label AND the current value form the accessible name; a bare
+  // <label for> would name the button by the label alone and hide the value
+  // from screen readers.
+  const labelId = `${id}-label`
+  const valueId = `${id}-value`
   const trigger = (
     <button
       id={id}
@@ -113,10 +118,11 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
       className="dsh-orq-picker"
       aria-haspopup="menu"
       aria-expanded={open}
+      aria-labelledby={`${labelId} ${valueId}`}
       disabled={props.disabled === true}
       onClick={() => { setOpen(!open) }}
     >
-      <span className="dsh-orq-picker-value">
+      <span className="dsh-orq-picker-value" id={valueId}>
         {picked !== undefined
           ? (
               <>
@@ -134,7 +140,7 @@ export function ModelPicker(props: ModelPickerProps): JSX.Element {
 
   return (
     <div className="dsh-orq-field">
-      <label className="dsh-orq-field-label" htmlFor={id}>{label}</label>
+      <label className="dsh-orq-field-label" id={labelId} htmlFor={id}>{label}</label>
       <Menu
         open={open}
         anchor={trigger}

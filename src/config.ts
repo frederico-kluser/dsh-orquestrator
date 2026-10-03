@@ -5,7 +5,9 @@
  * @module dsh-orquestrator/config
  */
 
+import { isEffortLevel, type EffortLevel } from './models.ts'
 import { parseModelRoute, type ModelRoute, type OrchestratorConfig } from './shared.ts'
+import { globToRegExp } from './workspace.ts'
 
 /** One delegation tool whose calls the plugin may orchestrate. */
 export interface DelegationTool {
@@ -33,7 +35,9 @@ export interface Config {
    */
   readonly defaults?: {
     readonly subagentModel?: ModelRoute
-    readonly reviewer?: { readonly enabled?: boolean; readonly model?: ModelRoute }
+    /** Reasoning effort for subagents; absent means the recommended level for their model. */
+    readonly workerEffort?: string
+    readonly reviewer?: { readonly enabled?: boolean; readonly model?: ModelRoute; readonly effort?: string }
   }
   /** State directory; default `<DSH_HOME>/dsh-orquestrator`. */
   readonly stateDir?: string
@@ -45,6 +49,27 @@ export interface Config {
   readonly maxWorkerReportChars?: number
   /** Most sessions kept in the persisted state; the least recently updated are pruned (default 500). */
   readonly maxSessions?: number
+  /**
+   * What the reviewer sees of the worker: `auto` (default) withholds the worker's report whenever the working
+   * tree changed, so the reviewer judges the diff, not the story; `isolated` always withholds it; `claims`
+   * always hands it over, delimited as untrusted.
+   */
+  readonly reviewerContext?: 'auto' | 'isolated' | 'claims'
+  /** Ask the reviewer to report through DSH's structured-output tool and render the report from it (default true). */
+  readonly structuredVerdict?: boolean
+  /**
+   * Ceiling on the reasoning effort of every child the plugin starts, per role. Defaults come from the
+   * model's own profile (`src/models.ts`), else `medium`. `false` turns the ceiling off.
+   */
+  readonly effort?: false | { readonly worker?: string; readonly reviewer?: string }
+  /** Ceiling on output tokens per model request (reasoning included), per role. `false` turns a ceiling off. */
+  readonly limits?: false | { readonly workerMaxTokens?: number | false; readonly reviewerMaxTokens?: number | false }
+  /** Retry a worker once, one reasoning level lower, when it stopped at its token limit (default true). */
+  readonly retryOnTokenLimit?: boolean
+  /** Fingerprint the working tree with git around each reviewed delegation (default true). */
+  readonly workspaceChecks?: boolean
+  /** Extra globs for files the reviewer must scrutinize when the worker changed them (`*` and `**`). */
+  readonly sensitivePaths?: readonly string[]
 }
 
 /** Validated configuration with every default resolved. */
@@ -57,7 +82,19 @@ export interface PluginConfig {
   readonly workerHandoff: boolean
   readonly maxWorkerReportChars: number
   readonly maxSessions: number
+  readonly reviewerContext: 'auto' | 'isolated' | 'claims'
+  readonly structuredVerdict: boolean
+  /** Effort ceiling policy: `enabled` false leaves children exactly as the user picked them. */
+  readonly effort: { readonly enabled: boolean; readonly caps: { readonly worker?: EffortLevel; readonly reviewer?: EffortLevel } }
+  /** Output-token ceilings per role; undefined means no ceiling. */
+  readonly limits: { readonly worker: number | undefined; readonly reviewer: number | undefined }
+  readonly retryOnTokenLimit: boolean
+  readonly workspaceChecks: boolean
+  readonly sensitivePaths: readonly RegExp[]
 }
+
+/** Default output-token ceilings: far below the 384K-943K some routes allow, far above any legitimate single step. */
+export const DEFAULT_LIMITS = Object.freeze({ worker: 64_000, reviewer: 32_000 })
 
 /** The shipped `standard` preset delegates through these two rows. */
 const DEFAULT_TOOLS: readonly DelegationTool[] = [
@@ -89,6 +126,20 @@ function text(field: string, value: unknown, fallback: string): string {
   if (value === undefined) return fallback
   if (typeof value !== 'string' || value.trim() === '') throw invalid(field, 'must be a non-empty string')
   return value
+}
+
+/** A canonical reasoning level, or undefined when absent. */
+function level(field: string, value: unknown): EffortLevel | undefined {
+  if (value === undefined) return undefined
+  if (!isEffortLevel(value)) throw invalid(field, 'must be one of off, minimal, low, medium, high, xhigh, max')
+  return value
+}
+
+/** An output-token ceiling: a positive integer, `false` (none), or the default when absent. */
+function ceiling(field: string, value: unknown, fallback: number): number | undefined {
+  if (value === undefined) return fallback
+  if (value === false) return undefined
+  return positiveInt(field, value, fallback)
 }
 
 /**
@@ -125,13 +176,25 @@ export function parsePluginConfig(raw: Config | undefined): PluginConfig {
     const reviewerModel = reviewerRaw?.model === undefined ? null : parseModelRoute(reviewerRaw.model)
     if (reviewerModel === undefined) throw invalid('defaults.reviewer.model', 'needs non-empty "provider" and "model"')
     const enabled = bool('defaults.reviewer.enabled', reviewerRaw?.enabled, false)
+    const workerEffort = level('defaults.workerEffort', config.defaults.workerEffort) ?? null
+    const reviewerEffort = level('defaults.reviewer.effort', reviewerRaw?.effort) ?? null
     if (subagentModel !== null || enabled) {
-      defaults = { version: 1, subagentModel, reviewer: { enabled, model: enabled ? reviewerModel : null }, remember: true }
+      defaults = {
+        version: 1,
+        subagentModel,
+        workerEffort,
+        reviewer: { enabled, model: enabled ? reviewerModel : null, effort: enabled ? reviewerEffort : null },
+        remember: true,
+      }
     }
   }
 
   if (config.stateDir !== undefined && (typeof config.stateDir !== 'string' || config.stateDir.trim() === '')) {
     throw invalid('stateDir', 'must be a non-empty string')
+  }
+  const reviewerContext = config.reviewerContext ?? 'auto'
+  if (reviewerContext !== 'auto' && reviewerContext !== 'isolated' && reviewerContext !== 'claims') {
+    throw invalid('reviewerContext', 'must be "auto", "isolated" or "claims"')
   }
 
   return {
@@ -143,5 +206,42 @@ export function parsePluginConfig(raw: Config | undefined): PluginConfig {
     workerHandoff: bool('workerHandoff', config.workerHandoff, true),
     maxWorkerReportChars: positiveInt('maxWorkerReportChars', config.maxWorkerReportChars, 60_000),
     maxSessions: positiveInt('maxSessions', config.maxSessions, 500),
+    reviewerContext,
+    structuredVerdict: bool('structuredVerdict', config.structuredVerdict, true),
+    effort: parseEffortPolicy(config.effort),
+    limits: parseLimits(config.limits),
+    retryOnTokenLimit: bool('retryOnTokenLimit', config.retryOnTokenLimit, true),
+    workspaceChecks: bool('workspaceChecks', config.workspaceChecks, true),
+    sensitivePaths: parseSensitivePaths(config.sensitivePaths),
   }
+}
+
+/** Resolve the `effort` block. */
+function parseEffortPolicy(raw: Config['effort']): PluginConfig['effort'] {
+  if (raw === undefined) return { enabled: true, caps: {} }
+  if (raw === false) return { enabled: false, caps: {} }
+  if (typeof raw !== 'object' || raw === null) throw invalid('effort', 'must be false or an object with worker and/or reviewer')
+  const worker = level('effort.worker', raw.worker)
+  const reviewer = level('effort.reviewer', raw.reviewer)
+  return { enabled: true, caps: { ...worker === undefined ? {} : { worker }, ...reviewer === undefined ? {} : { reviewer } } }
+}
+
+/** Resolve the `limits` block. */
+function parseLimits(raw: Config['limits']): PluginConfig['limits'] {
+  if (raw === undefined) return { worker: DEFAULT_LIMITS.worker, reviewer: DEFAULT_LIMITS.reviewer }
+  if (raw === false) return { worker: undefined, reviewer: undefined }
+  if (typeof raw !== 'object' || raw === null) throw invalid('limits', 'must be false or an object')
+  return {
+    worker: ceiling('limits.workerMaxTokens', raw.workerMaxTokens, DEFAULT_LIMITS.worker),
+    reviewer: ceiling('limits.reviewerMaxTokens', raw.reviewerMaxTokens, DEFAULT_LIMITS.reviewer),
+  }
+}
+
+/** Compile the extra sensitive-path globs. */
+function parseSensitivePaths(raw: Config['sensitivePaths']): readonly RegExp[] {
+  if (raw === undefined) return []
+  if (!Array.isArray(raw) || raw.some(entry => typeof entry !== 'string' || entry.trim() === '')) {
+    throw invalid('sensitivePaths', 'must be an array of non-empty glob strings')
+  }
+  return raw.map(entry => globToRegExp(entry.trim()))
 }

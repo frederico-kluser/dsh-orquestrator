@@ -8,6 +8,9 @@
  *  1. Should subagents run on a different model than the main agent?
  *  2. Should an independent reviewer validate each subagent's work, and on
  *     which model?
+ * A third, collapsed block shows how hard each role may think (reasoning
+ * effort). It defaults to the recommended level per model, so most people
+ * never open it, and it says in one line why it exists.
  *
  * "Cancel" (button, Escape, mask click) never blocks the task: in gate mode it
  * clears any stored choice and lets the task go out exactly as stock DSH.
@@ -18,10 +21,12 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type JSX } fr
 import {
   Button, Checkbox, IconAgentPresetOutline16, IconShieldOutline16, Modal, Switch,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { buildConfig, routeKey, type ModelRoute } from '../shared.ts'
-import { modelName, type CatalogState } from './catalog.ts'
+import { notesFor, sameFamily, sameModel, type Role } from '../models.ts'
+import { buildConfig, type ModelRoute } from '../shared.ts'
+import { adviseEffort, modelName, type CatalogState } from './catalog.ts'
 import type { DialogRequest } from './dialogs.ts'
 import { installFocusTrap } from './focus-trap.ts'
+import { EffortPicker } from './EffortPicker.tsx'
 import type { OrchestratorKey } from './locales.ts'
 import { ModelPicker } from './ModelPicker.tsx'
 
@@ -55,6 +60,9 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
   const [subagentRoute, setSubagentRoute] = useState<ModelRoute | null>(initial.subagentModel)
   const [reviewerOn, setReviewerOn] = useState(initial.reviewer.enabled)
   const [reviewerRoute, setReviewerRoute] = useState<ModelRoute | null>(initial.reviewer.model)
+  const [workerEffort, setWorkerEffort] = useState<string | null>(initial.workerEffort)
+  const [reviewerEffort, setReviewerEffort] = useState<string | null>(initial.reviewer.effort)
+  const [effortOpen, setEffortOpen] = useState(initial.workerEffort !== null || initial.reviewer.effort !== null)
   const [remember, setRemember] = useState(initial.remember)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -75,14 +83,31 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
   const mainName = mainRoute === null ? undefined : modelName(catalog.groups, mainRoute)
   const needsModel = subagentsOn && subagentRoute === null
 
-  // Evidence-based nudge: errors of models are strongly correlated, and a
-  // reviewer on the very same model shares the worker's blind spots.
+  // Evidence-based nudges: errors of models are strongly correlated, and a
+  // reviewer on the very same model (or one the vendor serves from it) shares
+  // the worker's blind spots; one from the same vendor family shares many.
   const workerEffective: ModelRoute | null = subagentsOn ? subagentRoute : mainRoute
   const reviewerEffective = reviewerRoute ?? workerEffective
   const sameModelReview = reviewerOn
-    && (reviewerRoute === null
-      ? true
-      : workerEffective !== null && routeKey(reviewerEffective ?? reviewerRoute) === routeKey(workerEffective))
+    && (reviewerRoute === null || (workerEffective !== null && sameModel(reviewerRoute, workerEffective)))
+  const sameFamilyReview = reviewerOn && !sameModelReview
+    && reviewerEffective !== null && workerEffective !== null && sameFamily(reviewerEffective, workerEffective)
+
+  // Reasoning effort: what "recommended" means for each role on its effective route.
+  const effortActive = subagentsOn || reviewerOn
+  const workerAdvice = workerEffective === null ? undefined : adviseEffort(catalog.groups, workerEffective, 'worker', subagentsOn ? undefined : mainRoute?.reasoningEffort)
+  const reviewerAdvice = reviewerOn && reviewerEffective !== null ? adviseEffort(catalog.groups, reviewerEffective, 'reviewer') : undefined
+  const knownEffort = (level: string | null, advice: typeof workerAdvice): string | null => (
+    level !== null && advice?.ladder?.efforts.some(effort => effort.id === level) === true ? level : null
+  )
+  const workerChosen = knownEffort(workerEffort, workerAdvice)
+  const reviewerChosen = knownEffort(reviewerEffort, reviewerAdvice)
+  const recommendedText = (advice: typeof workerAdvice): string => (
+    advice?.level === undefined ? t('effort.recommended.default') : t('effort.recommended', { level: advice.level.name })
+  )
+  const noteTexts = (route: ModelRoute | null, role: Role): string[] => (
+    route === null ? [] : notesFor(route, role).slice(0, 2).map(note => t(`note.${note}` as OrchestratorKey))
+  )
 
   const cancel = useCallback(async (): Promise<void> => {
     if (busy) return
@@ -110,6 +135,8 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
       reviewerEnabled: reviewerOn,
       reviewerModel: reviewerRoute,
       remember,
+      workerEffort: workerChosen,
+      reviewerEffort: reviewerChosen,
     })
     setBusy(true)
     setError(null)
@@ -121,7 +148,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
       return
     }
     request.resolve({ kind: 'confirm', config })
-  }, [busy, needsModel, subagentsOn, subagentRoute, reviewerOn, reviewerRoute, remember, request, t])
+  }, [busy, needsModel, subagentsOn, subagentRoute, reviewerOn, reviewerRoute, remember, workerChosen, reviewerChosen, request, t])
 
   const sameText = useMemo(
     () => (mainName === undefined ? t('subagents.same.unknown') : t('subagents.same', { model: mainName })),
@@ -193,6 +220,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                 />
               )
             : undefined}
+          {subagentsOn ? noteTexts(subagentRoute, 'worker').map(text => <p key={text} className="dsh-orq-hint dsh-orq-note">{text}</p>) : undefined}
           {needsModel && catalog.status === 'ready' ? <p className="dsh-orq-hint" role="status">{t('subagents.needModel')}</p> : undefined}
         </section>
 
@@ -233,10 +261,75 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                     onMenuOpenChange={onMenuOpenChange}
                   />
                   {sameModelReview ? <p className="dsh-orq-hint">{t('reviewer.tip.sameModel')}</p> : undefined}
+                  {sameFamilyReview ? <p className="dsh-orq-hint">{t('reviewer.tip.sameFamily')}</p> : undefined}
+                  {noteTexts(reviewerEffective, 'reviewer').map(text => <p key={text} className="dsh-orq-hint dsh-orq-note">{text}</p>)}
+                  <p className="dsh-orq-hint">{t('reviewer.cost')}</p>
                 </>
               )
             : undefined}
         </section>
+
+        {effortActive
+          ? (
+              <section className="dsh-orq-section dsh-orq-section-quiet" aria-labelledby={`${uid}-effort`}>
+                <div className="dsh-orq-row">
+                  <div className="dsh-orq-heading">
+                    <h3 className="dsh-orq-title" id={`${uid}-effort`}>{t('effort.title')}</h3>
+                    <p className="dsh-orq-hint">{workerChosen === null && reviewerChosen === null ? t('effort.summary.recommended') : t('effort.summary.custom')}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="dsh-orq-link"
+                    aria-expanded={effortOpen}
+                    aria-controls={`${uid}-effort-body`}
+                    disabled={busy}
+                    onClick={() => { setEffortOpen(!effortOpen) }}
+                  >
+                    {effortOpen ? t('effort.hide') : t('effort.show')}
+                  </button>
+                </div>
+                {effortOpen
+                  ? (
+                      <div className="dsh-orq-stack-tight" id={`${uid}-effort-body`}>
+                        <p className="dsh-orq-hint">{t('effort.hint')}</p>
+                        {workerAdvice?.ladder !== undefined
+                          ? (
+                              <EffortPicker
+                                id={`${uid}-worker-effort`}
+                                label={t('effort.subagent')}
+                                ladder={workerAdvice.ladder}
+                                value={workerChosen}
+                                onChange={setWorkerEffort}
+                                recommendedLabel={recommendedText(workerAdvice)}
+                                defaultSuffix={t('effort.defaultSuffix')}
+                                disabled={busy}
+                                onMenuOpenChange={onMenuOpenChange}
+                              />
+                            )
+                          : <p className="dsh-orq-hint">{t('effort.subagent')}: {t('effort.none')}</p>}
+                        {reviewerOn
+                          ? (reviewerAdvice?.ladder !== undefined
+                              ? (
+                                  <EffortPicker
+                                    id={`${uid}-reviewer-effort`}
+                                    label={t('effort.reviewer')}
+                                    ladder={reviewerAdvice.ladder}
+                                    value={reviewerChosen}
+                                    onChange={setReviewerEffort}
+                                    recommendedLabel={recommendedText(reviewerAdvice)}
+                                    defaultSuffix={t('effort.defaultSuffix')}
+                                    disabled={busy}
+                                    onMenuOpenChange={onMenuOpenChange}
+                                  />
+                                )
+                              : <p className="dsh-orq-hint">{t('effort.reviewer')}: {t('effort.none')}</p>)
+                          : undefined}
+                      </div>
+                    )
+                  : undefined}
+              </section>
+            )
+          : undefined}
 
         <Checkbox checked={remember} onChange={setRemember} label={t('remember.label')} disabled={busy} />
         {error !== null ? <p className="dsh-orq-error" role="alert">{error}</p> : undefined}

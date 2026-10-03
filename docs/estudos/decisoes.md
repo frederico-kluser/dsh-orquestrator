@@ -1,0 +1,472 @@
+# Registro de decisões da versão 0.2.0
+
+Cada mudança da 0.2.0 saiu dos 16 estudos (`E01` a `E16`, em [`fontes/`](fontes)) depois de
+checagem contra o código do DSH e contra dados públicos; veja [`sintese.md`](sintese.md) para o
+cruzamento e [`README.md`](README.md) para o método. Aqui está o **porquê** de cada uma, e das
+recomendações que **não** foram adotadas, para que ninguém as reabra sem o contexto.
+
+* **D01 a D14**: adotadas (código, interface ou documentação mudaram).
+* **N01 a N16**: não adotadas ou adiadas, cada uma com o que faria reabri-la.
+
+Resumo:
+
+| Id | Mudança | Arquivos principais |
+| --- | --- | --- |
+| D01 | Teto de esforço de raciocínio por papel e por modelo | `src/models.ts`, `src/effort.ts` |
+| D02 | Teto de tokens de saída por requisição | `src/effort.ts`, `src/config.ts` |
+| D03 | Nova tentativa única, um nível abaixo, quando o trabalhador bate no limite de tokens | `src/pipeline.ts` |
+| D04 | Veredicto estruturado pela ferramenta `structured_output` do DSH, texto como reserva | `src/reviewer-protocol.ts`, `src/pipeline.ts` |
+| D05 | Reconciliação do veredicto: o relatório não pode contradizer a si mesmo | `src/reviewer-protocol.ts` |
+| D06 | Revisão em contexto limpo (`reviewerContext`) com fatos medidos por git | `src/workspace.ts`, `src/pipeline.ts` |
+| D07 | Pacote do revisor delimitado, defanged e higienizado | `src/reviewer-protocol.ts` |
+| D08 | Persona 2.0: autoridade, descoberta dos testes, triagem, sabotagem, saída hostil | `src/reviewer-protocol.ts` |
+| D09 | Sinalização dos arquivos de teste, runner e CI alterados | `src/workspace.ts` |
+| D10 | Contrato de handoff do trabalhador em até 400 palavras | `src/reviewer-protocol.ts` |
+| D11 | Conhecimento de modelos no diálogo: alias, família, notas | `src/models.ts`, `src/client/` |
+| D12 | Custo e espera da revisão visíveis antes de confirmar | `src/client/` |
+| D13 | Bloco de esforço recolhido, "Recomendado" por padrão, escolha explícita até o host | `src/client/`, `src/shared.ts` |
+| D14 | Modelo de segurança e limites documentados | `README.md`, `docs/DESIGN.md` |
+
+---
+
+## Mudanças adotadas
+
+### D01 — Teto de esforço de raciocínio por papel e por modelo
+
+**Problema.** Dois sintomas das execuções reais: o trabalhador rápido gastou o orçamento de
+tokens inteiro num caso de borda numérico, e um modelo grande de raciocínio levou cerca de dois
+minutos por turno. Nenhum estudo explicava por que *este* plugin sofria disso.
+
+**Causa, no código do DSH.** `resolveChildAgentOptions` parte das opções do pai, aplica por cima
+o que o plugin pediu e, **quando a rota muda sem esforço explícito, apaga o esforço do pai**
+para que o modelo escolhido "resolva o próprio padrão". Em todas as rotas desta máquina o padrão
+é `reasoning: max`. O plugin só passava provedor e modelo, então todo filho re-roteado rodava em
+`max` (sintoma 1), e os modelos lentos, no pior caso deles (sintoma 2). Fixado em
+`test/contract/dsh-source.test.ts`.
+
+**Evidência.** Consenso de 12 estudos (E01 a E05, E07 a E13): `max` degrada. Trabalhador rápido
+em 30 a 50 numa escala de 100; revisor `low` a `medium`; Sonnet 5.5 em `high`, nunca `max`
+(E02 e E04 medem `xhigh` acima de `max`, com menos tokens e menos edições fora de escopo).
+
+**Decisão.** Um **teto**, não um valor imposto: o plugin pergunta ao DSH a escada do modelo
+(`ctx.llm.resolveModelInfo`) e o nível que a rota usaria sozinha. Se esse nível está dentro do
+teto, não toca em nada. Se está acima, usa o degrau mais alto que não passa do teto. Nunca
+escolhe `off` por conta própria. O teto vem, em ordem de prioridade: da escolha explícita do
+usuário no diálogo (vale mesmo acima do teto), da configuração `effort.worker` e
+`effort.reviewer`, da linha do modelo em `MODEL_PROFILES`, e por fim `medium`.
+
+**Por quê assim.**
+* *Teto e não valor:* uma rota que já roda em `low` não deve ser promovida a `medium`.
+* *Escada nomeada, não 1 a 100:* o DSH, e a sonda do próprio usuário no `settings.yaml`, usam
+  `off` a `max`. A escala numérica de E05 contradiz essa sonda (N13). `medium` é o ponto da
+  escada nomeada onde caem os "30 a 50" dos estudos.
+* *Por perfil de modelo:* os estudos divergem de verdade (Sonnet em `high`, DeepSeek Flash
+  revisor em `low`, MiMo trabalhador em `low`); um único número serviria mal a todos. As linhas
+  são datadas e citam as fontes, e nenhuma passa de `high`.
+* *Degrau mais alto que não passa do teto:* o GLM 5.3 só oferece `low`, `high` e `max`.
+* *Nunca falha a delegação:* se o modelo não pode ser descrito, o filho segue exatamente com o
+  que o usuário escolheu (o comportamento da 0.1.0), e o log diz.
+* *O reviewer nunca herda o esforço do trabalhador:* são papéis diferentes.
+
+**Onde.** `src/models.ts` (`MODEL_PROFILES`, `capFor`, `chooseEffort`, `lowerEffort`),
+`src/effort.ts` (`planChild`, `parentOptionsOf`), `src/config.ts` (`effort`).
+
+**Verificação.** `test/unit/models.test.ts`, `effort.test.ts`, `pipeline-v2.test.ts`; contrato
+com o DSH; execução real com GLM 5.3, DeepSeek V4.1 Flash e MiMo-V2.6-Pro em
+[`../validation/README.md`](../validation/README.md), que lê o cabeçalho de requisição de cada
+sessão e mostra o esforço e o teto que cada modelo recebeu.
+
+### D02 — Teto de tokens de saída por requisição
+
+**Problema.** `resolveCallConfig` preenche `maxTokens` com o `defaultMaxTokens` do modelo: o
+`maxTokens` declarado da rota (131 072 no MiMo, 384 000 no DeepSeek V4.1 Flash do Azure, 943 718 no OpenRouter). Um laço de raciocínio só termina
+quando o orçamento acaba.
+
+**Evidência.** E01, E03, E05, E11, E12 e E13 pedem um teto rígido. Propõem 8 192 a 10 000 tokens
+**de raciocínio** (`max_thinking_tokens`), que o DSH não expõe (N13).
+
+**Decisão.** `limits.workerMaxTokens` = 64 000 e `limits.reviewerMaxTokens` = 32 000 por
+requisição (o teto inclui o raciocínio), aplicados só quando **reduzem** o teto conhecido do
+modelo e nunca o aumentam. Se o DSH não informa o teto do modelo (uma rota de catálogo sem
+`maxTokens` declarado), nada é enviado: um valor acima do máximo real do modelo seria rejeitado
+pelo provedor.
+
+**Por quê esses números.** Uma chamada de ferramenta que escreve um arquivo grande raramente passa
+de 25 mil tokens; 64 mil dá margem ao trabalhador, e 32 mil basta para o relatório do revisor.
+Um teto baixo demais transforma geração legítima em falha `max-tokens`, por isso o operador pode
+subir (`limits`) ou desligar (`limits: false`), e D03 recupera o caso comum.
+
+**Onde.** `src/effort.ts`, `src/config.ts` (`DEFAULT_LIMITS`).
+
+**Verificação.** `effort.test.ts` ("does not lower an output ceiling that is already below the
+cap"), `config.test.ts`, execução real (coluna "Max output tokens" das sessões).
+
+### D03 — Nova tentativa única, um nível abaixo, quando o trabalhador bate no limite
+
+**Problema.** Mesmo com teto, um laço de raciocínio pode esgotar os tokens (cenário D2 da
+validação da 0.1.0: o trabalhador "ran out of tokens"; o plugin só repassava o erro).
+
+**Evidência.** E03 e E07 propõem recuperação por escalonamento; E07 sugere trocar de modelo.
+
+**Decisão.** Se o trabalhador para por `max-tokens`, roda **uma vez mais**, no mesmo modelo,
+um degrau abaixo na escada dele, com uma nota ("inspecione o estado atual, não delibere sobre
+casos de borda além do enunciado, rode o teste cedo"). O banner da entrega avisa. Sem escada
+(modelo não descrito) ou já no degrau mais baixo, não repete. `retryOnTokenLimit: false` desliga.
+
+**Por quê assim.** Trocar de modelo (a ideia de E07) mudaria sem aviso a família, o custo e a
+escolha que o usuário fez no diálogo. Descer a escada do mesmo modelo é limitado, previsível e
+fica registrado. Não se aplica ao caminho em segundo plano (`continuable` sem revisor): quem
+conduz essa execução é o DSH, não o plugin.
+
+**Onde.** `src/pipeline.ts` (`runWorker`), `src/reviewer-protocol.ts` (`withRetryNote`).
+
+**Verificação.** `pipeline-v2.test.ts` (seis casos: retenta, retenta no caminho só-modelo, só
+uma vez, não retenta sem escada nem no degrau mais baixo nem em outras falhas nem após
+cancelamento).
+
+### D04 — Veredicto estruturado pela ferramenta `structured_output` do DSH
+
+**Problema.** O veredicto na primeira linha, em texto, é frágil com modelos menores: na
+validação da 0.1.0 um revisor vazou os passos da persona para o relatório, e outro aprovou
+comportamento errado. Texto vindo da área de trabalho também pode imitar um veredicto (E12).
+
+**Evidência.** E09, E12 e E13 pedem saída tipada validada por esquema. E01, E03, E05, E07, E08,
+E10 e E11 aceitam texto com verificação por expressão regular. E09 explica por que o
+`tool_choice` forçado não serve: dá HTTP 400 com raciocínio ligado no DeepSeek V4/V4.1 e no
+Claude Sonnet 5.5.
+
+**Decisão.** O DSH já resolve o problema que E09 descreve: o provedor `spawn` aceita
+`outputSchema` e registra no filho uma ferramenta **cooperativa** `structured_output`
+(sem forçar `tool_choice`), valida os argumentos contra o esquema, devolve o valor em
+`result.structured` e encerra o turno. O plugin passa `REVIEW_SCHEMA` (veredicto, resumo,
+critérios, entrega, verificação, mudanças do revisor, riscos, bloqueio) e **renderiza o relatório
+ele mesmo**, com o veredicto na primeira linha por construção. Se o provedor não tem a
+capacidade, ou o modelo terminou com texto, vale o relatório em texto com veredicto primeiro
+(`parseVerdict`, `normalizeReport`). Sem veredicto válido em nenhum dos dois, a entrega vai como
+`UNREVIEWED` junto com o texto do revisor como notas não verificadas.
+
+**Por quê assim.** O texto continua existindo porque nem todo provedor captura saída estruturada
+(o `fork` e os backends ACP podem não ter), e a regex de E08 é exatamente o que `parseVerdict` faz.
+O esquema usa só o subconjunto que o DSH impõe (objeto, matriz, enum, `required`,
+`additionalProperties: false`), com todas as propriedades obrigatórias, que é o formato que
+provedores com modo estrito aceitam. Um teste fixa essas restrições no código do DSH.
+
+**Onde.** `src/reviewer-protocol.ts` (`REVIEW_SCHEMA`, `parseReview`, `renderReview`),
+`src/pipeline.ts` (`interpretReview`), `src/host-services.ts` (`outputSchema`, `structured`).
+
+**Verificação.** `reviewer-protocol.test.ts` (esquema dentro do subconjunto, validação, renderização),
+`pipeline-v2.test.ts` (caminhos estruturado, texto, malformado, sem veredicto), contrato com o
+DSH (`structured_output`, `concludeTurn`, mapeamento de `completed` para `error`), execução real.
+
+### D05 — Reconciliação do veredicto
+
+**Problema.** Na validação da 0.1.0, o cenário F achou um revisor que aprovou com um
+comportamento falho, porque uma instrução de *como* construir prevaleceu sobre *o quê* o
+enunciado pedia.
+
+**Evidência.** E09 ("validação cega de execução": aprovar sem evidência executável é o modo de
+falha dominante), E10 (estados de abstenção e taxonomia de bloqueios), E08 (rejeitar relatório fora
+do formato antes de olhar o conteúdo).
+
+**Decisão.** O plugin confere o relatório contra ele mesmo antes de entregar:
+* aprovação ao lado de um critério `FAILED` ou `UNVERIFIED` vira `NOT_RESOLVED` (é uma
+  contradição, não um julgamento), e o banner diz que o plugin corrigiu;
+* aprovação sem nenhuma verificação registrada, com bloqueio informado, ou cuja lista de
+  mudanças discorda do veredicto, **mantém** o veredicto e leva um aviso (`Caution`) no banner.
+
+**Por quê assim.** Só as contradições rígidas mudam o veredicto, para não repetir o problema que
+E02 mede (rejeitar patches corretos: 86% de falsa rejeição quando o revisor julga sem sinal
+executável). Os casos de fronteira informam o agente principal e deixam a decisão com ele.
+
+**Onde.** `src/reviewer-protocol.ts` (`reconcile`), `src/pipeline.ts` (banner).
+
+**Verificação.** `reviewer-protocol.test.ts` (`reconcile`, `renderReview`), `pipeline-v2.test.ts`
+("corrects an approval that contradicts its own FAILED criterion").
+
+### D06 — Revisão em contexto limpo
+
+**Problema.** O revisor julgava a história do trabalhador. O dossiê de 2026-09-30 já registrava a
+evidência como **disputada** (fornecedor contra uma ablação pequena e inconsistente).
+
+**Evidência.** E02 (a justificativa do autor eleva a aprovação complacente; o rastro completo
+degrada o revisor), E03 ("estratégia de contexto limpo"), E09 (artefatos do trabalhador são
+dados não confiáveis). E13 faz a ressalva de que o grau de correlação de erros com o resumo do
+executor ainda é incerto.
+
+**Decisão.** `reviewerContext`: `auto` (padrão), `isolated` ou `claims`.
+* O plugin tira uma impressão da árvore de trabalho com git **antes e depois** do trabalhador
+  (caminho para hash do conteúdo de cada arquivo sujo ou não rastreado, até 2 000 caminhos,
+  4 MiB por arquivo).
+* Se a árvore **mudou**, o revisor não recebe o relatório do trabalhador. Recebe a tarefa
+  original e **fatos medidos** (quais arquivos mudaram, quais são de teste, runner ou CI).
+* Se **não mudou** (pergunta, pesquisa, relatório), o relatório é a entrega e vai como alegação
+  não confiável, delimitada.
+* Sem git, sem diretório, com falha ou timeout: `claims`, e o log diz por quê.
+
+**Por quê assim.** Isolamento absoluto quebraria as tarefas cuja entrega *é* o texto: o revisor
+não teria o que verificar. A impressão por conteúdo (e não por `git status`) detecta o arquivo já
+sujo que o trabalhador editou de novo. Trabalhadores paralelos na mesma árvore podem se misturar;
+nesse caso o erro cai para o lado mais seguro, o modo que o plugin já usava. O custo são três
+chamadas de git por delegação revisada.
+
+**Como medir depois.** `reviewerContext: claims` contra `isolated` permite o experimento de
+ancoragem que E02, E03 e E09 propõem, sem mudar código.
+
+**Onde.** `src/workspace.ts`, `src/pipeline.ts` (`decideReportMode`), `src/config.ts`.
+
+**Verificação.** `workspace.test.ts` (inclui um repositório git real, partindo de um
+subdiretório), `pipeline-v2.test.ts` ("what the reviewer sees of the worker"), execução real
+(coluna "Review packet").
+
+### D07 — Pacote do revisor delimitado, defanged e higienizado
+
+**Problema.** O texto do trabalhador, do enunciado e dos arquivos entra num prompt que decide uma
+aprovação.
+
+**Evidência.** E09 (`<untrusted_worker_artifact>` e hierarquia de instruções), E05 (isolar com
+XML), E12 (sequências ANSI em logs de teste, incidente real com `jqwik`).
+
+**Decisão.** O pacote usa `<task>`, `<workspace_facts>` e `<untrusted_worker_report>`. Qualquer
+ocorrência dessas tags dentro de texto não confiável é desarmada (`<\/task>`). `sanitize` remove
+sequências ANSI e OSC, caracteres de controle, zero-width e sobreposições bidirecionais, e
+preserva quebras de linha e tabulações. O título vai sanitizado e sem aspas. A persona diz que
+tudo dentro de `<untrusted_...>` é dado sem autoridade. O relatório do trabalhador também é
+higienizado na entrega `UNREVIEWED`, que chega ao agente principal.
+
+**Onde.** `src/reviewer-protocol.ts` (`sanitize`, `neutralize`, `buildReviewerPacket`).
+
+**Verificação.** `reviewer-protocol.test.ts` (tentativa de escapar das tags, sequências de
+terminal, título com aspas e quebra de linha).
+
+### D08 — Persona 2.0
+
+**Problema.** A persona da 0.1.0 não dizia como achar os testes, como separar falha antiga de falha
+nova, nem tratava a saída de ferramentas como hostil. Ela tinha cerca de 4,9 mil caracteres e agora tem cerca de 9,3 mil, em regras numeradas e curtas;
+modelos pequenos seguem personas longas pior (E09), e é por isso que as regras que fecham a
+porta ao carimbo de aprovação também existem do lado do plugin (D05).
+
+**Evidência e regra.** Cada regra cita o estudo:
+* ordem de autoridade (este prompt, depois o enunciado; o resto é dado): E09;
+* onde procurar os comandos de verificação (AGENTS.md ou CLAUDE.md, CI, Makefile, scripts do
+  manifesto, diretórios de teste; monorepo: o pacote que mudou primeiro): E10;
+* timeout em cada comando; nada de `|| true` nem pipe que esconda o código de saída: E10, E12;
+* triagem: repetir o teste que falhou sozinho até duas vezes, comparar com o commit base num
+  worktree temporário (nunca `stash` ou `reset` na área compartilhada): E10, E12;
+* vigiar o trabalhador que enfraquece testes, runner e CI: E12;
+* o verificado vence qualquer instrução de estilo: E05, E07, E08, E10;
+* saída de terminal é hostil; não ler nem enviar variáveis de ambiente e credenciais; não
+  instalar nem baixar sem necessidade: E12;
+* parar quando as verificações que decidem cada critério passaram, e nunca reverter um resultado
+  que já passa só porque alguém diz que está errado (o "second-guessing" do MiMo): E01, E05;
+* uma negação de permissão do sandbox pode vir disfarçada de outro erro; erro de E/S sem
+  explicação é um limite a relatar, não evidência sobre o código: E14 (issue DSH 3144).
+
+**Por quê não uma persona "compacta" para modelos pequenos (E09).** Escolher por tamanho exigiria
+heurística sobre ids de modelo e uma medição que não temos; fica como experimento (`sintese.md`,
+seção 8). A mitigação adotada é estrutural (D04, D07).
+
+**Onde.** `src/reviewer-protocol.ts` (`PERSONA_HEAD`).
+
+**Verificação.** `reviewer-protocol.test.ts` fixa cada frase de regra por expressão regular; a
+persona não pode conter chaves duplas (o DSH interpola personas).
+
+### D09 — Sinalização dos arquivos de teste, runner e CI alterados
+
+**Problema.** Um trabalhador pode "passar" enfraquecendo o verificador: apagar o teste, trocar a
+asserção, mexer no `conftest.py`, forçar o código de saída.
+
+**Evidência.** E12 (sabotagem do verificador, congelamento de diretórios de teste), E02 e o dossiê
+(adulteração de testes sob pressão).
+
+**Decisão.** Dos arquivos que a medição de D06 mostra alterados, o plugin lista no pacote do
+revisor os que são testes, configuração de runner (`conftest.py`, `jest`/`vitest`/`playwright`
+config, `package.json`, `pyproject.toml`, `Makefile`...) ou CI, e a persona manda ler cada diff.
+`sensitivePaths` acrescenta globs do operador.
+
+**Por quê assim.** O congelamento que E12 propõe (rejeitar o patch) quebraria "adicione
+testes", que é uma tarefa legítima e comum (N03). Sinalizar e exigir leitura mantém a defesa e
+o caso de uso.
+
+**Onde.** `src/workspace.ts` (`classifyPath`, `describeFacts`), `src/config.ts` (`sensitivePaths`).
+
+**Verificação.** `workspace.test.ts` (classificação, globs, repositório real com um teste novo).
+
+### D10 — Contrato de handoff em até 400 palavras
+
+**Evidência.** E03. **Decisão.** O trabalhador termina com um relatório de no máximo 400 palavras
+(o que fez, arquivos, comandos e resultados, suposições e o que não verificou). Em revisão limpa
+ele não chega ao revisor, mas continua sendo a entrega no caso `UNREVIEWED`. **Onde.**
+`HANDOFF_CONTRACT`. **Verificação.** `reviewer-protocol.test.ts`.
+
+### D11 — Conhecimento de modelos no diálogo
+
+**Problema.** O seletor lista o catálogo do usuário, e escolher o `deepseek-v4-pro` na API oficial
+executa o V4.1 Flash desde 2026-09-14. Escolher V4-Pro de trabalhador e V4.1 Flash de revisor
+paga por uma "segunda opinião" do mesmo modelo.
+
+**Evidência.** E05, E07, E08, E10 e E11 sobre a aposentadoria, **confirmada** pelo aviso oficial
+(`sintese.md`, seção 5) e pela tabela embutida do provedor `deepseek-official`, que ainda lista
+os dois ids. E02 e E05 sobre revisores da mesma família.
+
+**Decisão.** O diálogo **anota, não esconde**:
+* *mesmo modelo* por linhagem (`lineageOf`): `claude-sonnet-5-5` no Azure e
+  `anthropic/claude-sonnet-5.5` no OpenRouter são o mesmo modelo; V4-Pro e V4-Flash na rota
+  oficial equivalem a `deepseek-flash`; no OpenRouter, onde o V4-Pro é um endpoint próprio, não
+  se afirma alias;
+* *mesma família* (`familyOf`, pelo id do modelo, nunca pelo nome do provedor): uma dica, nunca
+  um bloqueio;
+* *notas* por modelo e papel (`notesFor`), até duas por vez: redirecionamento do V4-Pro,
+  esgotamento de orçamento do V4.1 Flash, revisor compacto, MiMo lento em esforço alto,
+  `ultraspeed` a cerca de dez vezes o preço, GLM só texto e de raciocínio sempre ligado, Sonnet
+  em `max`.
+
+**Por quê não esconder o V4-Pro (a recomendação de E05, E07, E08 e E10).** O catálogo é do usuário
+e do DSH; um plugin que esconde modelos do seletor muda um contrato que não é dele. A nota e a
+detecção de "mesmo modelo" resolvem o dano real (a falsa segunda opinião). Fica como sugestão
+para o DSH que a tabela embutida deixe de listar o id aposentado.
+
+**Por quê a família é só uma dica (a recomendação de E02 de torná-la obrigatória).** Um ambiente
+com um fornecedor só não pode ficar sem revisor; o dossiê e E05 concordam que outra família ajuda
+mas não garante independência (N14).
+
+**Onde.** `src/models.ts`, `src/client/OrchestratorDialog.tsx`, `src/client/locales.ts`
+(`note.*`, três idiomas, com teste de paridade).
+
+**Verificação.** `models.test.ts` (linhagem, família, perfis, aliases), `locales.test.ts` (toda
+nota que um perfil pode levantar tem texto), fase `effort` do teste de navegador.
+
+### D12 — Custo e espera da revisão visíveis
+
+**Evidência.** E02, E07, E08, E13 (previsibilidade de custo evita a reação negativa ao faturamento
+imprevisto). E08 estima de 94% a 239% a mais por tarefa com revisão.
+**Decisão.** Sob o seletor do revisor, uma linha: "A revisão roda um segundo modelo depois de
+cada subagente: espere cerca do dobro de custo e de espera por delegação. Dispense-a em edições
+pequenas e em documentação." **Por quê "cerca do dobro".** Os números dos estudos não são
+reproduzíveis e os preços mudam em dias; a ordem de grandeza é o que se sustenta. O DSH também
+zera a metadata de custo do pi-ai, então o plugin não tem preço para mostrar.
+
+### D13 — Bloco de esforço recolhido; escolha explícita até o host
+
+**Decisão.** Quando algo está ligado, aparece "Esforço de raciocínio", **recolhido**, dizendo
+"Nível recomendado para cada modelo". Ao abrir: uma frase de por quê, e um seletor por papel cuja
+primeira linha é "Recomendado: Medium" (o mesmo cálculo do host, com a escada do próprio
+catálogo do navegador) seguida dos níveis do modelo. Modelo sem escada: diz que não há níveis.
+A escolha explícita viaja em `workerEffort` e `reviewer.effort` (`shared.ts`), com validação
+estrita; configurações gravadas na 0.1.0 continuam carregando (campos opcionais).
+
+**Por quê recolhido.** E07 e E13 mostram que escolhas demais no ponto de envio geram o reflexo de
+dispensa; o padrão recomendado atende quase todos, e o bloco existe para quem quer ver ou
+mudar. **Por quê o mesmo cálculo no cliente e no host.** O diálogo nunca promete um nível que o
+host não usaria (`adviseEffort` e `planChild` chamam `chooseEffort` e `capFor`).
+
+**Onde.** `src/client/EffortPicker.tsx`, `OrchestratorDialog.tsx`, `catalog.ts`, `host-types.ts`.
+
+**Verificação.** `catalog.test.ts`, `shared.test.ts`, fase `effort` do teste de navegador: o nível
+recomendado aparece, uma escolha explícita chega ao host com 200, e `/orquestrar` salva os campos.
+
+### D14 — Modelo de segurança e limites documentados
+
+**Problema.** O revisor **executa código não confiável** com o preset de permissão da sessão. O
+README dizia só que o preset é a fronteira real.
+
+**Evidência.** E12 (ameaças e avisos recomendados), E14 (DSH 853, 1769, 3144: RCE sem
+autenticação no plano de controle, escape do bwrap `workspace-write`, negações do sandbox
+invisíveis ao modelo).
+
+**Decisão.** `README.md` e `README.pt-BR.md` ganham a seção "Security model": o que o plugin faz
+(higieniza, delimita, vigia testes, não vaza segredos pelo próprio estado, valida rotas) e o que
+**não** faz (não isola a execução, não filtra a rede, não controla o ambiente do processo), o que
+um `APPROVED` quer dizer (uma verificação condicionada ao ambiente em que rodou, não uma garantia),
+e o que o operador deve ter no host para operações críticas. `docs/DESIGN.md` registra os limites.
+
+---
+
+## Recomendações não adotadas ou adiadas
+
+### N01 — Extinguir `APPROVED_WITH_FIXES` (revisor só lê)
+**Origem.** E02 (e, só para o MiMo, E04 e E11). **Por quê não.** O conserto de defeito provado é
+requisito do produto, e E03, E05, E07, E09, E10 e E12 o admitem com limites. A evidência de E02
+(edições fora de escopo em modelos que se corrigem demais) pede **contenção**, e isso foi feito
+(regras 7 e 8 da persona, lista de arquivos alterados, D09). **Reabrir** se a prática mostrar
+edições fora de escopo do revisor: acrescentar `reviewerMayFix: false` (somente leitura, devolve o
+teste que falha).
+
+### N02 — Veredicto JSON com *nonce* de sessão
+**Origem.** E12. **Por quê não.** O `structured_output` (D04) já tira o vetor que o *nonce*
+fecha (um veredicto copiado de um arquivo da área de trabalho). Contra um modelo que obedece a uma
+injeção, o *nonce* não ajuda: ele está no contexto do próprio modelo. Seria uma segunda forma de
+falhar sem ganho. **Reabrir** se o DSH passar a entregar o relatório do revisor por um canal que
+um agente comprometido possa forjar.
+
+### N03 — Congelar ou rejeitar diffs em diretórios de teste
+**Origem.** E12. **Por quê não.** Rejeitaria "adicione testes". Adaptada em D09 (sinalizar e
+exigir leitura). Montagem somente leitura dos testes é responsabilidade do host.
+
+### N04 — Isolamento de sistema operacional (microVM, gVisor, rede negada, segredos intermediados, mounts somente leitura)
+**Origem.** E12. **Por quê não.** Está fora da autoridade de um plugin: o revisor roda no
+processo do DSH com o preset da sessão. O plugin documenta o limite (D14). **Reabrir** se o DSH
+oferecer um provedor de subagente isolado (os backends ACP e SDK existem, E15, mas não foram
+exercidos aqui).
+
+### N05 — Revisor visual (Playwright, marcas numeradas, árvore de acessibilidade, diff perceptual) e roteamento por imagem anexada
+**Origem.** E06, E05, E07. **Por quê adiado.** Exige uma ferramenta de navegador na composição e
+um revisor multimodal; é uma funcionalidade nova (um modo de revisão), não uma correção. O diálogo
+já informa o essencial: GLM 5.3 só texto (confirmado), MiMo com variante `ultraspeed`, Gemini 3.8
+Flash como multimodal rápido. **Reabrir** quando houver um provedor de captura de tela no DSH
+local.
+
+### N06 — Trocar o modal por barra de chips e presets (Rápido, Equilibrado, Rigoroso)
+**Origem.** E13, E07. **Por quê adiado.** O plugin usa o slot `conversation.input.overlay`; um slot
+de barra no compositor não foi verificado na 0.1.6-alpha.2. Presets precisam resolver ids contra o
+catálogo de cada usuário. Mitigações adotadas: "recomendado" por padrão (D01, D13), escolha
+lembrada na conversa, `/orquestrar`. **Reabrir** com um slot de barra e uma medição de abandono.
+
+### N07 — Roteamento preditivo por sinais do repositório e perguntar só quando vale
+**Origem.** E07, E13. **Por quê adiado.** O benefício medido nos estudos é de roteamento geral; o
+plugin não tem dados de custo (o DSH zera a metadata de custo do pi-ai) nem telemetria para
+validar uma heurística. **Reabrir** com telemetria local de custo e latência por delegação.
+
+### N08 — Fixar provedor do OpenRouter, desligar fallbacks, ZDR, sufixo `:exacto`
+**Origem.** E08. **Por quê não.** O DSH marca `openRouterRouting` como `withhold` no
+catálogo do `llm-pi-ai`: não deixa um perfil enviar essas preferências, e o plugin não é dono do
+corpo da requisição. É configuração de `settings.yaml` e depende do DSH (`:exacto` como sufixo de
+id de modelo é possível, mas não foi testado).
+
+### N09 — Pipeline de catálogo de modelos (OpenRouter, models.dev, LiteLLM, Epoch, LMArena)
+**Origem.** E11. **Por quê não.** É infraestrutura de CI, não do plugin. `MODEL_PROFILES` é pequeno,
+datado, com fontes, e E11 mesmo diz que o papel recomendado é curadoria humana.
+
+### N10 — Catálogo de 14 cargos, topologia de quatro estágios, enxame de leitura, limites de paralelismo
+**Origem.** E03, E04. **Por quê não.** O plugin embrulha a delegação que o agente principal já
+faz; planejar a decomposição é do agente principal ou de outro plugin.
+
+### N11 — Lista fixa de ferramentas negadas ao revisor (`toolFilter`)
+**Origem.** E12, E15. **Por quê não.** `tools.restrict` lança erro para nomes desconhecidos e
+as ferramentas do preset `standard` vivem no plano do agente: uma lista fixa quebraria a revisão
+numa composição que não tenha uma delas, e o plugin não tem como listar as ferramentas do filho
+antes de criá-lo. **Reabrir** quando o DSH aceitar uma restrição tolerante.
+
+### N12 — Interceptor que troca `max` por `xhigh` no OpenRouter
+**Origem.** E01, de uma fonte anedótica. **Por quê não.** Não se reproduz: em 2026-10-03 o
+OpenRouter respondeu HTTP 200 para `max`, `xhigh` e `high` no `deepseek/deepseek-v4.1-flash`.
+
+### N13 — Escala numérica 1 a 100 de esforço e `max_thinking_tokens`
+**Origem.** E01, E03, E05, E11, E13. **Por quê não.** O DSH e a sonda do usuário usam a escada
+nomeada; não existe `max_thinking_tokens` na configuração do DSH. Equivalentes adotados: D01 e D02.
+
+### N14 — Revisor de outra família como regra, e comitê de revisores baratos
+**Origem.** E02. **Por quê não.** Cross-family é uma dica (D11). O comitê (que o próprio E02 refuta)
+nunca foi o desenho do plugin: há um revisor.
+
+### N15 — Suprimir a revisão automaticamente (diff pequeno, só documentação, oráculo determinístico) e revisar em duas passagens
+**Origem.** E02, E03, E09. **Por quê adiado.** O usuário liga a revisão por conversa, e a dica de
+custo (D12) já o orienta. Uma supressão automática seria uma decisão do plugin contra uma escolha
+explícita. A revisão em duas passagens (primeiro escrever o teste sem ver a solução) é uma mudança
+de protocolo que pede medição; a regra 6 da persona cobre o essencial. **Reabrir** com a medição.
+
+### N16 — Escolher o modelo do orquestrador e editar a configuração do usuário
+**Origem.** E01, E02, E03, E05, E07, E08, E09, E12 divergem entre GLM 5.3 e Sonnet 5.5. **Por quê
+não.** O plugin entrega inerte e não decide o modelo do agente principal; `~/.dsh/settings.yaml`
+é do usuário e não foi tocado. Uma observação para o usuário, não uma mudança: o
+`agent-default-model` com `reasoningEffort: max` em modelos que o estudo E02 mede melhor em
+`high` ou `xhigh`.

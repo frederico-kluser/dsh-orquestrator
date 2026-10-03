@@ -40,11 +40,19 @@ export interface SessionsLike {
   binding(id: string): { readonly session: SessionFaceLike } | undefined
 }
 
+/** The reasoning levels one exact route offers, in escalation order, and the one it uses by default. */
+export interface CatalogReasoningLike {
+  readonly efforts: readonly { readonly id: string; readonly name: string }[]
+  readonly defaultEffort?: string
+}
+
 /** A model row of the catalog. */
 export interface CatalogModelLike {
   readonly id: string
   readonly name: string
   readonly description?: string
+  /** Absent for a model without reasoning levels. */
+  readonly reasoning?: CatalogReasoningLike
 }
 
 /** A provider group of the catalog. */

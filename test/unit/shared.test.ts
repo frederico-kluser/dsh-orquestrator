@@ -26,7 +26,7 @@ describe('parseModelRoute', () => {
 })
 
 describe('parseConfig', () => {
-  const valid = { version: 1, subagentModel: route, reviewer: { enabled: true, model: null }, remember: false }
+  const valid = { version: 1, subagentModel: route, workerEffort: null, reviewer: { enabled: true, model: null, effort: null }, remember: false }
 
   it('round-trips a valid configuration', () => {
     assert.deepEqual(parseConfig(valid), valid)
@@ -35,7 +35,18 @@ describe('parseConfig', () => {
 
   it('treats a missing model as null', () => {
     const parsed = parseConfig({ version: 1, reviewer: { enabled: false }, remember: true })
-    assert.deepEqual(parsed, { version: 1, subagentModel: null, reviewer: { enabled: false, model: null }, remember: true })
+    assert.deepEqual(parsed, { version: 1, subagentModel: null, workerEffort: null, reviewer: { enabled: false, model: null, effort: null }, remember: true })
+  })
+
+  it('reads the reasoning efforts, and loads a configuration written before they existed', () => {
+    const withEfforts = parseConfig({ ...valid, workerEffort: 'low', reviewer: { enabled: true, model: null, effort: 'high' } })
+    assert.equal(withEfforts?.workerEffort, 'low')
+    assert.equal(withEfforts?.reviewer.effort, 'high')
+    const legacy = { version: 1, subagentModel: route, reviewer: { enabled: true, model: null }, remember: false }
+    assert.deepEqual(parseConfig(legacy), valid)
+    assert.equal(parseConfig({ ...valid, workerEffort: '' }), undefined)
+    assert.equal(parseConfig({ ...valid, workerEffort: 3 }), undefined)
+    assert.equal(parseConfig({ ...valid, reviewer: { enabled: true, model: null, effort: 'a\nb' } }), undefined)
   })
 
   it('rejects a wrong version, missing flags and malformed routes', () => {
@@ -72,7 +83,15 @@ describe('buildConfig', () => {
 
   it('keeps the reviewer model while it is on', () => {
     const built = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: route, remember: false })
-    assert.deepEqual(built.reviewer, { enabled: true, model: route })
+    assert.deepEqual(built.reviewer, { enabled: true, model: route, effort: null })
+  })
+
+  it('carries the efforts, and drops the reviewer effort while the reviewer is off', () => {
+    const on = buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null, remember: false, workerEffort: 'low', reviewerEffort: 'high' })
+    assert.equal(on.workerEffort, 'low')
+    assert.equal(on.reviewer.effort, 'high')
+    const off = buildConfig({ subagentModel: null, reviewerEnabled: false, reviewerModel: null, remember: false, workerEffort: 'low', reviewerEffort: 'high' })
+    assert.equal(off.reviewer.effort, null)
   })
 })
 

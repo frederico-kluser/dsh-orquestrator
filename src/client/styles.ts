@@ -24,6 +24,9 @@ export const CSS = `
 .dsh-orq-title svg { flex: none; color: var(--dsw-alias-label-secondary); }
 .dsh-orq-hint { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
 .dsh-orq-steps { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0 0 0 16px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+.dsh-orq-section-quiet { gap: 8px; padding: 10px 14px; }
+.dsh-orq-stack-tight { display: flex; flex-direction: column; gap: 10px; }
+.dsh-orq-note { padding-left: 8px; border-left: 2px solid var(--dsw-alias-border-l2); }
 .dsh-orq-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .dsh-orq-field-label { font-size: 12px; line-height: 18px; font-weight: 500; color: var(--dsw-alias-label-secondary); }
 .dsh-orq-menu-root.dsh-orq-menu-root { display: flex; width: 100%; }

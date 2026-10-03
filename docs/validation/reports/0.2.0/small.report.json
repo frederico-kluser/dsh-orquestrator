@@ -1,0 +1,41 @@
+{
+  "phase": "small",
+  "checks": [
+    {
+      "name": "dialog is not taller than the viewport",
+      "ok": true,
+      "detail": "{\"x\":272,\"y\":22,\"width\":480,\"height\":556}"
+    },
+    {
+      "name": "primary action is inside the viewport",
+      "ok": true,
+      "detail": "{\"x\":551.34375,\"y\":518,\"width\":176.65625,\"height\":36}"
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "wire": [
+    {
+      "method": "GET",
+      "path": "/dsh-orquestrator/config",
+      "query": "?sessionId=session-19e4b0a8-8baa-4b14-a859-b3820609fa48",
+      "body": null,
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/dsh-orquestrator/config",
+      "query": "",
+      "body": "{\"sessionId\":\"session-19e4b0a8-8baa-4b14-a859-b3820609fa48\",\"config\":null}"
+    }
+  ],
+  "pageErrors": [
+    "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "failedResponses": [
+    "404 /open-in-app/icon/filemanager"
+  ]
+}

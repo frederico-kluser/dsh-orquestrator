@@ -71,7 +71,7 @@ describe('apply', () => {
     apply(r.ctx, { stateDir: join(scratch, 'a') })
     assert.deepEqual([...r.effects].sort(), ['dsh-orquestrator: delegation wrapper', 'dsh-orquestrator: routes'])
     assert.deepEqual(r.events, ['tools/execute'])
-    assert.ok(r.logs.some(line => /ready \(tools: subagent, subagent_fork; persisted sessions: 0\)/.test(line)))
+    assert.ok(r.logs.some(line => /ready \(tools: subagent, subagent_fork; persisted sessions: 0; effort ceilings: on; reviewer context: auto\)/.test(line)))
   })
 
   it('fails loud when delegation is missing', () => {

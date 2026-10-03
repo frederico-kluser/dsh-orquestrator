@@ -10,6 +10,13 @@
  *   confirm   choose subagent + reviewer models, send, wait for "Reviewed delivery"
  *   light     light theme, keyboard focus trap, Esc handling while a menu is open
  *   command   /orquestrar opens the configure dialog, Save persists, next send skips the modal
+ *   effort    reasoning-effort block (recommended levels, explicit pick), model notes, same-model and
+ *             same-family tips, reviewer cost hint; no model run needed
+ *
+ * Models: ONLY the three target models are ever picked or run. The main agent is the DSH home's
+ * default model (GLM 5.3); the dialog picks DeepSeek V4.1 Flash for subagents and MiMo-V2.6-Pro for
+ * the reviewer (the `TRIO` patterns below). The phases that need no model run only click through the
+ * dialog.
  *
  * Writes <OUT_DIR>/<phase>.report.json (one entry per check) and screenshots.
  * The token in DSH_URL is a per-process credential: it is never written out.
@@ -24,6 +31,15 @@ if (url === undefined) throw new Error('DSH_URL is required')
 mkdirSync(out, { recursive: true })
 
 const COMPOSER = /Describe what you want to build/
+/** The three target models, as the dialog's catalog names them and as the wire carries them. */
+const TRIO = {
+  worker: /DeepSeek V4\.1 Flash \(Azure\)/,
+  workerId: 'DeepSeek-V4.1-Flash',
+  reviewer: /MiMo-V2\.6-Pro/i,
+  reviewerId: 'xiaomi/mimo-v2.6-pro',
+  glm: /GLM 5\.3/,
+  officialFlash: /DeepSeek-V41-Flash/i,
+}
 const DIALOG = 'Orchestrate subagents'
 const checks = []
 const wire = []
@@ -40,6 +56,16 @@ const page = await context.newPage()
 const pageErrors = []
 page.on('pageerror', (error) => pageErrors.push(String(error).slice(0, 300)))
 page.on('console', (message) => { if (message.type() === 'error') pageErrors.push(`console: ${message.text().slice(0, 200)}`) })
+const failedUrls = []
+// The shell asks for a file-manager icon the Linux build does not ship; it is not this plugin's request.
+const relevantErrors = () => {
+  const foreign = failedUrls.length > 0 && failedUrls.every((entry) => entry.includes(' /open-in-app/icon/'))
+  return pageErrors.filter((error) => !(foreign && error.startsWith('console: Failed to load resource')))
+}
+page.on('response', (response) => {
+  // Name the URL behind a console "Failed to load resource": the token never reaches the report.
+  if (response.status() >= 400) failedUrls.push(`${String(response.status())} ${new URL(response.url()).pathname}`)
+})
 page.on('request', (request) => {
   if (!request.url().includes('/dsh-orquestrator/config')) return
   wire.push({ method: request.method(), path: new URL(request.url()).pathname, query: new URL(request.url()).search, body: request.postData() ?? null })
@@ -70,7 +96,7 @@ async function typeTask(text) {
 }
 
 async function finish() {
-  writeFileSync(`${out}/${phase}.report.json`, JSON.stringify({ phase, checks, wire, pageErrors }, null, 2))
+  writeFileSync(`${out}/${phase}.report.json`, JSON.stringify({ phase, checks, wire, pageErrors, failedResponses: failedUrls }, null, 2))
   const failed = checks.filter((item) => !item.ok)
   console.log(`\n${phase}: ${String(checks.length - failed.length)}/${String(checks.length)} checks passed; wire=${String(wire.length)} requests; pageErrors=${String(pageErrors.length)}`)
   await browser.close()
@@ -107,7 +133,7 @@ if (phase === 'cancel') {
   await shot('03-after-cancel')
   const config = wire.filter((item) => item.method === 'POST')
   check('cancel wrote null (no orchestration stored)', config.length >= 1 && config.every((item) => JSON.parse(item.body ?? '{}').config === null), JSON.stringify(config.map((item) => ({ s: item.status, b: item.body?.slice(0, 80) }))))
-  check('no page errors', pageErrors.length === 0, pageErrors.join(' | '))
+  check('no page errors', relevantErrors().length === 0, relevantErrors().join(' | '))
   await finish()
 }
 
@@ -133,13 +159,13 @@ if (phase === 'confirm') {
   await switches.nth(0).click()
   check('subagent switch on reveals the model picker', await dialog().getByText('Model for subagents').isVisible())
   check('confirm is disabled until a subagent model is chosen', await dialog().getByRole('button', { name: 'Send with these options' }).isDisabled())
-  await pick(/Choose a model/, /Gemini 3\.8 Flash/i)
-  check('subagent model chosen', await dialog().getByRole('button', { name: /Gemini 3\.8 Flash/i }).first().isVisible())
+  await pick(/Choose a model/, TRIO.worker)
+  check('subagent model chosen', await dialog().getByRole('button', { name: TRIO.worker }).first().isVisible())
 
   await switches.nth(1).click()
   check('reviewer switch reveals the four-step description and its picker', (await dialog().getByText('Fixes only what is actually broken').isVisible()) && (await dialog().getByText('Model for the reviewer').isVisible()))
   check('reviewer defaults to "same as the subagent"', await dialog().getByRole('button', { name: /Same model as the subagent/ }).isVisible())
-  await pick(/Same model as the subagent/, /haiku[- ]4[.-]5/i)
+  await pick(/Same model as the subagent/, TRIO.reviewer)
   await page.waitForTimeout(400)
   await shot('01-modal-filled')
   check('confirm is enabled', await dialog().getByRole('button', { name: 'Send with these options' }).isEnabled())
@@ -148,19 +174,19 @@ if (phase === 'confirm') {
   await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('modal closes after confirm', true), () => check('modal closes after confirm', false))
   const posts = wire.filter((item) => item.method === 'POST')
   const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
-  check('POST stored the chosen routes', saved !== null && saved.subagentModel?.model === 'google/gemini-3.8-flash' && saved.reviewer?.enabled === true && /haiku/i.test(saved.reviewer?.model?.model ?? ''), JSON.stringify(saved))
+  check('POST stored the chosen routes', saved !== null && saved.subagentModel?.model === TRIO.workerId && saved.reviewer?.enabled === true && saved.reviewer?.model?.model === TRIO.reviewerId, JSON.stringify(saved))
   check('host accepted the config (200)', posts.at(-1)?.status === 200, posts.at(-1)?.status)
   await shot('02-running')
 
-  // The real thing: the main agent delegates, the worker runs on Gemini, the reviewer on Haiku,
-  // and the tool result the main agent receives is the reviewer's report.
+  // The real thing: the main agent (GLM 5.3) delegates, the worker runs on DeepSeek V4.1 Flash, the
+  // reviewer on MiMo-V2.6-Pro, and the tool result the main agent receives is the reviewer's report.
   const delivered = await page.getByText('Reviewed delivery', { exact: false }).first().waitFor({ state: 'visible', timeout: 20 * 60_000 }).then(() => true, () => false)
   check('the main agent received a "Reviewed delivery" result', delivered)
   await page.waitForTimeout(1500)
   await shot('03-delivered')
   const transcript = await page.locator('body').innerText()
   check('the transcript carries a reviewer verdict', /verdict:\s*(APPROVED|APPROVED_WITH_FIXES|NOT_RESOLVED)/i.test(transcript))
-  check('no page errors', pageErrors.length === 0, pageErrors.join(' | '))
+  check('no page errors', relevantErrors().length === 0, relevantErrors().join(' | '))
   await finish()
 }
 
@@ -196,7 +222,7 @@ if (phase === 'light') {
   check('Escape closes the open menu but keeps the dialog', await dialog().isVisible())
   await page.keyboard.press('Escape')
   await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('a second Escape closes the dialog', true), () => check('a second Escape closes the dialog', false))
-  check('no page errors', pageErrors.length === 0, pageErrors.join(' | '))
+  check('no page errors', relevantErrors().length === 0, relevantErrors().join(' | '))
   await finish()
 }
 
@@ -227,7 +253,70 @@ if (phase === 'command') {
     check('the next task is sent without a modal', !(await dialog().isVisible().catch(() => false)))
     await shot('03-quiet')
   }
-  check('no page errors', pageErrors.length === 0, pageErrors.join(' | '))
+  check('no page errors', relevantErrors().length === 0, relevantErrors().join(' | '))
+  await finish()
+}
+
+if (phase === 'effort') {
+  // The 0.2.0 dialog: what "recommended" shows per model, the explicit pick that reaches the wire,
+  // the advice notes, and the same-model tip. It runs no delegation: it only clicks through the
+  // dialog, and only ever with the three target models.
+  await open()
+  await typeTask('Reply with exactly the word: effort')
+  await page.keyboard.press('Enter')
+  await dialog().waitFor({ state: 'visible', timeout: 15_000 })
+  const text = async () => (await dialog().innerText()).replace(/\s+/g, ' ')
+  check('no effort block while both switches are off', !(await text()).includes('Reasoning effort'))
+
+  const switches = dialog().getByRole('switch')
+  await switches.nth(0).click()
+  await pick(/Choose a model/, TRIO.worker)
+  check('the effort block appears once something is switched on, collapsed, recommended', (await text()).includes('Reasoning effort') && (await text()).includes('Recommended level for each model'))
+  check('the overthinking note is shown for the DeepSeek V4.1 Flash subagent', (await text()).includes('spend its whole token budget on one numeric edge case'))
+  await dialog().getByRole('button', { name: 'Show', exact: true }).click()
+  check('the subagent effort is Recommended: Medium (the route itself defaults to max)', await dialog().getByRole('button', { name: /Recommended: Medium/ }).first().isVisible())
+
+  await switches.nth(1).click()
+  check('the reviewer cost hint is shown', (await text()).includes('expect about double the cost and wait per delegation'))
+  check('a reviewer on the same model gets the same-model tip', (await text()).includes('a reviewer on a different model tends to catch different mistakes'))
+
+  await pick(/Same model as the subagent/, TRIO.glm)
+  check('GLM 5.3 as reviewer: no same-model and no same-family tip', !(await text()).includes('a reviewer on a different model') && !(await text()).includes('same vendor family'))
+  check('GLM 5.3 reviewer is Recommended: Low (its ladder is low, high, max)', await dialog().getByRole('button', { name: /Recommended: Low/ }).first().isVisible())
+  check('GLM 5.3 carries the text-only note', (await text()).includes('Text only: it cannot look at screenshots'))
+  await shot('01-glm-reviewer')
+
+  await pick(TRIO.glm, TRIO.reviewer)
+  check('MiMo-V2.6-Pro reviewer is Recommended: Medium, not Max', await dialog().getByRole('button', { name: /Recommended: Medium/ }).nth(1).isVisible())
+  check('MiMo-V2.6-Pro carries the slow-at-high-effort note', (await text()).includes('about two minutes per turn at high effort'))
+  await shot('02-mimo-reviewer')
+
+  // An explicit level: the subagent at High.
+  await dialog().getByRole('button', { name: /Recommended: Medium/ }).first().click()
+  await page.getByRole('menuitem', { name: /^High$/ }).first().click()
+  check('picking a level marks the block as customized', (await text()).includes('Customized'))
+  check('the subagent picker now shows High', (await text()).includes('High'))
+  await shot('03-explicit-high')
+
+  await dialog().getByRole('button', { name: 'Send with these options' }).click()
+  await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('modal closes after confirm', true), () => check('modal closes after confirm', false))
+  const posts = wire.filter((item) => item.method === 'POST')
+  const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
+  check('the wire carries the explicit subagent effort and the recommended (null) reviewer effort', saved?.workerEffort === 'high' && saved?.reviewer?.effort === null && saved?.reviewer?.model?.model === TRIO.reviewerId, JSON.stringify(saved))
+  check('host accepted the config (200)', posts.at(-1)?.status === 200, posts.at(-1)?.status)
+
+  // The same model under another route: DeepSeek V4.1 Flash on Azure and on DeepSeek's own API.
+  // The dialog opens with the last confirmed choice, so change the reviewer in place.
+  await newSession()
+  await typeTask('Reply with exactly the word: alias')
+  await page.keyboard.press('Enter')
+  await dialog().waitFor({ state: 'visible', timeout: 15_000 })
+  check('the dialog reopens with the last confirmed choice', (await text()).includes('DeepSeek V4.1 Flash (Azure)'))
+  await pick(TRIO.reviewer, TRIO.officialFlash)
+  check('DeepSeek V4.1 Flash on two routes is flagged as the same model', (await text()).includes('a reviewer on a different model tends to catch different mistakes'))
+  await shot('04-same-model-two-routes')
+  await page.keyboard.press('Escape')
+  check('no page errors', relevantErrors().length === 0, relevantErrors().join(' | '))
   await finish()
 }
 
@@ -251,7 +340,7 @@ if (phase === 'small') {
   const scrollable = await dialog().evaluate((el) => { const nodes = [el, ...el.querySelectorAll('*')]; return nodes.some((n) => n.scrollHeight > n.clientHeight + 1 && ['auto', 'scroll'].includes(getComputedStyle(n).overflowY)) })
   console.log('DEBUG scrollable region inside dialog:', scrollable)
   await page.keyboard.press('Escape')
-  check('no page errors', pageErrors.length === 0, pageErrors.join(' | '))
+  check('no page errors', relevantErrors().length === 0, relevantErrors().join(' | '))
   await finish()
 }
 

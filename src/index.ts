@@ -18,7 +18,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { parsePluginConfig, type Config } from './config.ts'
 import type {
-  AgentLike, ConnectionLike, LlmLike, SubagentsLike, WebServerLike,
+  AgentLike, ConnectionLike, LlmLike, ModelInfoSourceLike, SubagentsLike, WebServerLike,
 } from './host-services.ts'
 import { registerRoutes } from './routes.ts'
 import { ConfigStore, defaultStateFile } from './store.ts'
@@ -91,10 +91,20 @@ export function apply(ctx: Context, config?: Config): void {
       const agents = ctx.get('agents') as unknown as AgentsLike | undefined
       return agents?.get(sessionId)?.session.header.parentSession
     },
-    pipeline: () => ({ subagents, config: parsed, logger: ctx.logger }),
+    pipeline: () => ({
+      subagents,
+      config: parsed,
+      logger: ctx.logger,
+      // Resolved per delegation: the LLM runtime may appear after this plugin loads. Not injected on
+      // purpose: without it children keep exactly the options the user picked.
+      models: () => ctx.get('llm') as unknown as ModelInfoSourceLike | undefined,
+    }),
     logger: ctx.logger,
   })
   ctx.effect(() => ctx.on('tools/execute', wrapper), 'dsh-orquestrator: delegation wrapper')
 
-  ctx.logger.info(`dsh-orquestrator: ready (tools: ${[...targets.keys()].join(', ')}; persisted sessions: ${String(store.size)})`)
+  ctx.logger.info(
+    `dsh-orquestrator: ready (tools: ${[...targets.keys()].join(', ')}; persisted sessions: ${String(store.size)}; `
+    + `effort ceilings: ${parsed.effort.enabled ? 'on' : 'off'}; reviewer context: ${parsed.reviewerContext})`,
+  )
 }

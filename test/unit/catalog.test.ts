@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { loadCatalog, modelName } from '../../src/client/catalog.ts'
+import { adviseEffort, ladderOf, loadCatalog, modelName } from '../../src/client/catalog.ts'
 import type { CatalogGroupLike, ModelDirectoriesLike, RemoteSessionLike } from '../../src/client/host-types.ts'
 
 const groups: CatalogGroupLike[] = [
@@ -67,5 +67,51 @@ describe('modelName', () => {
     assert.equal(modelName(groups, { provider: 'openrouter', model: 'google/gemini-3.8-flash' }), 'Gemini 3.8 Flash')
     assert.equal(modelName(groups, { provider: 'openrouter', model: 'unknown' }), 'unknown')
     assert.equal(modelName(groups, { provider: 'ghost', model: 'm' }), 'm')
+  })
+})
+
+const named = (...ids: string[]): { efforts: { id: string; name: string }[] } => ({ efforts: ids.map(id => ({ id, name: `${id.charAt(0).toUpperCase()}${id.slice(1)}` })) })
+const withLadders: CatalogGroupLike[] = [
+  {
+    id: 'azure-opencode',
+    name: 'Azure OpenCode (DeepSeek)',
+    models: [{ id: 'DeepSeek-V4.1-Flash', name: 'DeepSeek V4.1 Flash (Azure)', reasoning: { ...named('off', 'low', 'medium', 'high', 'xhigh', 'max'), defaultEffort: 'max' } }],
+  },
+  {
+    id: 'azure-opencode-claude',
+    name: 'Azure OpenCode (Claude)',
+    models: [
+      { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5 (Azure)', reasoning: { ...named('low', 'medium', 'high', 'xhigh', 'max'), defaultEffort: 'max' } },
+      { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
+    ],
+  },
+]
+
+describe('ladderOf', () => {
+  it('finds the reasoning levels of a route, and nothing for an unknown or non-reasoning one', () => {
+    assert.deepEqual(ladderOf(withLadders, { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash' })?.efforts.map(effort => effort.id), ['off', 'low', 'medium', 'high', 'xhigh', 'max'])
+    assert.equal(ladderOf(withLadders, { provider: 'azure-opencode-claude', model: 'claude-haiku-4-5' }), undefined)
+    assert.equal(ladderOf(withLadders, { provider: 'nope', model: 'x' }), undefined)
+  })
+})
+
+describe('adviseEffort', () => {
+  it('shows the same level the host will use: the profile ceiling for the role, below the route default of max', () => {
+    const worker = adviseEffort(withLadders, { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash' }, 'worker')
+    assert.equal(worker.level?.id, 'medium')
+    assert.equal(worker.level?.name, 'Medium')
+    const reviewer = adviseEffort(withLadders, { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash' }, 'reviewer')
+    assert.equal(reviewer.level?.id, 'low')
+    assert.equal(adviseEffort(withLadders, { provider: 'azure-opencode-claude', model: 'claude-sonnet-5-5' }, 'reviewer').level?.id, 'high')
+  })
+
+  it('uses the main agent\'s own level when the child inherits its route', () => {
+    const route = { provider: 'azure-opencode-claude', model: 'claude-sonnet-5-5' }
+    assert.equal(adviseEffort(withLadders, route, 'worker', 'medium').level?.id, 'medium') // already within the ceiling: kept
+    assert.equal(adviseEffort(withLadders, route, 'worker', 'max').level?.id, 'high') // above it: lowered
+  })
+
+  it('has no ladder for a model without reasoning levels', () => {
+    assert.deepEqual(adviseEffort(withLadders, { provider: 'azure-opencode-claude', model: 'claude-haiku-4-5' }, 'reviewer'), { ladder: undefined, level: undefined })
   })
 })

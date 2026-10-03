@@ -1,0 +1,110 @@
+{
+  "_doc": "Fontes do material do projeto para `coala.py ingest`. mode: markdown|text|whole|pdf · type: episodic|semantic|procedural · origin: owner|agent|untrusted|system · tags aceitam {stem} {name} {dir} {rule}. Primeira regra que apanha um ficheiro ganha. Ver references/instalar.md da coala-agent-skill.",
+  "version": 1,
+  "key_prefix": "proj",
+  "path_prefix": "",
+  "exclude": [
+    ".validation-tmp/**",
+    "docs/img/**",
+    "docs/validation/screenshots/**",
+    "docs/pesquisa/verificacao/**"
+  ],
+  "rules": [
+    {
+      "name": "estudos-fontes",
+      "include": ["docs/estudos/fontes/*.md"],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "untrusted",
+      "tags": "estudo,fonte,{stem}"
+    },
+    {
+      "name": "estudos-decisoes",
+      "include": ["docs/estudos/*.md"],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "estudos,decisao,{stem}"
+    },
+    {
+      "name": "dossie-revisor",
+      "include": ["docs/pesquisa/*.md"],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "untrusted",
+      "tags": "dossie,pesquisa,{stem}"
+    },
+    {
+      "name": "validacao",
+      "include": ["docs/validation/README.md", "docs/validation/runs/*.md"],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "validacao,{stem}"
+    },
+    {
+      "name": "design",
+      "include": ["docs/DESIGN.md"],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "design,arquitetura"
+    },
+    {
+      "name": "readme",
+      "include": ["README.md", "README.pt-BR.md", "CHANGELOG.md"],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "docs,readme,{stem}"
+    },
+    {
+      "name": "runbooks-e2e",
+      "include": ["scripts/e2e/*.sh", "scripts/e2e/session-config.mjs", "scripts/e2e/summarize-run.mjs"],
+      "mode": "whole",
+      "type": "procedural",
+      "origin": "agent",
+      "tags": "runbook,e2e,{stem}"
+    },
+    {
+      "name": "docs",
+      "include": ["docs/**/*.md"],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "docs,{dir}"
+    }
+  ],
+  "graph": {
+    "entities": [
+      { "name": "dsh-orquestrator", "kind": "plugin" },
+      { "name": "teto de esforço", "kind": "decisão" },
+      { "name": "veredicto estruturado", "kind": "decisão" },
+      { "name": "revisão em contexto limpo", "kind": "decisão" },
+      { "name": "resolveChildAgentOptions", "kind": "costura do DSH" },
+      { "name": "structured_output", "kind": "costura do DSH" },
+      { "name": "resolveModelInfo", "kind": "costura do DSH" },
+      { "name": "GLM 5.3", "kind": "modelo" },
+      { "name": "DeepSeek V4.1 Flash", "kind": "modelo" },
+      { "name": "MiMo-V2.6-Pro", "kind": "modelo" },
+      { "name": "orquestrador", "kind": "papel" },
+      { "name": "subagente", "kind": "papel" },
+      { "name": "revisor", "kind": "papel" },
+      { "name": "estudos E01-E16", "kind": "fonte" }
+    ],
+    "edges": [
+      ["dsh-orquestrator", "aplica", "teto de esforço"],
+      ["dsh-orquestrator", "usa", "structured_output"],
+      ["dsh-orquestrator", "usa", "resolveModelInfo"],
+      ["teto de esforço", "corrige", "resolveChildAgentOptions"],
+      ["veredicto estruturado", "usa", "structured_output"],
+      ["revisão em contexto limpo", "mede com", "git"],
+      ["GLM 5.3", "papel", "orquestrador"],
+      ["DeepSeek V4.1 Flash", "papel", "subagente"],
+      ["MiMo-V2.6-Pro", "papel", "revisor"],
+      ["estudos E01-E16", "justificam", "teto de esforço"],
+      ["estudos E01-E16", "justificam", "veredicto estruturado"],
+      ["estudos E01-E16", "justificam", "revisão em contexto limpo"]
+    ]
+  }
+}

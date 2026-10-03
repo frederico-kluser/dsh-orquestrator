@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { en, pt, zh } from '../../src/client/locales.ts'
+import { MODEL_PROFILES } from '../../src/models.ts'
 
 const placeholders = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1] ?? '').sort()
 
@@ -15,6 +16,12 @@ describe('dictionaries', () => {
       assert.deepEqual(placeholders(pt[key]), placeholders(en[key]), `pt ${key}`)
       assert.deepEqual(placeholders(zh[key]), placeholders(en[key]), `zh ${key}`)
     }
+  })
+
+  it('explain every note a model profile can raise', () => {
+    const raised = new Set(MODEL_PROFILES.flatMap(profile => [...profile.notes.worker ?? [], ...profile.notes.reviewer ?? []]))
+    assert.ok(raised.size >= 6)
+    for (const note of raised) assert.ok(`note.${note}` in en, `note.${note} is missing from the dictionaries`)
   })
 
   it('have no empty strings and no em dashes', () => {

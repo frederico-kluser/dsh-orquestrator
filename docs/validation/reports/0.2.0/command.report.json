@@ -1,0 +1,64 @@
+{
+  "phase": "command",
+  "checks": [
+    {
+      "name": "the /orquestrar command is offered by the slash palette",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the command opens the dialog in configure mode",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Save closes the dialog",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Save stored reviewer + \"do not ask again\"",
+      "ok": true,
+      "detail": "{\"version\":1,\"subagentModel\":null,\"workerEffort\":null,\"reviewer\":{\"enabled\":true,\"model\":null,\"effort\":null},\"remember\":true}"
+    },
+    {
+      "name": "the next task is sent without a modal",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "wire": [
+    {
+      "method": "GET",
+      "path": "/dsh-orquestrator/config",
+      "query": "?sessionId=session-7b5bca1f-c1c8-4b0f-8eff-c685bb9b7fb9",
+      "body": null,
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/dsh-orquestrator/config",
+      "query": "",
+      "body": "{\"sessionId\":\"session-7b5bca1f-c1c8-4b0f-8eff-c685bb9b7fb9\",\"config\":{\"version\":1,\"subagentModel\":null,\"workerEffort\":null,\"reviewer\":{\"enabled\":true,\"model\":null,\"effort\":null},\"remember\":true}}",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/dsh-orquestrator/config",
+      "query": "?sessionId=session-7b5bca1f-c1c8-4b0f-8eff-c685bb9b7fb9",
+      "body": null,
+      "status": 200
+    }
+  ],
+  "pageErrors": [
+    "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "failedResponses": [
+    "404 /open-in-app/icon/filemanager"
+  ]
+}

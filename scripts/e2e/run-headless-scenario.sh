@@ -6,6 +6,9 @@
 # Environment:
 #   ORQ_VALIDATION_ROOT  root of the isolated validation area (default /Volumes/Ext2TB/dsh-orq-validation)
 #   ORQ_PROFILE          DSH profile to boot (default headless)
+#   ORQ_SEED_DIR         optional directory copied into the workspace and committed before the run
+#                        (for read-only scenarios that need something to read)
+#   ORQ_TIMEOUT_SECONDS  give up after this long (default 1200); the exit status is then 124
 #
 # Evidence written under $ORQ_VALIDATION_ROOT/runs/<name>/:
 #   events.jsonl   `dsh --json` run events
@@ -27,11 +30,12 @@ git init -q -b main
 git config user.email "validation@example.invalid"
 git config user.name "orq validation"
 printf '# scratch workspace for %s\n' "$name" > README.md
-git add README.md && git commit -q -m "chore: empty workspace"
+if [ -n "${ORQ_SEED_DIR:-}" ]; then cp -R "$ORQ_SEED_DIR"/. .; fi
+git add -A && git commit -q -m "chore: initial workspace"
 
 started=$(date +%s)
 set +e
-dsh --profile "$profile" --json "$task" > "$run/events.jsonl" 2> "$run/stderr.log"
+timeout "${ORQ_TIMEOUT_SECONDS:-1200}" dsh --profile "$profile" --json "$task" > "$run/events.jsonl" 2> "$run/stderr.log"
 status=$?
 set -e
 echo "exit=$status seconds=$(( $(date +%s) - started ))" | tee "$run/result.txt"

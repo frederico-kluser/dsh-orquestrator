@@ -92,6 +92,61 @@ describe('DSH source contract', { skip: skip ? 'set DSH_CHECKOUT to a DeepSeek H
     }
   })
 
+  it('a child re-routed without an effort loses the parent\'s level and resolves the route default: why every child gets an explicit effort', () => {
+    const child = read('packages/subagent/subagent/src/child-agent.ts')
+    assert.match(child, /const routeChanged = resolved\.provider !== parentProvider \|\| resolved\.model !== parentModel/)
+    assert.match(child, /if \(routeChanged && requested\?\.reasoningEffort === undefined\) delete resolved\.reasoningEffort/)
+    assert.match(child, /\.\.\.requested,\s+subagentDepth: childDepth/) // `requested` is merged over the parent's options
+    assert.match(child, /\.\.\.parentMaxTokens !== undefined \? \{ maxTokens: parentMaxTokens \} : \{\}/)
+    assert.match(child, /\.\.\.parentHeader\.cwd !== undefined \? \{ cwd: parentHeader\.cwd \} : \{\}/) // the session header carries the workspace
+    assert.match(child, /const requestConfig = parent\.session\.requestHeader\(\)\?\.config/) // the live route comes from the request header
+  })
+
+  it('the LLM service describes a route\'s reasoning ladder and token ceiling, and never clamps an unsupported effort', () => {
+    const llm = read('packages/llm/llm/src/index.ts')
+    assert.match(llm, /async resolveModelInfo\(\s+provider: string,\s+model: string,\s+signal\?: AbortSignal,\s+\): Promise<LlmResolvedModelInfo>/)
+    assert.match(llm, /const defaultMaxTokens = resolved\.defaultMaxTokens/)
+    assert.match(llm, /Unsupported explicit efforts\s+\* reject before provider I\/O; no clamping or aliasing is performed/)
+    assert.match(llm, /'UNSUPPORTED_REASONING_EFFORT'/)
+    const adapter = read('packages/llm/llm-pi-ai/src/adapter.ts')
+    assert.match(adapter, /efforts: levels\.map\(level => \(\{\s+id: ReasoningEffortId\(level\)/)
+    assert.match(adapter, /\.\.\.defaultLevel === undefined \? \{\} : \{ defaultEffort: ReasoningEffortId\(defaultLevel\) \}/)
+    const catalog = read('packages/llm/llm-pi-ai/src/catalog.ts')
+    assert.match(catalog, /off: true,\s+minimal: true,\s+low: true,\s+medium: true,\s+high: true,\s+xhigh: true,\s+max: true,/) // the canonical level order of src/models.ts
+  })
+
+  it('the browser catalog carries each model\'s reasoning ladder and default level', () => {
+    const types = read('packages/api/session-controller/src/types.ts')
+    assert.match(types, /export interface ModelReasoning \{\s+readonly efforts: readonly ModelReasoningEffort\[\]\s+readonly defaultEffort\?: string/)
+    assert.match(types, /readonly reasoning\?: ModelReasoning/)
+    assert.match(read('packages/api/session-controller/src/catalog.ts'), /efforts: resolved\.reasoning\.efforts\.map/)
+  })
+
+  it('the spawn provider answers a structured request through the cooperative structured_output tool, and settles a plain-text finish as an error', () => {
+    const structured = read('packages/subagent/subagent-in-process-driver/src/structured.ts')
+    assert.match(structured, /export const STRUCTURED_OUTPUT_TOOL = 'structured_output'/)
+    assert.match(structured, /exec\.concludeTurn\(\)/)
+    assert.match(structured, /validateJsonSchemaValue\(schema, args\)/)
+    assert.match(structured, /Do not finish with a plain text answer/)
+    const driver = read('packages/subagent/subagent-in-process-driver/src/index.ts')
+    assert.match(driver, /return \{ output, structured: structured\.captured\.value, stopReason \}/)
+    assert.match(driver, /if \(stopReason === 'completed'\) return \{ output, stopReason: cancelled \? 'aborted' : 'error' \}/)
+    const schema = read('packages/core/tools/src/json-schema.ts')
+    for (const keyword of ["'type'", "'oneOf'", "'properties'", "'required'", "'additionalProperties'", "'items'", "'enum'", "'const'"]) assert.ok(schema.includes(keyword), keyword)
+    assert.equal(/minItems|maxLength|pattern/.test(schema.slice(schema.indexOf('CONSTRAINT_KEYWORDS'), schema.indexOf('ANNOTATION_KEYWORDS'))), false)
+  })
+
+  it('a per-child tool restriction still names unknown tools loudly, which is why the reviewer gets no static deny-list', () => {
+    assert.match(read('packages/core/tools/src/index.ts'), /tools\.restrict\(\) names unknown global tool/)
+  })
+
+  it('DeepSeek\'s own route is deepseek-official and still lists deepseek-v4-pro next to deepseek-flash', () => {
+    assert.match(read('packages/llm/llm-deepseek/src/index.ts'), /const PROVIDER = 'deepseek-official'/)
+    const models = read('packages/llm/llm-deepseek/src/common/models.ts')
+    assert.match(models, /id: 'deepseek-flash'/)
+    assert.match(models, /id: 'deepseek-v4-pro'/)
+  })
+
   it('the client command surface still has the action kind and the model directory service', () => {
     assert.match(read('packages/client/ui-commands/src/client/contract.ts'), /readonly kind: 'action'/)
     assert.match(read('packages/client/ui-model-selection/src/client/index.ts'), /ctx\.inject\(\['slots', 'modelDirectories'\]/)

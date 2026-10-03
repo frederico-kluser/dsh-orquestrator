@@ -31,6 +31,8 @@ export interface ReviewerConfig {
   readonly enabled: boolean
   /** Reviewer route; null means "same route as the subagent that did the work". */
   readonly model: ModelRoute | null
+  /** Reasoning effort the user picked for the reviewer; null means the recommended level for its model. */
+  readonly effort: string | null
 }
 
 /** What the user confirmed in the modal for one session. */
@@ -39,6 +41,8 @@ export interface OrchestratorConfig {
   readonly version: 1
   /** Route every subagent runs on; null keeps the main agent's route (stock behavior). */
   readonly subagentModel: ModelRoute | null
+  /** Reasoning effort the user picked for subagents; null means the recommended level for their model. */
+  readonly workerEffort: string | null
   /** The independent reviewer that validates each subagent's work. */
   readonly reviewer: ReviewerConfig
   /** Skip the modal on the next tasks of this session and reuse this choice. */
@@ -49,7 +53,8 @@ export interface OrchestratorConfig {
 export const OFF_CONFIG: OrchestratorConfig = Object.freeze({
   version: 1,
   subagentModel: null,
-  reviewer: Object.freeze({ enabled: false, model: null }),
+  workerEffort: null,
+  reviewer: Object.freeze({ enabled: false, model: null, effort: null }),
   remember: false,
 })
 
@@ -100,6 +105,18 @@ function isId(value: unknown): value is string {
 }
 
 /**
+ * Parse an optional reasoning-effort id from untrusted JSON. Absent and null
+ * both mean "the recommended level", so configurations written before the
+ * field existed still load.
+ * @param value - candidate value.
+ * @returns the id wrapped (null when none), or undefined when malformed.
+ */
+function parseEffort(value: unknown): { readonly value: string | null } | undefined {
+  if (value === null || value === undefined) return { value: null }
+  return isId(value) ? { value } : undefined
+}
+
+/**
  * Parse one model route from untrusted JSON.
  * @param value - candidate value.
  * @returns the normalized route, or undefined when malformed.
@@ -123,16 +140,21 @@ export function parseConfig(value: unknown): OrchestratorConfig | undefined {
   const rawSubagent = value['subagentModel']
   const subagentModel = rawSubagent === null || rawSubagent === undefined ? null : parseModelRoute(rawSubagent)
   if (subagentModel === undefined) return undefined
+  const workerEffort = parseEffort(value['workerEffort'])
+  if (workerEffort === undefined) return undefined
   const reviewer = value['reviewer']
   if (!isRecord(reviewer) || typeof reviewer['enabled'] !== 'boolean') return undefined
   const rawReviewerModel = reviewer['model']
   const reviewerModel = rawReviewerModel === null || rawReviewerModel === undefined ? null : parseModelRoute(rawReviewerModel)
   if (reviewerModel === undefined) return undefined
+  const reviewerEffort = parseEffort(reviewer['effort'])
+  if (reviewerEffort === undefined) return undefined
   if (typeof value['remember'] !== 'boolean') return undefined
   return {
     version: 1,
     subagentModel,
-    reviewer: { enabled: reviewer['enabled'], model: reviewerModel },
+    workerEffort: workerEffort.value,
+    reviewer: { enabled: reviewer['enabled'], model: reviewerModel, effort: reviewerEffort.value },
     remember: value['remember'],
   }
 }
@@ -147,11 +169,20 @@ export function buildConfig(input: {
   readonly reviewerEnabled: boolean
   readonly reviewerModel: ModelRoute | null
   readonly remember: boolean
+  /** Explicit subagent effort; omitted or null means the recommended level. */
+  readonly workerEffort?: string | null
+  /** Explicit reviewer effort; omitted or null means the recommended level. */
+  readonly reviewerEffort?: string | null
 }): OrchestratorConfig {
   return {
     version: 1,
     subagentModel: input.subagentModel,
-    reviewer: { enabled: input.reviewerEnabled, model: input.reviewerEnabled ? input.reviewerModel : null },
+    workerEffort: input.workerEffort ?? null,
+    reviewer: {
+      enabled: input.reviewerEnabled,
+      model: input.reviewerEnabled ? input.reviewerModel : null,
+      effort: input.reviewerEnabled ? input.reviewerEffort ?? null : null,
+    },
     remember: input.remember,
   }
 }

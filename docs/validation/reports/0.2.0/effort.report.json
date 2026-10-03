@@ -1,0 +1,129 @@
+{
+  "phase": "effort",
+  "checks": [
+    {
+      "name": "no effort block while both switches are off",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the effort block appears once something is switched on, collapsed, recommended",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the overthinking note is shown for the DeepSeek V4.1 Flash subagent",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the subagent effort is Recommended: Medium (the route itself defaults to max)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the reviewer cost hint is shown",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a reviewer on the same model gets the same-model tip",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "GLM 5.3 as reviewer: no same-model and no same-family tip",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "GLM 5.3 reviewer is Recommended: Low (its ladder is low, high, max)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "GLM 5.3 carries the text-only note",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "MiMo-V2.6-Pro reviewer is Recommended: Medium, not Max",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "MiMo-V2.6-Pro carries the slow-at-high-effort note",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "picking a level marks the block as customized",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the subagent picker now shows High",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "modal closes after confirm",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the wire carries the explicit subagent effort and the recommended (null) reviewer effort",
+      "ok": true,
+      "detail": "{\"version\":1,\"subagentModel\":{\"provider\":\"azure-opencode\",\"model\":\"DeepSeek-V4.1-Flash\"},\"workerEffort\":\"high\",\"reviewer\":{\"enabled\":true,\"model\":{\"provider\":\"openrouter-extra\",\"model\":\"xiaomi/mimo-v2.6-pro\"},\"effort\":null},\"remember\":false}"
+    },
+    {
+      "name": "host accepted the config (200)",
+      "ok": true,
+      "detail": "200"
+    },
+    {
+      "name": "the dialog reopens with the last confirmed choice",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "DeepSeek V4.1 Flash on two routes is flagged as the same model",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "wire": [
+    {
+      "method": "GET",
+      "path": "/dsh-orquestrator/config",
+      "query": "?sessionId=session-0a345eae-47e5-4981-b783-3291553113ca",
+      "body": null,
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/dsh-orquestrator/config",
+      "query": "",
+      "body": "{\"sessionId\":\"session-0a345eae-47e5-4981-b783-3291553113ca\",\"config\":{\"version\":1,\"subagentModel\":{\"provider\":\"azure-opencode\",\"model\":\"DeepSeek-V4.1-Flash\"},\"workerEffort\":\"high\",\"reviewer\":{\"enabled\":true,\"model\":{\"provider\":\"openrouter-extra\",\"model\":\"xiaomi/mimo-v2.6-pro\"},\"effort\":null},\"remember\":false}}",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/dsh-orquestrator/config",
+      "query": "?sessionId=session-7b5bca1f-c1c8-4b0f-8eff-c685bb9b7fb9",
+      "body": null,
+      "status": 200
+    }
+  ],
+  "pageErrors": [
+    "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "failedResponses": [
+    "404 /open-in-app/icon/filemanager"
+  ]
+}

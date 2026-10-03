@@ -32,6 +32,8 @@ export interface SessionLike {
     readonly parentSession?: string
     /** Product origin marker (`subagent` for delegated children). */
     readonly origin?: string
+    /** The workspace directory of the session. */
+    readonly cwd?: string
   }
   /** Latest logged model request header, when one exists. */
   requestHeader?(): { readonly config?: AgentOptionsLike } | undefined
@@ -92,6 +94,8 @@ export interface SubagentResultLike {
   readonly stopReason: string
   /** Provider-authored, non-assistant failure detail. */
   readonly diagnostic?: string
+  /** The value the child reported through the structured-output tool, when the request carried an `outputSchema`. */
+  readonly structured?: unknown
 }
 
 /** A published one-shot child run. */
@@ -112,6 +116,8 @@ export interface SubagentStartRequestLike {
   readonly agentOptions?: AgentOptionsLike
   readonly maxDepth?: number
   readonly persona?: string
+  /** Object-rooted JSON Schema the child must answer through the structured-output tool (DSH `SubagentStartRequest.outputSchema`). */
+  readonly outputSchema?: Readonly<Record<string, unknown>>
 }
 
 /** Identities returned once a continuable child accepted its first prompt. */
@@ -150,7 +156,7 @@ export interface SubagentsLike {
    * @param name - provider name.
    * @returns the provider, or undefined when absent.
    */
-  getProvider(name: string): { readonly capabilities: { readonly agentOptions: boolean; readonly persona: boolean } } | undefined
+  getProvider(name: string): { readonly capabilities: { readonly agentOptions: boolean; readonly persona: boolean; readonly outputSchema?: boolean } } | undefined
 }
 
 /** The web-server slice the plugin registers routes on. */
@@ -176,6 +182,29 @@ export interface LlmLike {
    * @param signal - cancellation.
    */
   resolveCallConfig(config: AgentOptionsLike, signal?: AbortSignal): Promise<unknown>
+}
+
+/** What `ctx.llm.resolveModelInfo` reports for one exact route (the slice the effort policy reads). */
+export interface ModelInfoLike {
+  readonly inputModalities?: readonly string[]
+  /** The route's configured output-token ceiling per request (reasoning included). */
+  readonly defaultMaxTokens?: number
+  /** Present only for a model with reasoning levels; `efforts` is in escalation order. */
+  readonly reasoning?: {
+    readonly efforts: readonly { readonly id: string; readonly name?: string }[]
+    readonly defaultEffort?: string
+  }
+}
+
+/** The LLM runtime slice used to learn a route's reasoning ladder and token ceiling. */
+export interface ModelInfoSourceLike {
+  /**
+   * Resolve one exact route through its live adapter; rejects for an unknown provider or model.
+   * @param provider - registered provider id.
+   * @param model - exact model id.
+   * @param signal - cancellation.
+   */
+  resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<ModelInfoLike>
 }
 
 /** The Cordis logger slice. */

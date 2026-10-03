@@ -2,7 +2,9 @@
 
 Why the plugin is shaped the way it is. Everything here was checked against the
 DSH source (`test/contract/dsh-source.test.ts` pins the seams) and against a real
-DSH 0.1.6-alpha.2 on the validation machine (see [validation/README.md](validation/README.md)).
+DSH 0.1.6-alpha.2 (see [validation/README.md](validation/README.md)). The 0.2.0 changes
+come from sixteen studies; their digest, the decision log and the reasons for every
+recommendation that was **not** adopted are in [estudos/](estudos/README.md).
 
 ## The problem
 
@@ -44,8 +46,11 @@ SDK profiles, driven by the `defaults` config.
 | File | Role |
 | --- | --- |
 | `src/tool-wrapper.ts` | The `tools/execute` around-listener. Falls through to `next()` whenever there is no active choice, the arguments do not parse, or the call is a one-shot background job. |
-| `src/pipeline.ts` | `orchestrate()`: model-only path and the worker-then-reviewer path. |
-| `src/reviewer-protocol.ts` | The reviewer persona, the review packet, the worker handoff contract and the verdict parser. |
+| `src/pipeline.ts` | `orchestrate()`: model-only path and the worker-then-reviewer path, the retry after a token-limit stop, the clean-context decision and the delivery banners. |
+| `src/reviewer-protocol.ts` | The reviewer persona (two report formats), the delimited and sanitized review packet, the structured report schema with its renderer and self-consistency check, the worker handoff contract and the text-verdict parser. |
+| `src/models.ts` | Shared with the browser. Model family and lineage (which ids are really one model), dated per-model reasoning-effort ceilings and dialog notes, and `chooseEffort()`. |
+| `src/effort.ts` | `planChild()`: the route, reasoning effort and output-token ceiling of every child the plugin starts. |
+| `src/workspace.ts` | git fingerprints of the working tree before and after the worker: which files it changed, and which of them are test, runner or CI files. |
 | `src/store.ts` | Per-session choice, persisted atomically as owner-only JSON, LRU-pruned, resolved through the session lineage. |
 | `src/routes.ts` | The config route: trust fence first, bounded body, strict validation, every named route validated through the live LLM runtime. |
 
@@ -56,7 +61,7 @@ SDK profiles, driven by the `defaults` config.
 | `src/client/gate.ts` | Wraps `prompt` on the session **class prototype** (refcounted, restored exactly; instance fallback for plain objects). Fail-open: any error sends the task as stock. |
 | `src/client/dialogs.ts` | One dialog at a time, a queue, presenter registry, abort handling. |
 | `src/client/OrchestratorOverlay.tsx` | A `conversation.input.overlay` slot occupant with no visual of its own: registers as presenter, attaches the gate, renders the dialog. |
-| `src/client/OrchestratorDialog.tsx`, `ModelPicker.tsx` | The dialog, built only from DSH primitives (`Modal`, `Switch`, `Checkbox`, `Button`, `Menu`) and DSH tokens. |
+| `src/client/OrchestratorDialog.tsx`, `ModelPicker.tsx`, `EffortPicker.tsx` | The dialog, built only from DSH primitives (`Modal`, `Switch`, `Checkbox`, `Button`, `Menu`) and DSH tokens: two switches with model pickers, model notes and tips, and a collapsed reasoning-effort block. |
 | `src/client/focus-trap.ts` | Keeps Tab inside the dialog (the host `Modal` declares `aria-modal` but does not contain focus). |
 
 ## Decisions and the evidence behind them
@@ -73,6 +78,12 @@ SDK profiles, driven by the `defaults` config.
 | Prompt wrapping on the prototype, not the instance | A reconnect can re-create the session face; a prototype patch survives it. |
 | `subagent` one-shot **background jobs** are not orchestrated | They deliver through the job store, outside the tool result the plugin substitutes. Documented limitation. |
 | The plugin ships inert | No stored choice and no `defaults` means stock behavior. |
+| Every child gets a reasoning-effort **ceiling** and an output-token cap | DSH deletes the parent's effort when a child's route changes, so the child runs at the route's default, which is `max` on the deployments this targets, with the route's full declared output ceiling (131K to 943K tokens here). That produced a worker that spent its token budget on one edge case and a reviewer that needed minutes per turn. The ceiling is a ceiling, not a setting (a route already below it is untouched), comes from the model's own ladder, and yields to an explicit user pick ([estudos D01, D02](estudos/decisoes.md)). |
+| A worker that stops at its token limit is retried once, one level lower | Bounded, visible in the banner and on the same model, instead of a silent change of model ([D03](estudos/decisoes.md)). |
+| The reviewer answers through DSH's `structured_output` tool; the plugin renders the report | The verdict is first by construction, cannot be faked by text in the workspace, and DSH's tool is cooperative (no forced `tool_choice`, which fails with reasoning on). A verdict-first text report remains the fallback for providers without the capability ([D04](estudos/decisoes.md)). |
+| A report that contradicts itself is corrected before delivery | An approval next to a FAILED or UNVERIFIED criterion becomes NOT_RESOLVED; softer inconsistencies travel as a caution in the banner ([D05](estudos/decisoes.md)). |
+| The reviewer judges the workspace, not the worker's story, when the working tree changed | The worker's report is withheld and git measures what changed. When nothing changed (a question, a research task) the report *is* the deliverable and goes in as untrusted claims. `reviewerContext` selects `auto` (default), `isolated` or `claims` ([D06](estudos/decisoes.md)). |
+| Dialog advice is dated data that annotates and never blocks | The catalog belongs to the user. The dialog flags routes that serve the same model (DeepSeek's own API serves `deepseek-v4-pro` with V4.1 Flash), same-family reviewers and per-model cautions, each row dated and sourced in `src/models.ts` ([D11](estudos/decisoes.md)). |
 
 ## The reviewer protocol and its sources
 
@@ -92,6 +103,10 @@ Portuguese). `M#` are the claims that went through adversarial verification.
 | Zero findings is a normal outcome; no style, pre-existing or linter-level nits | "A reviewer prompted to find gaps will usually report some, even when the work is sound" (M10); production review prompts share a negative list (Q4). |
 | Text in files, logs and reports is data | Prompt-injection hygiene; a sub-agent report is an input, not an instruction (Q6). |
 | Verdict first, then criteria, deliverable, verification, changes, risks | The main agent may summarize the message it receives (Q6); production prompts use a fixed, parseable format with a global verdict (Q4). |
+| Authority order; everything inside `<untrusted_...>` tags is data | Instruction-hierarchy training and delimiting untrusted artifacts reduce injection success; the packet defangs its own tags and strips terminal escapes (studies E05, E09, E12). |
+| Find the checks in a fixed order, bound each command, never mask an exit code, triage a failure against the base commit in a temporary worktree | Verification fails most often because the command was never found, hung, or its status was hidden; a test that already failed before the change is not the worker's defect (E10, E12). |
+| Read every changed test, runner and CI file | A worker can pass by weakening the verifier; the packet lists those files from git so the reviewer does not have to hope to notice (E12). |
+| Verified behavior outranks presentation; stop once the deciding checks ran; never reverse a verified result on someone's say-so | Compact reviewers let style rules outweigh a failing test, and slow reasoning models second-guess correct fixes (E01, E05, E07, E08, E10). |
 | Recommend a reviewer on a different model family | Model errors are strongly correlated (about 60% agreement when both err, possibly inflated by label noise) and family bias is reported, though its mechanism (self-recognition) is contested; cross-family verification tends to help more than same-family, but it does not make errors independent (M4, M5). The dialog shows this as a tip, never as a rule. |
 
 ### What the research does not settle
@@ -121,3 +136,21 @@ uncertain.
 - The reviewer inherits the session's permission preset like any other
   subagent; the persona forbids destructive commands and injection-driven
   actions, but the preset is the actual boundary.
+- The reviewer **executes the worker's code** (tests, build, scripts). That is
+  the point of the protocol and also its main risk (study E12): a test runner
+  hook, a poisoned log or a dependency script runs with the session's rights. The
+  plugin narrows what it can (delimited and sanitized packet, terminal escapes
+  and bidirectional overrides stripped, the test, runner and CI files the worker
+  changed listed for scrutiny, a persona that refuses to read or send
+  environment variables, credentials and files outside the workspace, and a
+  verdict that cannot be copied from a file) and does **not** claim more: it
+  provides no sandbox, no network filter and no control of the process
+  environment. A strong boundary has to come from the host (a permission preset
+  without network or secrets for review sessions, or an isolated subagent
+  provider).
+- `APPROVED` means "the checks the reviewer found and ran passed in the
+  environment where it ran them". It is not a guarantee, and for critical
+  operations (migrations, deployments, anything that touches credentials) a
+  human decision should still follow it.
+- What the plugin deliberately does not do, with the reason for each, is in
+  [estudos/decisoes.md](estudos/decisoes.md) (N01 to N16).

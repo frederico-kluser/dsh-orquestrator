@@ -1,10 +1,10 @@
 import type { AgentLike, ContentBlockLike, SubagentResultLike, SubagentRunLike, SubagentStartRequestLike, SubagentsLike } from '../src/host-services.ts'
 
 /** A minimal agent double. */
-export function fakeAgent(id = 'parent-1', parentSession?: string): AgentLike {
+export function fakeAgent(id = 'parent-1', parentSession?: string, cwd?: string): AgentLike {
   return {
     id,
-    session: { id, header: parentSession === undefined ? {} : { parentSession } },
+    session: { id, header: { ...parentSession === undefined ? {} : { parentSession }, ...cwd === undefined ? {} : { cwd } } },
     options: { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
   }
 }
@@ -12,6 +12,11 @@ export function fakeAgent(id = 'parent-1', parentSession?: string): AgentLike {
 /** A text result. */
 export function textResult(text: string, stopReason = 'completed', diagnostic?: string): SubagentResultLike {
   return { output: [{ type: 'text', text }], stopReason, ...diagnostic === undefined ? {} : { diagnostic } }
+}
+
+/** A result carrying the value the child reported through the structured-output tool. */
+export function structuredResult(structured: unknown, stopReason = 'completed', text = ''): SubagentResultLike {
+  return { output: text === '' ? [] : [{ type: 'text', text }], stopReason, structured }
 }
 
 /** One recorded one-shot start. */
@@ -44,7 +49,7 @@ export interface FakeSubagentsOptions {
   /** Scripted results, consumed in start order; each may inspect the request. */
   readonly results: (SubagentResultLike | Error | ((request: SubagentStartRequestLike, provider: string) => SubagentResultLike | Error))[]
   /** Provider capabilities; defaults to a spawn-like provider that supports everything. */
-  readonly capabilities?: Record<string, { agentOptions: boolean; persona: boolean } | undefined>
+  readonly capabilities?: Record<string, { agentOptions: boolean; persona: boolean; outputSchema?: boolean } | undefined>
   readonly maxDepth?: number | undefined
   /** Throw this on `start` number N (0-based) instead of returning a run. */
   readonly failStartAt?: { readonly index: number; readonly error: Error }
@@ -83,7 +88,7 @@ export class FakeSubagents implements SubagentsLike {
     return this.options.maxDepth
   }
 
-  getProvider(name: string): { capabilities: { agentOptions: boolean; persona: boolean } } | undefined {
+  getProvider(name: string): { capabilities: { agentOptions: boolean; persona: boolean; outputSchema?: boolean } } | undefined {
     const configured = this.options.capabilities
     if (configured !== undefined && name in configured) {
       const capabilities = configured[name]

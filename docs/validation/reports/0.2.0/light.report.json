@@ -1,0 +1,52 @@
+{
+  "phase": "light",
+  "checks": [
+    {
+      "name": "modal renders in the light theme",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Tab never leaves the dialog (focus trap)",
+      "ok": true,
+      "detail": "0 of 14 tabs escaped"
+    },
+    {
+      "name": "Escape closes the open menu but keeps the dialog",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a second Escape closes the dialog",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "wire": [
+    {
+      "method": "GET",
+      "path": "/dsh-orquestrator/config",
+      "query": "?sessionId=session-19e4b0a8-8baa-4b14-a859-b3820609fa48",
+      "body": null,
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/dsh-orquestrator/config",
+      "query": "",
+      "body": "{\"sessionId\":\"session-19e4b0a8-8baa-4b14-a859-b3820609fa48\",\"config\":null}",
+      "status": 200
+    }
+  ],
+  "pageErrors": [
+    "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "failedResponses": [
+    "404 /open-in-app/icon/filemanager"
+  ]
+}

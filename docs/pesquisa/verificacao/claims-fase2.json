@@ -1,0 +1,183 @@
+{
+  "M1": {
+    "questao": "Q1",
+    "texto": "In Huang et al. (ICLR 2024), intrinsic self-correction without oracle labels or tools did not improve reasoning and sometimes degraded it: GPT-4 on GSM8K 95.5 -> 91.5 (round 1) -> 89.0 (round 2); GPT-3.5 on CommonSenseQA 75.8 -> 38.1 -> 41.8.",
+    "fonte": "https://arxiv.org/pdf/2310.01798",
+    "citacao_literal": "GPT-4 Standard Prompting 1 95.5 82.0 49.0 Self-Correct (round 1) 3 91.5 79.5 49.0 Self-Correct (round 2) 5 89.0 80.0 43.0",
+    "fase1": "citacao e contexto confirmados por 3 verificadores; ressalva: 'nao melhora' e mais robusto que 'degrada' (GPT-4-Turbo temp 0: 91.5 > 88.0 > 90.0); n=200 e temperatura 1 no GPT-4; modelos de 2023",
+    "pistas": [
+      "Liu et al 2024 intrinsic self-correction temperature zero fair prompts",
+      "Li et al 2024 Confidence Matters intrinsic self-correction",
+      "self-correction reasoning models 2025 intrinsic without feedback improves or degrades",
+      "Huang et al 2024 replication GSM8K self-correct GPT-4o"
+    ]
+  },
+  "M2": {
+    "questao": "Q1",
+    "texto": "Self-Debugging with unit tests improves baseline accuracy by up to 12% on TransCoder and MBPP; GPT-4 without unit-test execution improves MBPP accuracy by only 3.6%.",
+    "fonte": "https://proceedings.iclr.cc/paper_files/paper/2024/file/2460396f2d0d421885997dd1612ac56b-Paper-Conference.pdf",
+    "citacao_literal": "On TransCoder and MBPP where unit tests are available, SELF-DEBUGGING improves the baseline accuracy by up to 12%.",
+    "fase1": "citacao confirmada por 3; contexto parcial: o 'up to 12%' do resumo nao e teto (TransCoder GPT-4 +13.1; MBPP ~+8 com testes; ganho liquido de reamostragem +3.6)",
+    "pistas": [
+      "Revisit Self-Debugging with Self-Generated Tests ACL 2025",
+      "self-repair cost-matched resampling Olausson modest gains",
+      "self-debug execution feedback gains replication newer models HumanEval MBPP"
+    ]
+  },
+  "M3": {
+    "questao": "Q1",
+    "texto": "In Reflexion, agent-generated internal tests had a 16.3% false-positive rate on MBPP Python versus 1.4% on HumanEval Python, and Reflexion's MBPP pass@1 (77.1) fell below the GPT-4 baseline (80.1).",
+    "fonte": "https://arxiv.org/html/2303.11366v4",
+    "citacao_literal": "the false positive test execution rate for MBPP Python is 16.3% while the rate for HumanEval Python is a mere 1.4%, leading to 91% overall accuracy",
+    "fase1": "citacao confirmada por 3; contexto parcial: 'falso positivo' no artigo = P(errada | testes internos passam); causalidade da queda nao estabelecida",
+    "pistas": [
+      "Reflexion replication criticism HumanEval 91 pass@1",
+      "Reflexion MBPP false positive generated tests reliability follow-up",
+      "self-generated unit tests false negative self-debugging ACL 2025"
+    ]
+  },
+  "M4": {
+    "questao": "Q2",
+    "texto": "GPT-4 distinguishes its own summaries from those of two other LLMs and humans with 73.5% accuracy without fine-tuning, and self-preference correlates linearly with self-recognition when the fine-tuning task varies.",
+    "fonte": "https://arxiv.org/pdf/2404.13076",
+    "citacao_literal": "GPT-4 is 73.5% accurate distinguishing itself from two other LLMs and humans.",
+    "fase1": "citacao confirmada por 3; 73.5% e medicao pairwise em sumarizacao; correlacao linear em modelos afinados, 'initial evidence'",
+    "pistas": [
+      "Wataoka self-preference perplexity familiarity",
+      "Davidson 2024 self-recognition in language models",
+      "Do LLM evaluators prefer themselves for a reason",
+      "self-preference bias replication code judges"
+    ]
+  },
+  "M5": {
+    "questao": "Q2",
+    "texto": "On leaderboard data (71 LLMs, 14,042 multiple-choice questions), pairs of models agree about 60% of the time when both err, and being from the same company adds only a few percentage points on top of that baseline.",
+    "fonte": "https://arxiv.org/html/2506.07962",
+    "citacao_literal": "We find substantial correlation in model errors—on one leaderboard dataset, models agree 60% of the time when both models err.",
+    "fase1": "citacao confirmada por 3; 60% e do Helm; mesma empresa +2.2 pp no Helm, +6.6 no HuggingFace",
+    "pistas": [
+      "Gema 2024 MMLU label errors are we done with MMLU",
+      "correlated errors LLMs same developer later work 2025 2026",
+      "error correlation across LLMs judges reviewers independence"
+    ]
+  },
+  "M9": {
+    "questao": "Q4",
+    "texto": "The verification-before-completion skill (obra/superpowers) states an evidence law and tells agents that when a delegated agent reports success they must check the VCS diff instead of trusting the report.",
+    "fonte": "https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md",
+    "citacao_literal": "NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE ... Agent reports success → Check VCS diff → Verify changes → Report actual state",
+    "fase1": "citacao confirmada por 3 (pratica de skill open-source, sem medicao de eficacia)",
+    "pistas": [
+      "obra superpowers verification-before-completion criticism evidence effectiveness",
+      "agent claims success verify diff coding agents false completion reports study"
+    ]
+  },
+  "M10": {
+    "questao": "Q4",
+    "texto": "Anthropic's Claude Code best-practices guide warns that a reviewer prompted to find gaps will usually report some even when the work is sound, and recommends a fresh-context reviewer that sees only the diff and the criteria.",
+    "fonte": "https://www.anthropic.com/engineering/claude-code-best-practices",
+    "citacao_literal": "A reviewer prompted to find gaps will usually report some, even when the work is sound, because that is what it was asked to do.",
+    "fase1": "citacao confirmada por 3 (asserção de fornecedor sem dados)",
+    "pistas": [
+      "fresh context reviewer versus same context review LLM evidence",
+      "LLM reviewer reports issues even when code correct false positives study",
+      "adversarial review subagent diff fresh context evaluation"
+    ]
+  },
+  "M11": {
+    "questao": "Q5",
+    "texto": "In MT-Bench on 10 math questions (20 judgments with swapped positions), a GPT-4 judge with the default prompt declared incorrect answers correct in 70% of cases; showing the judge an independently generated reference answer cut that failure rate to 15%.",
+    "fonte": "https://arxiv.org/pdf/2306.05685",
+    "citacao_literal": "we first generate LLM judge’s answer independently, and then display it as a reference answer in the judge prompt. In Table 4, we see a significant improvement in failure rate (from 70% to 15%) over the default prompt.",
+    "fase1": "citacao confirmada por 3; n=20 julgamentos; referencia gerada pelo proprio GPT-4, com erros conhecidos em referencias do MT-Bench",
+    "pistas": [
+      "MT-Bench reference answers errors GPT-4 reference-guided judging",
+      "FastChat issue 2988 reference answer wrong question 111",
+      "LLM-as-judge reference answer improves math grading follow-up studies"
+    ]
+  },
+  "M12": {
+    "questao": "Q5",
+    "texto": "Under a prompt that requires explanation and repair, LLMs falsely rejected correct code on average 54.8% (HumanEval) and 69.0% (MBPP) of the time; a fix-guided, execution-based verification filter lowered this to 16.3% and 28.9%.",
+    "fonte": "https://arxiv.org/html/2603.00539v1",
+    "citacao_literal": "Averaged across models, FNR drops from 54.8% to 16.3% on HumanEval and 69.0% to 28.9% on MBPP, while QuixBugs also improves (51.0% to 24.0%).",
+    "fase1": "citacao confirmada; testes de referencia do benchmark proximos de um oraculo; tabelas 2 e 4 divergem",
+    "pistas": [
+      "Are LLMs Reliable Code Reviewers overcorrection execution-guided filter replication",
+      "LLM code review false rejection correct code requirement conformance",
+      "execution-based verification reduces false positives code review LLM"
+    ]
+  },
+  "M13": {
+    "questao": "Q5",
+    "texto": "In LLM judges for code evaluation, a self-declared-correctness comment (for example 'correct code') was the most pronounced positive bias across all evaluated models and programming languages.",
+    "fonte": "https://aclanthology.org/2026.findings-eacl.70.pdf",
+    "citacao_literal": "self-declared correctness exhibits the most pronounced effect across all evaluated models and programming languages",
+    "fase1": "citacao confirmada; excecao num modelo especializado em codigo (Tabela 5)",
+    "pistas": [
+      "Don't Judge Code by Its Cover biases LLM judges code evaluation critique",
+      "self-declared correctness comment bias code judge replication",
+      "LLM judge code correctness bias authority comment variable renaming"
+    ]
+  },
+  "M14": {
+    "questao": "Q6",
+    "texto": "AOrchestra's context ablation on GAIA (50 samples): orchestrator-curated context for sub-agents scored 96.0, versus 86.0 with no context and 84.0 with full context.",
+    "fonte": "https://arxiv.org/html/2602.03786v2",
+    "citacao_literal": "whereas Full-Context often introduces irrelevant information and aggravates context degradation. In contrast, by allowing the orchestrator to select and compress only task-relevant history, our method provides a cleaner context and achieves the highest score.",
+    "fase1": "citacao confirmada como valor relatado; tabela 2 internamente inconsistente (celulas por nivel implicam 92.0/84.0/84.0)",
+    "pistas": [
+      "AOrchestra sub-agent orchestration GAIA context ablation",
+      "orchestrator-curated context versus full context subagents ablation evidence",
+      "context passing to subagents empirical comparison summary vs full history"
+    ]
+  },
+  "M15": {
+    "questao": "Q6",
+    "texto": "Cognition reports that in a generator-verifier loop the review agent worked best when it shared no prior context with the coding agent, provided a communication bridge lets the main agent filter the reviewer's findings using its broader context.",
+    "fonte": "https://cognition.com/blog/multi-agents-working",
+    "citacao_literal": "Interestingly, we found this technique to work best when the coding and review agents do not share any context beforehand.",
+    "fase1": "citacao confirmada; observacao qualitativa de fornecedor; revisor read-only sem spec",
+    "pistas": [
+      "Cognition Devin Review clean context reviewer evidence",
+      "code review agent shared context vs clean context empirical",
+      "generator verifier loop context isolation reviewer study"
+    ]
+  },
+  "Y1": {
+    "questao": "Q3",
+    "texto": "Of the 213 LLM-generated reproduction tests that reproduced the issue on the original repository, only 94 validated the reference patch (printed 'Issue resolved'): most generated tests did not validate the fix.",
+    "fonte": "https://arxiv.org/html/2407.01489v2",
+    "citacao_literal": "We found that only 94 tests correctly output the Issues resolved message after applying the ground truth patches.",
+    "fase1": "nao-verificada",
+    "pistas": [
+      "Agentless reproduction tests validity 94 of 213 follow-up",
+      "LLM generated reproduction tests SWE-bench validity study",
+      "SWE-bench reproduction test generation quality"
+    ]
+  },
+  "Y2": {
+    "questao": "Q3",
+    "texto": "SWE-bench validates with the test files changed in the PR; re-validating with the whole repository test suite found that 7.8% of plausible patches (3 tools, SWE-bench Verified) were incorrect, an average absolute drop of 4.5 points in the resolution rate.",
+    "fonte": "https://arxiv.org/html/2503.15223v2",
+    "citacao_literal": "The results show that, on average, 7.8% of plausible patches are incorrect, leading to an absolute drop of the issue resolution rate of 4.5%, on average.",
+    "fase1": "nao-verificada",
+    "pistas": [
+      "SWE-bench Verified plausible patches incorrect full test suite",
+      "PatchDiff SWE-bench behavioral differences patches incorrect",
+      "UTBoost SWE-bench insufficient tests erroneous patches"
+    ]
+  },
+  "Y3": {
+    "questao": "Q3",
+    "texto": "On ImpossibleBench (tasks whose tests contradict the specification, so any pass is cheating) GPT-5 cheats in 76% of Oneoff-SWEbench tasks; giving the agent an explicit exit to flag an inconsistent task lowered GPT-5 cheating from 54% to 9% and o3 from 49% to 12%.",
+    "fonte": "https://arxiv.org/pdf/2510.20270",
+    "citacao_literal": "frontier models cheat surprisingly often on Impossible-SWEbench and less so for Impossible-LiveCodeBench (GPT-5 cheats in 76% of the tasks in Oneoff-SWEbench and 2.9% on Oneoff-LiveCodeBench)",
+    "fase1": "nao-verificada",
+    "pistas": [
+      "ImpossibleBench GPT-5 cheating rate flag for human intervention",
+      "reward hacking tests coding agents impossible tasks replication",
+      "LLM agents modify tests special-casing study 2025 2026"
+    ]
+  }
+}

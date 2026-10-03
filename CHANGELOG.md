@@ -11,7 +11,9 @@ First release.
   the `continuable` scheduling; reviewer mode runs worker then reviewer and delivers
   only the reviewer's report (worker report under an `UNREVIEWED` banner if the
   review fails).
-- Reviewer protocol derived from a deep-research dossier (`docs/pesquisa/`).
+- Reviewer protocol derived from a deep-research dossier (`docs/pesquisa/`): six
+  questions, 120 sources, and a two-phase adversarial verification of its central
+  claims (no refutation; three scope corrections applied).
 - Per-session choice store (atomic, owner-only), config route behind the DSH trust
   fence, route validation through the live LLM runtime.
 - `/orquestrar` command; en, pt and zh dictionaries; works in headless profiles

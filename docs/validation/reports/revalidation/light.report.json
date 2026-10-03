@@ -1,0 +1,47 @@
+{
+  "phase": "light",
+  "checks": [
+    {
+      "name": "modal renders in the light theme",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Tab never leaves the dialog (focus trap)",
+      "ok": true,
+      "detail": "0 of 14 tabs escaped"
+    },
+    {
+      "name": "Escape closes the open menu but keeps the dialog",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a second Escape closes the dialog",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "wire": [
+    {
+      "method": "GET",
+      "path": "/dsh-orquestrator/config",
+      "query": "?sessionId=session-b1e10ad8-2240-414e-860d-9a161c22186b",
+      "body": null,
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/dsh-orquestrator/config",
+      "query": "",
+      "body": "{\"sessionId\":\"session-b1e10ad8-2240-414e-860d-9a161c22186b\",\"config\":null}",
+      "status": 200
+    }
+  ],
+  "pageErrors": []
+}

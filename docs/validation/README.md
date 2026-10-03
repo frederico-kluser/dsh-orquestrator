@@ -108,6 +108,23 @@ Each of these was invisible to the mocks and surfaced only on the real DSH:
    must be `[]`); `git pull` aborted over files copied by hand; a burst of 36 parallel
    research verifiers exhausted the search API's key pool (see the dossier, section 8).
 
+## Revalidation after the search-key reset (2026-10-02)
+
+The research verification had been left incomplete because the search API keys were
+exhausted. After the keys were reset, everything done on the Mac mini was checked again
+from a clean state, and the research step was finished (see the dossier, sections 3, 4 and 8).
+
+| Check | Result |
+| --- | --- |
+| Machine doctor (G1-G8: SSH key, sudo, root SSH, TCC, sshd, volume) | all green |
+| Sync before checking | this machine, GitHub and the Mac mini all at `89b3408` (0 ahead, 0 behind) |
+| Mac mini: `pnpm install --frozen-lockfile`, `pnpm run build` | `git status` clean afterwards, so the committed `lib/` is reproducible; `check-lib` passes |
+| Mac mini: full suite with `DSH_CHECKOUT` | 136 of 136 pass, including the 11 DSH-source contract tests |
+| Install straight from GitHub (`pnpm add github:frederico-kluser/dsh-orquestrator`) | `lib/index.js` and `lib/client.cjs` are byte-identical to the committed ones (sha256 `3eef6576...` and `c1f85117...`) |
+| Isolated DSH home after deleting the credentials copy | still boots and answers (keys come from the environment) |
+| Browser phases against the real web server, [`reports/revalidation/`](reports/revalidation) | cancel 11, light 5, command 6, small 3, confirm 13: 38 of 38, no page errors |
+| Headless run on the final build ([`runs/A2-final.md`](runs/A2-final.md)) | worker on Gemini, reviewer on Haiku, `Reviewed delivery ... [verdict: APPROVED]`, verdict-first report, 327 s |
+
 ## Not covered
 
 - Profiles other than `web` and `headless` (TUI, SDK).

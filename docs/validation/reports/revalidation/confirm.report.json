@@ -1,0 +1,87 @@
+{
+  "phase": "confirm",
+  "checks": [
+    {
+      "name": "modal appears for the delegation task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "subagent switch on reveals the model picker",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "confirm is disabled until a subagent model is chosen",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "subagent model chosen",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "reviewer switch reveals the four-step description and its picker",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "reviewer defaults to \"same as the subagent\"",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "confirm is enabled",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "modal closes after confirm",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "POST stored the chosen routes",
+      "ok": true,
+      "detail": "{\"version\":1,\"subagentModel\":{\"provider\":\"openrouter\",\"model\":\"google/gemini-3.8-flash\"},\"reviewer\":{\"enabled\":true,\"model\":{\"provider\":\"azure-opencode-claude\",\"model\":\"claude-haiku-4-5\"}},\"remember\":false}"
+    },
+    {
+      "name": "host accepted the config (200)",
+      "ok": true,
+      "detail": "200"
+    },
+    {
+      "name": "the main agent received a \"Reviewed delivery\" result",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the transcript carries a reviewer verdict",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "wire": [
+    {
+      "method": "GET",
+      "path": "/dsh-orquestrator/config",
+      "query": "?sessionId=session-30c91e45-6311-4e31-b116-06a214bc3077",
+      "body": null,
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/dsh-orquestrator/config",
+      "query": "",
+      "body": "{\"sessionId\":\"session-30c91e45-6311-4e31-b116-06a214bc3077\",\"config\":{\"version\":1,\"subagentModel\":{\"provider\":\"openrouter\",\"model\":\"google/gemini-3.8-flash\"},\"reviewer\":{\"enabled\":true,\"model\":{\"provider\":\"azure-opencode-claude\",\"model\":\"claude-haiku-4-5\"}},\"remember\":false}}",
+      "status": 200
+    }
+  ],
+  "pageErrors": []
+}

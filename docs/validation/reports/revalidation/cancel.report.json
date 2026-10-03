@@ -1,0 +1,77 @@
+{
+  "phase": "cancel",
+  "checks": [
+    {
+      "name": "modal appears when a new task is sent from the composer",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "title and gate description shown",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "task preview shows what is being sent",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "two switches (subagent model, reviewer)",
+      "ok": true,
+      "detail": "2"
+    },
+    {
+      "name": "both switches start off",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "remember checkbox present and unchecked",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "primary action is focused",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Escape closes the modal",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "after Cancel/Escape the task is sent as stock DSH",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "cancel wrote null (no orchestration stored)",
+      "ok": true,
+      "detail": "[{\"s\":200,\"b\":\"{\\\"sessionId\\\":\\\"session-3de79806-f681-42c0-96fc-6694f9302619\\\",\\\"config\\\":null}\"}]"
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "wire": [
+    {
+      "method": "GET",
+      "path": "/dsh-orquestrator/config",
+      "query": "?sessionId=session-3de79806-f681-42c0-96fc-6694f9302619",
+      "body": null,
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/dsh-orquestrator/config",
+      "query": "",
+      "body": "{\"sessionId\":\"session-3de79806-f681-42c0-96fc-6694f9302619\",\"config\":null}",
+      "status": 200
+    }
+  ],
+  "pageErrors": []
+}

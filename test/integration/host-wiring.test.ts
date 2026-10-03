@@ -124,7 +124,7 @@ describe('end to end on the host', () => {
   })
 
   it('applies the choice stored through the route, delivering only the reviewer report', async () => {
-    const config = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: null, remember: false })
+    const config = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: null })
     const saved = await fetch(`${base}${CONFIG_ROUTE}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 'sess-a', config }),
     })
@@ -157,7 +157,7 @@ describe('end to end on the host', () => {
   })
 
   it('a restarted host re-reads the persisted choice', async () => {
-    const config = buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null, remember: true })
+    const config = buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null })
     await fetch(`${base}${CONFIG_ROUTE}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 'sess-b', config }),
     })

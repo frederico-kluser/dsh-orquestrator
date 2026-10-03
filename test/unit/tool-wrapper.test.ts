@@ -8,7 +8,7 @@ import { createToolWrapper } from '../../src/tool-wrapper.ts'
 import { FakeSubagents, fakeAgent, textResult } from '../helpers.ts'
 
 const cheap = { provider: 'openrouter', model: 'google/gemini-3.8-flash' }
-const reviewed = buildConfig({ subagentModel: cheap, reviewerEnabled: true, reviewerModel: null, remember: false })
+const reviewed = buildConfig({ subagentModel: cheap, reviewerEnabled: true, reviewerModel: null })
 const parsed = parsePluginConfig(undefined)
 const targets = new Map(parsed.tools.map(tool => [tool.name, tool] as const))
 const untouched: ToolExecutionResultLike = { isError: false, value: 'stock', content: [] }
@@ -94,7 +94,7 @@ describe('delegation wrapper', () => {
 
   it('orchestrates subagent_fork on its own provider', async () => {
     const { wrapper, store, subagents } = setup()
-    store.set('sess-1', buildConfig({ subagentModel: cheap, reviewerEnabled: false, reviewerModel: null, remember: false }))
+    store.set('sess-1', buildConfig({ subagentModel: cheap, reviewerEnabled: false, reviewerModel: null }))
     const result = await wrapper(exec({ name: 'subagent_fork' }), next)
     assert.deepEqual((result as { value: unknown }).value, { kind: 'continuable', subagentId: 'child-1' })
     assert.equal(subagents.continuables[0]?.provider, 'fork')

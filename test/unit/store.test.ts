@@ -7,7 +7,7 @@ import { ConfigStore } from '../../src/store.ts'
 import { OFF_CONFIG, buildConfig } from '../../src/shared.ts'
 
 const route = { provider: 'openrouter', model: 'google/gemini-3.8-flash' }
-const active = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: null, remember: false })
+const active = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: null })
 const scratch = mkdtempSync(join(tmpdir(), 'orq-store-'))
 after(() => { rmSync(scratch, { recursive: true, force: true }) })
 

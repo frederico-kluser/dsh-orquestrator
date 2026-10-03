@@ -56,7 +56,7 @@ describe('parsePluginConfig', () => {
     assert.equal(parsePluginConfig({ defaults: {} }).defaults, null)
     const withModel = parsePluginConfig({ defaults: { subagentModel: { provider: 'p', model: 'm' } } })
     assert.deepEqual(withModel.defaults, {
-      version: 1, subagentModel: { provider: 'p', model: 'm' }, workerEffort: null, reviewer: { enabled: false, model: null, effort: null }, remember: true,
+      version: 1, subagentModel: { provider: 'p', model: 'm' }, workerEffort: null, reviewer: { enabled: false, model: null, effort: null },
     })
     const withReviewer = parsePluginConfig({ defaults: { reviewer: { enabled: true, model: { provider: 'q', model: 'n' } } } })
     assert.deepEqual(withReviewer.defaults?.reviewer, { enabled: true, model: { provider: 'q', model: 'n' }, effort: null })

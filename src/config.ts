@@ -184,7 +184,6 @@ export function parsePluginConfig(raw: Config | undefined): PluginConfig {
         subagentModel,
         workerEffort,
         reviewer: { enabled, model: enabled ? reviewerModel : null, effort: enabled ? reviewerEffort : null },
-        remember: true,
       }
     }
   }

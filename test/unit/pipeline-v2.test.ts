@@ -66,7 +66,7 @@ const GOOD_REVIEW = {
 }
 const structuredCaps = { spawn: { agentOptions: true, persona: true, outputSchema: true } }
 const textOf = (value: Awaited<ReturnType<typeof orchestrate>>): string => value.kind === 'foreground' ? value.output[0]?.text ?? '' : ''
-const reviewed = (overrides: Partial<Parameters<typeof buildConfig>[0]> = {}) => buildConfig({ subagentModel: DEEPSEEK, reviewerEnabled: true, reviewerModel: SONNET, remember: false, ...overrides })
+const reviewed = (overrides: Partial<Parameters<typeof buildConfig>[0]> = {}) => buildConfig({ subagentModel: DEEPSEEK, reviewerEnabled: true, reviewerModel: SONNET, ...overrides })
 
 describe('effort ceilings in the pipeline', () => {
   it('caps the worker and the reviewer, and their output, from each model profile', async () => {
@@ -80,7 +80,7 @@ describe('effort ceilings in the pipeline', () => {
     const subagents = new FakeSubagents({ results: [textResult('report'), textResult('VERDICT: APPROVED\nok')] })
     await orchestrate(deps(subagents, {}, { models: () => models }), {
       tool, args, parent: fakeAgent(), signal: signal(),
-      config: buildConfig({ subagentModel: { ...DEEPSEEK, reasoningEffort: 'high' }, reviewerEnabled: true, reviewerModel: null, remember: false }),
+      config: buildConfig({ subagentModel: { ...DEEPSEEK, reasoningEffort: 'high' }, reviewerEnabled: true, reviewerModel: null }),
     })
     assert.equal(subagents.starts[0]?.request.agentOptions?.reasoningEffort, 'high')
     assert.equal(subagents.starts[1]?.request.agentOptions?.reasoningEffort, 'low') // the DeepSeek Flash reviewer ceiling
@@ -99,7 +99,7 @@ describe('effort ceilings in the pipeline', () => {
     const parent = { ...fakeAgent(), options: { ...SONNET, reasoningEffort: 'max', maxTokens: 128_000 } }
     const subagents = new FakeSubagents({ results: [textResult('report'), textResult('VERDICT: APPROVED\nok')] })
     await orchestrate(deps(subagents, {}, { models: () => models }), {
-      tool, args, parent, signal: signal(), config: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null, remember: false }),
+      tool, args, parent, signal: signal(), config: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }),
     })
     assert.deepEqual(subagents.starts[0]?.request.agentOptions, { reasoningEffort: 'high', maxTokens: 64_000 })
   })
@@ -107,7 +107,7 @@ describe('effort ceilings in the pipeline', () => {
   it('applies the ceilings to the model-only path as well, keeping the background scheduling', async () => {
     const subagents = new FakeSubagents({ results: [] })
     await orchestrate(deps(subagents, {}, { models: () => models }), {
-      tool, args, parent: fakeAgent(), signal: signal(), config: buildConfig({ subagentModel: DEEPSEEK, reviewerEnabled: false, reviewerModel: null, remember: false }),
+      tool, args, parent: fakeAgent(), signal: signal(), config: buildConfig({ subagentModel: DEEPSEEK, reviewerEnabled: false, reviewerModel: null }),
     })
     const request = subagents.continuables[0]?.request as { agentOptions: unknown }
     assert.deepEqual(request.agentOptions, { ...DEEPSEEK, reasoningEffort: 'medium', maxTokens: 64_000 })
@@ -134,7 +134,7 @@ describe('effort ceilings in the pipeline', () => {
     })
     const value = await orchestrate(deps(subagents, {}, { models: () => models }), {
       tool, args, parent: fakeAgent(), signal: signal(),
-      config: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null, remember: false }),
+      config: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }),
     })
     assert.equal(subagents.starts[0]?.request.agentOptions, undefined)
     assert.equal(subagents.starts[1]?.request.agentOptions, undefined)
@@ -167,7 +167,7 @@ describe('retry when the worker runs out of tokens', () => {
     const subagents = new FakeSubagents({ results: [textResult('', 'max-tokens'), textResult('second try output')] })
     const value = await orchestrate(deps(subagents, {}, { models: () => models }), {
       tool: oneShot, args, parent: fakeAgent(), signal: signal(),
-      config: buildConfig({ subagentModel: DEEPSEEK, reviewerEnabled: false, reviewerModel: null, remember: false }),
+      config: buildConfig({ subagentModel: DEEPSEEK, reviewerEnabled: false, reviewerModel: null }),
     })
     assert.deepEqual(value, { kind: 'foreground', runId: 'run-2', output: [{ type: 'text', text: 'second try output' }] })
   })

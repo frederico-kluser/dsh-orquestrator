@@ -1,9 +1,11 @@
 /**
  * The orchestration dialog, built only from DSH primitives (Modal, Switch,
- * Checkbox, Button, Menu) and DSH tokens so it is indistinguishable from the
- * host's own dialogs in light and dark themes.
+ * Button, Menu) and DSH tokens so it is indistinguishable from the
+ * host's own dialogs in light and dark themes. It is raised for every new task:
+ * there is no "do not ask again", so no answer can hide it from a later task or
+ * from another conversation.
  *
- * Two questions, asked once and answered with switches (progressive
+ * Two questions, answered with switches (progressive
  * disclosure: a model picker only appears when its switch is on):
  *  1. Should subagents run on a different model than the main agent?
  *  2. Should an independent reviewer validate each subagent's work, and on
@@ -19,7 +21,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type JSX } from 'react'
 import {
-  Button, Checkbox, IconAgentPresetOutline16, IconShieldOutline16, Modal, Switch,
+  Button, IconAgentPresetOutline16, IconShieldOutline16, Modal, Switch,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { notesFor, sameFamily, sameModel, type Role } from '../models.ts'
 import { buildConfig, type ModelRoute } from '../shared.ts'
@@ -63,7 +65,6 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
   const [workerEffort, setWorkerEffort] = useState<string | null>(initial.workerEffort)
   const [reviewerEffort, setReviewerEffort] = useState<string | null>(initial.reviewer.effort)
   const [effortOpen, setEffortOpen] = useState(initial.workerEffort !== null || initial.reviewer.effort !== null)
-  const [remember, setRemember] = useState(initial.remember)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -134,7 +135,6 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
       subagentModel: subagentsOn ? subagentRoute : null,
       reviewerEnabled: reviewerOn,
       reviewerModel: reviewerRoute,
-      remember,
       workerEffort: workerChosen,
       reviewerEffort: reviewerChosen,
     })
@@ -148,7 +148,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
       return
     }
     request.resolve({ kind: 'confirm', config })
-  }, [busy, needsModel, subagentsOn, subagentRoute, reviewerOn, reviewerRoute, remember, workerChosen, reviewerChosen, request, t])
+  }, [busy, needsModel, subagentsOn, subagentRoute, reviewerOn, reviewerRoute, workerChosen, reviewerChosen, request, t])
 
   const sameText = useMemo(
     () => (mainName === undefined ? t('subagents.same.unknown') : t('subagents.same', { model: mainName })),
@@ -331,7 +331,6 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
             )
           : undefined}
 
-        <Checkbox checked={remember} onChange={setRemember} label={t('remember.label')} disabled={busy} />
         {error !== null ? <p className="dsh-orq-error" role="alert">{error}</p> : undefined}
       </div>
     </Modal>

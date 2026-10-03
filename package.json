@@ -1,6 +1,6 @@
 {
   "name": "dsh-orquestrator",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "DeepSeek Harness plugin: a native-looking modal on task send lets you pick a different model for subagents and an independent reviewer (own model) that validates each subagent's work, fixes only real defects, and delivers the result to the main agent. Every child it starts gets a reasoning-effort ceiling and an output-token cap.",
   "type": "module",
   "main": "./lib/index.js",

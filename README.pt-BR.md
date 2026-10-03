@@ -60,18 +60,16 @@ Digite uma tarefa no compositor e envie. O diálogo aparece uma vez por tarefa n
   Flash; o MiMo-V2.6-Pro pode levar minutos por turno em esforço alto; o GLM 5.3 só lê texto).
 - **Esforço de raciocínio** (recolhido): quanto cada modelo pode pensar. O padrão é o nível
   recomendado para o modelo; abra para ver ou mudar.
-- **Não perguntar de novo nesta conversa** guarda a escolha para esta sessão e para
-  mais nenhuma. Uma conversa sem tarefa nenhuma pergunta sempre de novo: o cliente web
-  do DSH reaproveita a sessão vazia da workspace a cada "Nova sessão", e uma escolha
-  guardada ali calaria o modal na workspace inteira.
+- **Não existe "não perguntar de novo"**: o modal aparece em TODA a tarefa nova e nada
+  o silencia — uma resposta nunca o esconde da próxima tarefa nem de outra conversa.
+  A última escolha confirmada apenas pré-preenche o diálogo.
 - **Cancelar / Esc / ✕**: envia a tarefa com o comportamento padrão e esquece qualquer
   escolha guardada.
 
-`/orquestrar` abre o mesmo diálogo sob demanda (para mudar ou limpar uma escolha guardada).
+`/orquestrar` abre o mesmo diálogo sob demanda (para mudar ou limpar a escolha guardada).
 
 O diálogo não aparece quando não é uma tarefa nova: direcionar um turno em andamento,
-conversas de subagente e linhas de comando `/`. Uma escolha guardada dispensa-o apenas
-dentro da conversa que a fez.
+conversas de subagente e linhas de comando `/`.
 
 ## O que o revisor faz
 

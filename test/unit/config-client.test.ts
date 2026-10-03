@@ -4,7 +4,7 @@ import { ConfigClient, ConfigHttpError, hostBase, type Fetch } from '../../src/c
 import { buildConfig } from '../../src/shared.ts'
 
 const route = { provider: 'openrouter', model: 'google/gemini-3.8-flash' }
-const config = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: null, remember: false })
+const config = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: null })
 const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
 function client(handler: (url: URL, init: RequestInit | undefined) => Response | Promise<Response>): { client: ConfigClient; calls: { url: URL; init: RequestInit | undefined }[] } {

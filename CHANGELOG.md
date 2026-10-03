@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+**The "Do not ask again in this conversation" checkbox is gone: the modal now appears
+for every new task and nothing can hide it.** A remembered silence always spread — the
+DSH web client reuses a workspace's empty session for every "New session"
+(`ui-workspace` `connectWorkspace`), so one answer silenced the modal for every
+conversation the user opened in that workspace, with no way left to configure the
+orchestration there. Now every new task raises the modal and the last confirmed choice
+only pre-fills it. `remember` is dropped from the configuration schema; a legacy field
+is accepted and ignored, so stored choices keep working as pre-fill. 260/260 tests.
+
 ## 0.2.1
 
 **"Do not ask again in this conversation" is bound to that conversation alone.**

@@ -7,8 +7,8 @@ import type { PromptPartLike, SessionFaceLike, SessionSnapshotLike } from '../..
 import { OFF_CONFIG, buildConfig, type OrchestratorConfig } from '../../src/shared.ts'
 
 const route = { provider: 'openrouter', model: 'google/gemini-3.8-flash' }
-const active = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: null, remember: false })
-const remembered = buildConfig({ subagentModel: route, reviewerEnabled: false, reviewerModel: null, remember: true })
+const active = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: null })
+const chosen = buildConfig({ subagentModel: route, reviewerEnabled: false, reviewerModel: null })
 
 /** A session class like the real one: `prompt` lives on the prototype. */
 class FakeSession implements SessionFaceLike {
@@ -174,7 +174,7 @@ describe('beforePrompt', () => {
     h.memory.last = active
     answerNext(h.dialogs, cancel)
     await session.prompt(text('two'), 'queue')
-    h.stored = buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null, remember: false })
+    h.stored = buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null })
     answerNext(h.dialogs, cancel)
     await session.prompt(text('three'), 'queue')
 
@@ -185,43 +185,25 @@ describe('beforePrompt', () => {
     detach()
   })
 
-  it('does not ask again when "do not ask again" is on for an active choice', async () => {
+  it('always asks: a stored choice pre-fills the dialog and never silences it', async () => {
+    // There is no "do not ask again". One answer may not hide the modal from the
+    // next task nor from another conversation (the DSH web client reuses a
+    // workspace's blank session for every "new session"), so every new task asks.
     const h = harness()
     const session = new FakeSession('s')
     h.dialogs.registerPresenter('s', Symbol())
     const detach = h.gate.attach(session)
-    h.stored = remembered
-    await session.prompt(text('go'), 'queue')
-    assert.equal(h.dialogs.current.getSnapshot(), null)
-    assert.equal(session.prompts.length, 1)
-    detach()
-  })
-
-  it('still asks in a conversation with no turn yet, whatever is remembered', async () => {
-    // The DSH web client reuses a workspace's blank session for every "new
-    // session" (`ui-workspace` `connectWorkspace`), so a choice remembered on a
-    // blank session is not this conversation's answer: honoring it would silence
-    // the modal for the whole workspace instead of one chat.
-    const h = harness()
-    const session = new FakeSession('s')
-    session.snapshot = { running: false, subagent: null, blank: true }
-    h.dialogs.registerPresenter('s', Symbol())
-    const detach = h.gate.attach(session)
-    h.stored = remembered
+    h.stored = chosen
     const initials: OrchestratorConfig[] = []
-    answerNext(h.dialogs, (request) => {
-      initials.push(request.initial)
-      request.resolve({ kind: 'cancel' })
-    })
-    await session.prompt(text('go'), 'queue')
-    assert.deepEqual(initials.length, 1)
-    assert.equal(initials[0]?.remember, true) // pre-filled: one click re-affirms it
-    assert.equal(session.prompts.length, 1)
+    const cancel = (request: DialogRequest): void => { initials.push(request.initial); request.resolve({ kind: 'cancel' }) }
 
-    // Once the conversation has been used, the remembered choice applies again.
-    session.snapshot = { running: false, subagent: null, blank: false }
+    answerNext(h.dialogs, cancel)
+    await session.prompt(text('go'), 'queue')
+    answerNext(h.dialogs, cancel)
     await session.prompt(text('more'), 'queue')
-    assert.equal(initials.length, 1)
+
+    assert.equal(initials.length, 2) // asked twice, never skipped
+    assert.deepEqual(initials[0], chosen) // pre-filled with the stored choice
     assert.equal(session.prompts.length, 2)
     detach()
   })
@@ -280,20 +262,18 @@ describe('beforePrompt', () => {
 })
 
 describe('last-choice memory', () => {
-  it('stores without the per-conversation flag and tolerates missing or broken storage', () => {
+  it('stores the last choice and tolerates missing, stale or broken storage', () => {
     const box = new Map<string, string>()
     const memory = createLastChoiceMemory({ getItem: key => box.get(key) ?? null, setItem: (key, value) => { box.set(key, value) } })
     assert.equal(memory.read(), null)
-    memory.write(remembered)
-    assert.equal(memory.read()?.remember, false)
-    assert.equal(memory.read()?.subagentModel?.model, route.model)
+    memory.write(chosen)
+    assert.deepEqual(memory.read(), chosen)
 
-    // The same flag is stripped on read: the key is shared by every conversation
-    // and workspace in the browser, so a stale entry can never pre-check it.
-    box.set('dsh-orquestrator:last:v1', JSON.stringify({ ...remembered, remember: true }))
-    assert.equal(memory.read()?.remember, false)
-    assert.equal(memory.read()?.reviewer.enabled, remembered.reviewer.enabled)
-    box.set('dsh-orquestrator:last:v1', JSON.stringify({ version: 2, remember: true }))
+    // An entry written by an older build still pre-fills: its legacy `remember`
+    // field is dropped, and the modal asks regardless — nothing can hide it.
+    box.set('dsh-orquestrator:last:v1', JSON.stringify({ ...chosen, remember: true }))
+    assert.deepEqual(memory.read(), chosen)
+    box.set('dsh-orquestrator:last:v1', JSON.stringify({ version: 2 }))
     assert.equal(memory.read(), null)
 
     assert.equal(createLastChoiceMemory(undefined).read(), null)

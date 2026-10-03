@@ -7,7 +7,7 @@
  * - a composer overlay occupant that hosts the dialog and attaches the prompt
  *   gate, so a task send raises the modal before the prompt is admitted;
  * - a `/orquestrar` slash command that opens the same dialog on demand (the
- *   manual path, and the way to change or clear a remembered choice).
+ *   manual path, and the way to change or clear the stored choice).
  *
  * Everything here is fail-open: if any piece cannot mount, sends behave
  * exactly as stock DSH.

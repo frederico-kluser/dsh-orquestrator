@@ -169,16 +169,12 @@ export class PromptGate {
       this.deps.warn('configuration route unavailable; not asking', error)
       return
     }
-    // "Do not ask again" was chosen for this conversation: the host already holds it.
-    //
-    // A conversation with no turn yet is NOT the conversation the choice was made
-    // in. The DSH web client reuses a workspace's blank session for every "new
-    // session" (`ui-workspace` `connectWorkspace`), so a remembered choice left on
-    // a blank session (a `/orquestrar` save, or a confirm whose task never went
-    // out) would silence the modal for every conversation the user opens in that
-    // workspace — one answer covering a whole workspace instead of one chat. Ask
-    // again instead; the dialog opens pre-filled with the stored choice.
-    if (stored !== null && stored.remember && isActive(stored) && face.getSnapshot().blank !== true) return
+    // The modal always asks. There is no "do not ask again": one answer may not
+    // silence the next task, this conversation, or the next one the DSH web
+    // client opens in this workspace (it reuses a workspace's blank session for
+    // every "new session", so any remembered silence would spread). The stored
+    // choice only pre-fills the dialog.
+
 
     if (!dialogs.hasPresenter(sessionId)) {
       // Nobody can render the dialog. A previous one-task choice must not leak
@@ -212,19 +208,14 @@ export function createLastChoiceMemory(storage: Pick<Storage, 'getItem' | 'setIt
         const raw = storage?.getItem(KEY)
         if (raw == null) return null
         const parsed = parseConfig(JSON.parse(raw))
-        if (parsed === undefined) return null
-        // This key is shared by every conversation and workspace in the browser,
-        // so the per-conversation flag must never travel with it — not even from
-        // a stale entry another build wrote.
-        return { ...parsed, remember: false }
+        return parsed === undefined ? null : parsed
       } catch {
         return null
       }
     },
     write(config) {
       try {
-        // "Do not ask again" is per conversation, never carried to the next one.
-        storage?.setItem(KEY, JSON.stringify({ ...config, remember: false }))
+        storage?.setItem(KEY, JSON.stringify(config))
       } catch {
         // Storage may be full or blocked: the memory is a convenience only.
       }

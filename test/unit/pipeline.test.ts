@@ -62,7 +62,7 @@ describe('model-only orchestration', () => {
     const subagents = new FakeSubagents({ results: [], maxDepth: 1 })
     const value = await orchestrate(deps(subagents), {
       tool, args, parent: fakeAgent(), signal: signal(),
-      config: buildConfig({ subagentModel: cheap, reviewerEnabled: false, reviewerModel: null, remember: false }),
+      config: buildConfig({ subagentModel: cheap, reviewerEnabled: false, reviewerModel: null }),
     })
     assert.deepEqual(value, { kind: 'continuable', subagentId: 'child-1' })
     assert.equal(subagents.starts.length, 0)
@@ -76,7 +76,7 @@ describe('model-only orchestration', () => {
   })
 
   it('runs in the foreground when the model asked for it, or when the tool is one-shot', async () => {
-    const config = buildConfig({ subagentModel: cheap, reviewerEnabled: false, reviewerModel: null, remember: false })
+    const config = buildConfig({ subagentModel: cheap, reviewerEnabled: false, reviewerModel: null })
     for (const [selected, runInBackground] of [[tool, false], [oneShot, undefined]] as const) {
       const subagents = new FakeSubagents({ results: [textResult('done text')] })
       const value = await orchestrate(deps(subagents), {
@@ -93,7 +93,7 @@ describe('model-only orchestration', () => {
     await assert.rejects(
       orchestrate(deps(subagents), {
         tool: oneShot, args, parent: fakeAgent(), signal: signal(),
-        config: buildConfig({ subagentModel: cheap, reviewerEnabled: false, reviewerModel: null, remember: false }),
+        config: buildConfig({ subagentModel: cheap, reviewerEnabled: false, reviewerModel: null }),
       }),
       /subagent run failed[\s\S]*provider 500[\s\S]*partial/,
     )
@@ -104,7 +104,7 @@ describe('model-only orchestration', () => {
     await assert.rejects(
       orchestrate(deps(subagents), {
         tool, args, parent: fakeAgent(), signal: signal(),
-        config: buildConfig({ subagentModel: cheap, reviewerEnabled: false, reviewerModel: null, remember: false }),
+        config: buildConfig({ subagentModel: cheap, reviewerEnabled: false, reviewerModel: null }),
       }),
       /cannot run a child on another model/,
     )
@@ -112,7 +112,7 @@ describe('model-only orchestration', () => {
     await assert.rejects(
       orchestrate(deps(missing), {
         tool, args, parent: fakeAgent(), signal: signal(),
-        config: buildConfig({ subagentModel: cheap, reviewerEnabled: false, reviewerModel: null, remember: false }),
+        config: buildConfig({ subagentModel: cheap, reviewerEnabled: false, reviewerModel: null }),
       }),
       /not registered/,
     )
@@ -120,7 +120,7 @@ describe('model-only orchestration', () => {
 })
 
 describe('reviewed orchestration', () => {
-  const reviewedConfig = buildConfig({ subagentModel: cheap, reviewerEnabled: true, reviewerModel: strong, remember: false })
+  const reviewedConfig = buildConfig({ subagentModel: cheap, reviewerEnabled: true, reviewerModel: strong })
 
   it('hands the worker report to the reviewer and delivers ONLY the reviewer report', async () => {
     const subagents = new FakeSubagents({
@@ -187,7 +187,7 @@ describe('reviewed orchestration', () => {
     const subagents = new FakeSubagents({ results: [textResult('report'), textResult('VERDICT: APPROVED\nok')] })
     await orchestrate(deps(subagents), {
       tool, args, parent: fakeAgent(), signal: signal(),
-      config: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null, remember: false }),
+      config: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }),
     })
     assert.equal(subagents.starts[0]?.request.agentOptions, undefined)
     assert.equal(subagents.starts[1]?.request.agentOptions, undefined)
@@ -195,7 +195,7 @@ describe('reviewed orchestration', () => {
     const worker = new FakeSubagents({ results: [textResult('report'), textResult('VERDICT: APPROVED\nok')] })
     await orchestrate(deps(worker), {
       tool, args, parent: fakeAgent(), signal: signal(),
-      config: buildConfig({ subagentModel: cheap, reviewerEnabled: true, reviewerModel: null, remember: false }),
+      config: buildConfig({ subagentModel: cheap, reviewerEnabled: true, reviewerModel: null }),
     })
     assert.deepEqual(worker.starts[1]?.request.agentOptions, { provider: 'openrouter', model: 'google/gemini-3.8-flash' })
   })

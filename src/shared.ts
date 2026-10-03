@@ -45,8 +45,6 @@ export interface OrchestratorConfig {
   readonly workerEffort: string | null
   /** The independent reviewer that validates each subagent's work. */
   readonly reviewer: ReviewerConfig
-  /** Skip the modal on the next tasks of this session and reuse this choice. */
-  readonly remember: boolean
 }
 
 /** The inert configuration: exactly the stock DSH behavior. */
@@ -55,7 +53,6 @@ export const OFF_CONFIG: OrchestratorConfig = Object.freeze({
   subagentModel: null,
   workerEffort: null,
   reviewer: Object.freeze({ enabled: false, model: null, effort: null }),
-  remember: false,
 })
 
 /**
@@ -149,13 +146,12 @@ export function parseConfig(value: unknown): OrchestratorConfig | undefined {
   if (reviewerModel === undefined) return undefined
   const reviewerEffort = parseEffort(reviewer['effort'])
   if (reviewerEffort === undefined) return undefined
-  if (typeof value['remember'] !== 'boolean') return undefined
+  // A legacy `remember` field is accepted and dropped: the modal always asks.
   return {
     version: 1,
     subagentModel,
     workerEffort: workerEffort.value,
     reviewer: { enabled: reviewer['enabled'], model: reviewerModel, effort: reviewerEffort.value },
-    remember: value['remember'],
   }
 }
 
@@ -168,7 +164,6 @@ export function buildConfig(input: {
   readonly subagentModel: ModelRoute | null
   readonly reviewerEnabled: boolean
   readonly reviewerModel: ModelRoute | null
-  readonly remember: boolean
   /** Explicit subagent effort; omitted or null means the recommended level. */
   readonly workerEffort?: string | null
   /** Explicit reviewer effort; omitted or null means the recommended level. */
@@ -183,7 +178,6 @@ export function buildConfig(input: {
       model: input.reviewerEnabled ? input.reviewerModel : null,
       effort: input.reviewerEnabled ? input.reviewerEffort ?? null : null,
     },
-    remember: input.remember,
   }
 }
 

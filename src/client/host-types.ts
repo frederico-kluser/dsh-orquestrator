@@ -21,6 +21,11 @@ export interface SessionSnapshotLike {
   readonly running: boolean
   /** Non-null for an addressed (continuable) subagent conversation. */
   readonly subagent: unknown
+  /**
+   * Whether this conversation has had no turn yet (DSH's own `SessionSnapshot.blank`).
+   * Absent means "unknown", and the gate then keeps the plain per-session rule.
+   */
+  readonly blank?: boolean
 }
 
 /** The outward Session face (`SessionFace`), narrowed to what the gate touches. */

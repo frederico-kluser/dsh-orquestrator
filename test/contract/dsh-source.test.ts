@@ -68,6 +68,14 @@ describe('DSH source contract', { skip: skip ? 'set DSH_CHECKOUT to a DeepSeek H
     const face = read('packages/api/session-controller/src/client/contract/snapshot.ts')
     assert.match(face, /readonly running: boolean/)
     assert.match(face, /readonly subagent: \{/)
+    assert.match(face, /readonly blank: boolean/) // the gate reads it: a conversation with no turn yet always asks
+  })
+
+  it('the web client reuses a workspace\'s blank session for "new session": why "do not ask again" may never rest on one', () => {
+    const navigation = read('packages/client/ui-workspace/src/client/navigation.ts')
+    assert.match(navigation, /summary\.blank && summary\.cwd === workspace\.path/) // the reuse: one choice would cover the workspace
+    assert.match(navigation, /this\.sessions\.create\(\{ workspaceId \}\)/) // otherwise a fresh session
+    assert.match(read('packages/api/session-controller/src/list.ts'), /state\.blank && event\.type !== 'turn\/start'/) // blank ends at the first turn
   })
 
   it('the composer still declares the overlay slot and looks the conversation service up per send', () => {

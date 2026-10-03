@@ -11,7 +11,7 @@
  * @module dsh-orquestrator/client/gate
  */
 
-import { OFF_CONFIG, isActive, type OrchestratorConfig } from '../shared.ts'
+import { OFF_CONFIG, isActive, parseConfig, type OrchestratorConfig } from '../shared.ts'
 import type { ConfigClient } from './config-client.ts'
 import type { DialogHost } from './dialogs.ts'
 import type { PromptPartLike, SessionFaceLike } from './host-types.ts'
@@ -19,7 +19,7 @@ import type { PromptPartLike, SessionFaceLike } from './host-types.ts'
 /** Longest task preview shown in the dialog. */
 const PREVIEW_CHARS = 240
 
-/** Persistence of the most recent confirmed choice (a convenience for the next dialog). */
+/** Persistence of the most recent confirmed choice (a convenience for the next dialog, in any conversation). */
 export interface LastChoiceMemory {
   read(): OrchestratorConfig | null
   write(config: OrchestratorConfig): void
@@ -170,7 +170,15 @@ export class PromptGate {
       return
     }
     // "Do not ask again" was chosen for this conversation: the host already holds it.
-    if (stored !== null && stored.remember && isActive(stored)) return
+    //
+    // A conversation with no turn yet is NOT the conversation the choice was made
+    // in. The DSH web client reuses a workspace's blank session for every "new
+    // session" (`ui-workspace` `connectWorkspace`), so a remembered choice left on
+    // a blank session (a `/orquestrar` save, or a confirm whose task never went
+    // out) would silence the modal for every conversation the user opens in that
+    // workspace — one answer covering a whole workspace instead of one chat. Ask
+    // again instead; the dialog opens pre-filled with the stored choice.
+    if (stored !== null && stored.remember && isActive(stored) && face.getSnapshot().blank !== true) return
 
     if (!dialogs.hasPresenter(sessionId)) {
       // Nobody can render the dialog. A previous one-task choice must not leak
@@ -203,7 +211,12 @@ export function createLastChoiceMemory(storage: Pick<Storage, 'getItem' | 'setIt
       try {
         const raw = storage?.getItem(KEY)
         if (raw == null) return null
-        return JSON.parse(raw) as OrchestratorConfig
+        const parsed = parseConfig(JSON.parse(raw))
+        if (parsed === undefined) return null
+        // This key is shared by every conversation and workspace in the browser,
+        // so the per-conversation flag must never travel with it — not even from
+        // a stale entry another build wrote.
+        return { ...parsed, remember: false }
       } catch {
         return null
       }

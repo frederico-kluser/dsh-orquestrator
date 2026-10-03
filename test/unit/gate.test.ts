@@ -197,6 +197,35 @@ describe('beforePrompt', () => {
     detach()
   })
 
+  it('still asks in a conversation with no turn yet, whatever is remembered', async () => {
+    // The DSH web client reuses a workspace's blank session for every "new
+    // session" (`ui-workspace` `connectWorkspace`), so a choice remembered on a
+    // blank session is not this conversation's answer: honoring it would silence
+    // the modal for the whole workspace instead of one chat.
+    const h = harness()
+    const session = new FakeSession('s')
+    session.snapshot = { running: false, subagent: null, blank: true }
+    h.dialogs.registerPresenter('s', Symbol())
+    const detach = h.gate.attach(session)
+    h.stored = remembered
+    const initials: OrchestratorConfig[] = []
+    answerNext(h.dialogs, (request) => {
+      initials.push(request.initial)
+      request.resolve({ kind: 'cancel' })
+    })
+    await session.prompt(text('go'), 'queue')
+    assert.deepEqual(initials.length, 1)
+    assert.equal(initials[0]?.remember, true) // pre-filled: one click re-affirms it
+    assert.equal(session.prompts.length, 1)
+
+    // Once the conversation has been used, the remembered choice applies again.
+    session.snapshot = { running: false, subagent: null, blank: false }
+    await session.prompt(text('more'), 'queue')
+    assert.equal(initials.length, 1)
+    assert.equal(session.prompts.length, 2)
+    detach()
+  })
+
   it('fails open when the host route is unavailable', async () => {
     const h = harness()
     const session = new FakeSession('s')
@@ -258,6 +287,14 @@ describe('last-choice memory', () => {
     memory.write(remembered)
     assert.equal(memory.read()?.remember, false)
     assert.equal(memory.read()?.subagentModel?.model, route.model)
+
+    // The same flag is stripped on read: the key is shared by every conversation
+    // and workspace in the browser, so a stale entry can never pre-check it.
+    box.set('dsh-orquestrator:last:v1', JSON.stringify({ ...remembered, remember: true }))
+    assert.equal(memory.read()?.remember, false)
+    assert.equal(memory.read()?.reviewer.enabled, remembered.reviewer.enabled)
+    box.set('dsh-orquestrator:last:v1', JSON.stringify({ version: 2, remember: true }))
+    assert.equal(memory.read(), null)
 
     assert.equal(createLastChoiceMemory(undefined).read(), null)
     createLastChoiceMemory(undefined).write(active) // must not throw

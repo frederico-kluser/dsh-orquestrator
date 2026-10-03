@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1
+
+**"Do not ask again in this conversation" is bound to that conversation alone.**
+DSH's web client reuses a workspace's empty session for every "New session"
+(`ui-workspace` `connectWorkspace`), so a choice remembered on an empty session — a
+`/orquestrar` save, or a confirm whose task never went out — silenced the modal for
+every conversation the user opened in that workspace: one answer covering a whole
+workspace instead of one chat, and no way left to configure the orchestration there.
+The gate now reads the session's own `blank` bit (no turn yet) and asks again in a
+conversation with no task, with the dialog pre-filled so one click re-affirms the
+choice. The browser's shared last-choice key strips the flag on read as well as on
+write. Tests cover both; `docs/DESIGN.md` records the decision.
+
 ## 0.2.0
 
 Built from sixteen studies read against the DSH source and public data; the digest, the

@@ -58,13 +58,17 @@ Type a task in the composer and send it. The dialog appears once per new task:
   MiMo-V2.6-Pro can take minutes per turn at high effort; GLM 5.3 is text only).
 - **Reasoning effort** (collapsed): how hard each model may think. It defaults to the
   recommended level for the model; open it to see or change it.
-- **Do not ask again in this conversation** remembers the choice for the session.
+- **Do not ask again in this conversation** remembers the choice for this session and
+  for no other. A conversation with no task yet always asks again: the DSH web client
+  reuses a workspace's empty session for every "New session", so a choice remembered
+  there would otherwise silence the modal for the whole workspace.
 - **Cancel / Esc / ✕**: send the task with stock behavior and forget any stored choice.
 
 `/orquestrar` opens the same dialog on demand (to change or clear a remembered choice).
 
 The dialog is skipped for anything that is not a new task: steering a running turn,
-sub-agent conversations and `/` command lines.
+sub-agent conversations and `/` command lines. A remembered choice skips it only
+inside the conversation that made it.
 
 ## What the reviewer does
 

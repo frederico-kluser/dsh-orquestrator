@@ -75,6 +75,7 @@ SDK profiles, driven by the `defaults` config.
 | Reviewer failure delivers the worker report under an `UNREVIEWED` banner | Losing finished work because a review crashed is worse than delivering it with an honest label. |
 | The reviewer never learns which model did the work | Judges recognize and favor output from their own model family (dossier Q2, M4). |
 | The modal opens only for a new task (idle, top-level, `queue`, not a `/` line) | Steering a running turn, sub-agent conversations and slash commands are not new tasks. |
+| "Do not ask again" is scoped to one conversation, and a conversation with no task yet always asks | DSH's web client reuses a workspace's empty session for every "New session" (`ui-workspace` `connectWorkspace`), so a remembered choice left on an empty session silenced the modal for every conversation the user opened in that workspace. The gate reads the session's own `blank` bit and asks while it is set (the dialog opens pre-filled). The browser's last-choice `localStorage` key, shared by every conversation and workspace, never carries the flag — it is stripped on write **and** on read. |
 | Prompt wrapping on the prototype, not the instance | A reconnect can re-create the session face; a prototype patch survives it. |
 | `subagent` one-shot **background jobs** are not orchestrated | They deliver through the job store, outside the tool result the plugin substitutes. Documented limitation. |
 | The plugin ships inert | No stored choice and no `defaults` means stock behavior. |

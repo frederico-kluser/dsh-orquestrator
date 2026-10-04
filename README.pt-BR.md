@@ -17,11 +17,16 @@ entrega o relatório final.
 **Cancelar, Esc e o botão de fechar enviam a tarefa exatamente como o DSH sempre fez.**
 Nada mais no DSH muda.
 
-Todo subagente e todo revisor que o plugin inicia também recebe um **teto de esforço de
-raciocínio** e um limite de tokens de saída, porque o DSH, por padrão, roda um filho
-re-roteado no padrão da rota dele (`max` em muitas configurações): a causa de trabalhadores que
-queimam o orçamento inteiro num caso de borda e de revisores que levam minutos por turno.
-Veja [Esforço de raciocínio](#esforço-de-raciocínio).
+A escolha vale para **todo filho que o DSH inicia naquela sessão**, não só para as ferramentas
+`subagent`: os agentes que um `workflow` inicia, as rodadas do `ralph`, jobs `subagent` one-shot em
+segundo plano e times de agentes também rodam no modelo dos subagentes, sob os mesmos tetos. O
+revisor atua nas delegações de `subagent` e `subagent_fork`. Veja
+[Quais delegações são cobertas](#quais-delegações-são-cobertas).
+
+Todo filho governado desse jeito também recebe um **teto de esforço de raciocínio** e um limite de
+tokens de saída, porque o DSH, por padrão, roda um filho re-roteado no padrão da rota dele (`max`
+em muitas configurações): a causa de trabalhadores que queimam o orçamento inteiro num caso de
+borda e de revisores que levam minutos por turno. Veja [Esforço de raciocínio](#esforço-de-raciocínio).
 
 | Escuro | Claro |
 | --- | --- |
@@ -50,10 +55,12 @@ build, então a instalação não precisa compilar nada.
 Digite uma tarefa no compositor e envie. O diálogo aparece uma vez por tarefa nova:
 
 - **Modelo dos subagentes**: ligue e escolha um modelo na mesma lista agrupada por
-  provedor que o seletor de modelo do compositor usa. Desligado, os subagentes mantêm o
-  modelo do agente principal.
+  provedor que o seletor de modelo do compositor usa. Vale para todo subagente, inclusive os
+  agentes que um workflow inicia. Desligado, os subagentes mantêm o modelo do agente principal.
 - **Revisor independente**: ligue e escolha o modelo dele (padrão: o do subagente).
-  Um revisor de outra família de modelos tende a pegar erros diferentes, e o diálogo
+  Ele revisa as delegações de `subagent` e `subagent_fork`; os agentes que um workflow inicia
+  usam o modelo dos subagentes, mas não são revisados, porque o script do workflow consome os
+  resultados deles (o diálogo avisa). Um revisor de outra família de modelos tende a pegar erros diferentes, e o diálogo
   avisa quando os dois são o mesmo modelo (com qualquer grafia de provedor) ou da mesma
   família de fornecedor. Também mostra notas curtas e datadas para modelos que precisam
   delas (por exemplo: a API própria da DeepSeek agora serve o `deepseek-v4-pro` com o V4.1
@@ -108,6 +115,52 @@ banner da entrega. Um provedor sem captura estruturada, ou um modelo que respond
 cai num relatório em texto com veredicto primeiro. Se a revisão falhar ou não tiver veredicto
 válido, o relatório do trabalhador é entregue sob um aviso `WARNING - UNREVIEWED` em vez de se perder.
 
+## Quais delegações são cobertas
+
+O DSH tem mais jeitos de iniciar um filho do que as duas ferramentas `subagent`. O plugin governa
+todos em dois lugares: embrulha as ferramentas `subagent` e `subagent_fork` (modelo, tetos **e**
+revisor) e fica nas duas portas por onde passa todo o resto, `SubagentRuntime.start()` e
+`startContinuable()` (modelo e tetos; o **guarda de início**, `src/guard.ts`).
+
+| Como o DSH inicia o filho | Modelo, teto de esforço, teto de tokens | Revisor |
+| --- | --- | --- |
+| ferramentas `subagent` e `subagent_fork` (o preset padrão) | sim | sim |
+| `subagent` como job one-shot em segundo plano (`backgroundMode: one-shot`, `run_in_background: true`) | sim | não: o resultado passa pelo armazém de jobs |
+| a ferramenta `workflow`: cada chamada `agent()` do script | sim | não: o script consome os resultados |
+| `ralph` (desligado no preset padrão; roda no motor de workflow) | sim | não |
+| times de agentes (experimental) | sim | não |
+| provedores `codex`, `claude-code` e ACP | não: rodam os próprios agentes nos próprios modelos e não aceitam opções de agente (o plugin registra um aviso, uma vez por provedor) | não |
+| o provedor SDK do DSH (um runtime-filho DSH separado) | sim quando um modelo de subagente é escolhido (aceita a rota, o esforço e o limite de tokens); com só um revisor escolhido, o filho dele mantém o modelo próprio do provedor | não |
+
+O que foi executado ao vivo, nos três modelos-alvo: a ferramenta `subagent` (em primeiro plano, com o
+revisor, e em segundo plano) e a ferramenta `workflow` (com o `override` padrão, com `keep` e com o
+guarda desligado). As outras linhas decorrem das portas que elas usam, que os testes de contrato fixam
+contra o código-fonte do DSH (o `ralph` roda no motor de workflow, um job one-shot e o time chamam
+`start` / `startContinuable`, o provedor SDK aceita opções de agente); nenhuma execução ao vivo usou um
+job one-shot em segundo plano, o `ralph`, um time de agentes, o provedor SDK nem `codex` / `claude-code` / ACP.
+
+Por que um segundo mecanismo: o embrulho das ferramentas nunca via os agentes de uma chamada
+`workflow`, porque o motor os inicia pelo próprio serviço. Na sessão que expôs o problema, 34
+agentes de workflow rodaram no Claude Sonnet 5.5 em `max` (cerca de 7,2 milhões de tokens de saída e
+1,26 bilhão de tokens de leitura de cache), embora o DeepSeek V4.1 Flash estivesse confirmado para
+os subagentes. As versões 0.3 e anteriores têm esse furo; [a página de validação](docs/validation/README.md)
+(em inglês) o reproduz num DSH isolado e mostra o furo fechado.
+
+O que um filho governado recebe é o que a ferramenta `subagent` dá aos seus trabalhadores: o modelo
+que o usuário escolheu, o esforço que o usuário escolheu (ou o teto do modelo) e o limite de tokens
+de saída. O agente principal nunca é tocado, e uma sessão sem escolha confirmada também não.
+
+Se o modelo que você confirmou deixou de existir (renomeado ou removido das configurações do DSH depois
+de confirmado), o início do filho é rejeitado com uma mensagem que diz isso e o que fazer (`/orquestrar`,
+ou cancelar o diálogo). As alternativas são piores: rodar o filho no modelo do agente principal é o bug
+que esta versão corrige, e forçar a rota morta faz todo agente do workflow falhar num `null` silencioso.
+
+Um modelo que o próprio chamador nomeia (`agent({ provider, model })` num script de workflow) perde
+para a escolha do usuário por padrão (`children.explicitModel: override`): o diálogo é a instrução
+explícita do usuário. `keep` deixa o modelo do chamador valer, sob os mesmos tetos. Quando o usuário
+escolheu só um revisor (nenhum modelo de subagente), os filhos ficam no modelo do agente principal,
+sob os tetos, e um modelo que o script nomeia vale.
+
 ## Configuração
 
 Tudo é opcional; sem configuração o plugin não faz nada até um usuário confirmar o
@@ -142,9 +195,11 @@ inteiro da linha):
     persist: true                  # lembra escolhas entre reinícios
     stateDir: ~/.dsh/dsh-orquestrator
     maxSessions: 500               # sessões guardadas antes de podar as mais antigas
-    tools:                         # quais ferramentas de delegação são orquestradas
+    tools:                         # quais ferramentas de delegação são orquestradas (modelo, tetos e revisor)
       - { name: subagent,      provider: spawn, mode: continuable }
       - { name: subagent_fork, provider: fork,  mode: continuable }
+    children:                      # todo outro filho que o DSH inicia (workflow, ralph, jobs, times); false governa só `tools`
+      explicitModel: override      # override | keep: modelo que o próprio chamador nomeia, ex.: agent({ model }) num script de workflow
 ```
 
 ### Esforço de raciocínio
@@ -183,12 +238,35 @@ ficaram de fora e por quê: [docs/estudos/](docs/estudos/README.md).
 
 ## Limites
 
-- **Jobs em segundo plano** one-shot da ferramenta `subagent` (`backgroundMode: one-shot`
-  com `run_in_background: true`) entregam pelo armazém de jobs e não são orquestrados.
-  O preset padrão usa `continuable`, que é.
-- O teto de esforço e o limite de tokens valem para os filhos que este plugin inicia, nunca para o
-  agente principal. Um modelo que não pode ser descrito pelo runtime de LLM mantém exatamente as
-  opções que o usuário escolheu.
+- **O revisor não atua nos agentes que um workflow inicia, nem em jobs `subagent` one-shot em
+  segundo plano.** Um script de workflow consome os resultados dos agentes dele (muitas vezes como
+  dados validados por esquema) e um job entrega pelo armazém de jobs, então trocar por um relatório
+  quebraria os dois. Esses filhos recebem o modelo e os tetos; mantenha uma fase de verificação no
+  workflow, ou rode a checagem como uma chamada `subagent`.
+- Provedores que não aceitam opções de agente (`codex`, `claude-code`, ACP) mantêm os modelos em
+  que rodam; o plugin registra um aviso (uma vez por provedor) e não toca nos filhos deles. Um provedor
+  que roda uma rota padrão própria (o provedor SDK) é deixado em paz quando nenhum modelo de subagente
+  é escolhido, porque o plugin não sabe em que o filho dele roda.
+- **O teto de tokens de saída não é durável para filhos `continuable`.** Quando o DSH retoma depois um
+  filho já terminado (uma mensagem de acompanhamento depois que ele liberou o filho, ou após um
+  reinício), ele reconstrói as opções do filho a partir do descritor gravado, que guarda provedor,
+  modelo e esforço, mas não o limite de tokens. O teto de esforço sobrevive; o limite vale só para a
+  primeira execução. Corrigir pede outra costura (veja [decisoes.md](docs/estudos/decisoes.md), N21).
+- Um modelo que o agente principal nomeia numa chamada `subagent` (a seleção de modelo do DSH, ligada
+  no preset padrão) é ignorado enquanto houver escolha confirmada, como sempre foi; o `override` aplica
+  a mesma regra a todo outro chamador. Um limite de tokens que o chamador define (a linha de ferramenta
+  de um operador, a lista de um time) nunca é elevado: vale o menor entre o do chamador e o do plugin.
+- Campos de configuração de nível superior desconhecidos são ignorados com um aviso no log do DSH (um
+  `explicitModel: keep` mal indentado rodaria, em silêncio, como `override`).
+- O DSH não tem gancho em volta do início de um filho (`subagent/start` dispara depois que o filho
+  existe), então o guarda de início instala `start` e `startContinuable` próprios na instância do
+  serviço. Os testes de contrato (`test/contract/`) fixam essa premissa contra um checkout do DSH e
+  um `SubagentRuntime` real, e falham primeiro quando o DSH a muda. Se o serviço não puder ser
+  embrulhado, o plugin falha ao carregar; nunca funciona pela metade. `children: false` retira o guarda.
+- O teto de esforço e o limite de tokens valem para os filhos que o plugin governa, nunca para o
+  agente principal. Um modelo que o runtime de LLM não consegue descrever, mas consegue chamar,
+  mantém exatamente as opções que o usuário escolheu (o log avisa); um que ele não consegue chamar
+  é rejeitado, como descrito acima.
 - A revisão em contexto limpo precisa de `git` e de um repositório. Dois trabalhadores editando a
   mesma árvore ao mesmo tempo podem borrar a lista de mudanças um do outro; o plugin então erra
   para o lado de entregar o relatório, que é o que a versão 0.1 sempre fez.
@@ -265,9 +343,12 @@ DSH_CHECKOUT=/caminho/deepseek-harness pnpm test   # também fixa as costuras do
 ```
 
 A validação ao vivo contra um DSH real usa somente os três modelos-alvo e falha se outro rodar:
-`scripts/e2e/run-trio.sh` (headless, com `session-config.mjs` lendo de volta o que cada sessão
-recebeu) e `scripts/e2e/ui-e2e.mjs` (navegador). Veja [docs/validation/README.md](docs/validation/README.md)
-(em inglês) para o `DSH_HOME` isolado que eles esperam.
+`scripts/e2e/run-trio.sh` (a ferramenta `subagent` e o revisor) e `scripts/e2e/run-workflow.sh` (a
+ferramenta `workflow` e o guarda de início), ambos headless, com `session-config.mjs` lendo de volta
+o que cada sessão recebeu, e `scripts/e2e/ui-e2e.mjs` (navegador). `scripts/e2e/setup-isolated-home.sh`
+monta o `DSH_HOME` isolado que eles esperam e `scripts/e2e/with-keys.sh` os executa só com as duas
+chaves de API que os três modelos precisam. Veja [docs/validation/README.md](docs/validation/README.md)
+(em inglês).
 
 Estrutura: `src/` (host), `src/client/` (navegador), `test/` (unitários, integração,
 contrato), `scripts/e2e/` (execuções headless e de navegador contra um DSH real), `docs/` (design,

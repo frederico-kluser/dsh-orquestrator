@@ -50,6 +50,8 @@ export interface FakeSubagentsOptions {
   readonly results: (SubagentResultLike | Error | ((request: SubagentStartRequestLike, provider: string) => SubagentResultLike | Error))[]
   /** Provider capabilities; defaults to a spawn-like provider that supports everything. */
   readonly capabilities?: Record<string, { agentOptions: boolean; persona: boolean; outputSchema?: boolean } | undefined>
+  /** Providers that run on a route of their own (the SDK provider), by name. */
+  readonly routeDefaults?: Record<string, { provider: string; model: string }>
   readonly maxDepth?: number | undefined
   /** Throw this on `start` number N (0-based) instead of returning a run. */
   readonly failStartAt?: { readonly index: number; readonly error: Error }
@@ -88,13 +90,15 @@ export class FakeSubagents implements SubagentsLike {
     return this.options.maxDepth
   }
 
-  getProvider(name: string): { capabilities: { agentOptions: boolean; persona: boolean; outputSchema?: boolean } } | undefined {
+  getProvider(name: string): { capabilities: { agentOptions: boolean; persona: boolean; outputSchema?: boolean }; agentRouteDefaults?: { provider: string; model: string } } | undefined {
     const configured = this.options.capabilities
+    const routeDefaults = this.options.routeDefaults?.[name]
+    const route = routeDefaults === undefined ? {} : { agentRouteDefaults: routeDefaults }
     if (configured !== undefined && name in configured) {
       const capabilities = configured[name]
-      return capabilities === undefined ? undefined : { capabilities }
+      return capabilities === undefined ? undefined : { capabilities, ...route }
     }
-    return { capabilities: { agentOptions: true, persona: true } }
+    return { capabilities: { agentOptions: true, persona: true }, ...route }
   }
 }
 

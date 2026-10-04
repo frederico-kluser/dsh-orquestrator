@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { parsePluginConfig } from '../../src/config.ts'
 import type { ModelInfoLike, ModelInfoSourceLike } from '../../src/host-services.ts'
+import { ChoiceUnusableError } from '../../src/effort.ts'
+import { isPlanned } from '../../src/guard.ts'
 import { decideReportMode, orchestrate, type PipelineDeps } from '../../src/pipeline.ts'
 import { REVIEWER_PERSONA, REVIEWER_PERSONA_STRUCTURED } from '../../src/reviewer-protocol.ts'
 import { buildConfig } from '../../src/shared.ts'
@@ -353,5 +355,75 @@ describe('structured verdict', () => {
     const none = new FakeSubagents({ results: [textResult('the worker report'), textResult('', 'max-tokens')], capabilities: structuredCaps })
     const failed = textOf(await orchestrate(deps(none), { tool, args, parent: fakeAgent(), signal: signal(), config: reviewed() }))
     assert.match(failed, /^WARNING - UNREVIEWED: .*token limit/)
+  })
+})
+
+describe('hand-off to the start guard', () => {
+  it('marks every child it starts as planned: worker, retry and reviewer, so the guard never plans them again', async () => {
+    const subagents = new FakeSubagents({
+      results: [textResult('half done', 'max-tokens'), textResult('finished the job'), textResult('VERDICT: APPROVED\nok')],
+    })
+    await orchestrate(deps(subagents, {}, { models: () => models }), { tool, args, parent: fakeAgent(), signal: signal(), config: reviewed() })
+    assert.equal(subagents.starts.length, 3)
+    for (const started of subagents.starts) assert.equal(isPlanned(started.request), true)
+  })
+
+  it('marks a model-only foreground worker and a continuable child as planned', async () => {
+    const foreground = new FakeSubagents({ results: [textResult('done')] })
+    await orchestrate(deps(foreground, {}, { models: () => models }), {
+      tool: oneShot, args, parent: fakeAgent(), signal: signal(), config: buildConfig({ subagentModel: DEEPSEEK, reviewerEnabled: false, reviewerModel: null }),
+    })
+    assert.equal(isPlanned(foreground.starts[0]?.request ?? {}), true)
+
+    const continuable = new FakeSubagents({ results: [] })
+    await orchestrate(deps(continuable, {}, { models: () => models }), {
+      tool, args, parent: fakeAgent(), signal: signal(), config: buildConfig({ subagentModel: DEEPSEEK, reviewerEnabled: false, reviewerModel: null }),
+    })
+    const spec = continuable.continuables[0]
+    assert.ok(spec)
+    assert.equal(isPlanned(spec) && isPlanned(spec.request as object), true)
+  })
+})
+
+describe('a worker model the user confirmed and the runtime no longer knows', () => {
+  const retired = { provider: 'azure-opencode', model: 'Retired-Model-9' }
+  const gone: ModelInfoSourceLike = { resolveModelInfo: (provider, model) => Promise.reject(new Error(`no ${provider}/${model}`)) }
+  const refusal = (error: unknown): boolean => error instanceof ChoiceUnusableError && /azure-opencode\/Retired-Model-9 cannot be used \(no azure-opencode\/Retired-Model-9\)/.test(error.message)
+
+  it('is refused with a message that says what to do, not run into a bare "subagent run failed", on every path', async () => {
+    for (const [tool_, config] of [
+      [tool, buildConfig({ subagentModel: retired, reviewerEnabled: false, reviewerModel: null })], // background, model only
+      [oneShot, buildConfig({ subagentModel: retired, reviewerEnabled: false, reviewerModel: null })], // foreground, model only
+      [tool, buildConfig({ subagentModel: retired, reviewerEnabled: true, reviewerModel: SONNET })], // reviewed
+    ] as const) {
+      const subagents = new FakeSubagents({ results: [] })
+      await assert.rejects(orchestrate(deps(subagents, {}, { models: () => gone }), { tool: tool_, args, parent: fakeAgent(), signal: signal(), config }), refusal)
+      assert.equal(subagents.starts.length + subagents.continuables.length, 0, 'nothing was started')
+    }
+  })
+
+  it('does not refuse a reviewer model it cannot describe: a failed review delivers the worker\'s report under the UNREVIEWED banner', async () => {
+    const subagents = new FakeSubagents({ results: [textResult('the worker report'), textResult('', 'error', 'no such model')] })
+    const text = textOf(await orchestrate(deps(subagents, {}, { models: () => ({ resolveModelInfo: (provider, model) => (model === 'Retired-Model-9' ? Promise.reject(new Error('gone')) : models.resolveModelInfo(provider, model)) }) }), {
+      tool, args, parent: fakeAgent(), signal: signal(), config: buildConfig({ subagentModel: DEEPSEEK, reviewerEnabled: true, reviewerModel: retired }),
+    }))
+    assert.match(text, /^WARNING - UNREVIEWED/)
+  })
+
+  it('keeps the pick when there is no LLM runtime to ask (the plugin loaded before it)', async () => {
+    const subagents = new FakeSubagents({ results: [] })
+    await orchestrate(deps(subagents, {}, { models: () => undefined }), {
+      tool, args, parent: fakeAgent(), signal: signal(), config: buildConfig({ subagentModel: retired, reviewerEnabled: false, reviewerModel: null }),
+    })
+    assert.deepEqual((subagents.continuables[0]?.request as { agentOptions: unknown }).agentOptions, retired)
+  })
+
+  it('keeps the pick when the runtime cannot describe the model but can call it (the check that gates storing a route passes)', async () => {
+    const subagents = new FakeSubagents({ results: [] })
+    const callable: ModelInfoSourceLike = { ...gone, resolveCallConfig: () => Promise.resolve({}) }
+    await orchestrate(deps(subagents, {}, { models: () => callable }), {
+      tool, args, parent: fakeAgent(), signal: signal(), config: buildConfig({ subagentModel: retired, reviewerEnabled: false, reviewerModel: null }),
+    })
+    assert.deepEqual((subagents.continuables[0]?.request as { agentOptions: unknown }).agentOptions, retired)
   })
 })

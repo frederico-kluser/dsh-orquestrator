@@ -220,6 +220,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                 />
               )
             : undefined}
+          {subagentsOn ? <p className="dsh-orq-hint">{t('subagents.scope')}</p> : undefined}
           {subagentsOn ? noteTexts(subagentRoute, 'worker').map(text => <p key={text} className="dsh-orq-hint dsh-orq-note">{text}</p>) : undefined}
           {needsModel && catalog.status === 'ready' ? <p className="dsh-orq-hint" role="status">{t('subagents.needModel')}</p> : undefined}
         </section>
@@ -244,6 +245,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                     <li>{t('reviewer.how.3')}</li>
                     <li>{t('reviewer.how.4')}</li>
                   </ul>
+                  <p className="dsh-orq-hint">{t('reviewer.scope')}</p>
                   <ModelPicker
                     id={`${uid}-reviewer-model`}
                     label={t('reviewer.modelLabel')}

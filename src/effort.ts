@@ -15,6 +15,7 @@
  * @module dsh-orquestrator/effort
  */
 
+import type { PluginConfig } from './config.ts'
 import type { AgentLike, AgentOptionsLike, LoggerLike, ModelInfoLike, ModelInfoSourceLike } from './host-services.ts'
 import { capFor, chooseEffort, type EffortLevel, type Role } from './models.ts'
 import type { ModelRoute } from './shared.ts'
@@ -27,6 +28,17 @@ export interface ChildPolicy {
   readonly caps: { readonly worker?: EffortLevel; readonly reviewer?: EffortLevel }
   /** Output-token ceilings per role. */
   readonly maxTokens: { readonly worker?: number | undefined; readonly reviewer?: number | undefined }
+}
+
+/**
+ * The effort and token policy of a configuration. One definition for every
+ * child the plugin plans, whether its pipeline starts it or the start guard
+ * adopts it.
+ * @param config - the validated plugin configuration.
+ * @returns the policy the planner reads.
+ */
+export function childPolicyOf(config: PluginConfig): ChildPolicy {
+  return { enabled: config.effort.enabled, caps: config.effort.caps, maxTokens: { worker: config.limits.worker, reviewer: config.limits.reviewer } }
 }
 
 /** Inputs of {@link planChild}. */
@@ -54,6 +66,8 @@ export interface ChildPlan {
   readonly ladder: readonly string[] | undefined
   /** The level the child will run at, when known. */
   readonly effective: string | undefined
+  /** Why the route could not be described (a model the catalog no longer knows); the plan then only carries the user's own pick. */
+  readonly unresolved?: string
   /** One line for the logs. */
   readonly summary: string
 }
@@ -86,24 +100,99 @@ function untouched(route: ModelRoute | null, explicitEffort: string | undefined)
   return Object.keys(options).length === 0 ? undefined : options
 }
 
+/** A confirmed choice that cannot be honored (its model is gone): reported to the caller, never silently replaced by another model. */
+export class ChoiceUnusableError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ChoiceUnusableError'
+  }
+}
+
 /**
- * Plan one child. Never throws: when the model cannot be described the plan
- * degrades to the user's own pick, which is what the plugin did before.
+ * Refuse to run a child on a route the user confirmed and the LLM runtime can no longer call. A model that merely could
+ * not be described is not enough to refuse: the route must also fail the check that gates storing a route
+ * (`resolveCallConfig`) when the runtime offers it, so an adapter that cannot describe a model it can call keeps
+ * working. Without that check the failed description stands as the reason.
+ * @param source - the LLM runtime.
+ * @param route - the route the user confirmed.
+ * @param plan - the plan made for it.
+ * @param signal - the caller's cancellation.
+ * @throws {ChoiceUnusableError} when the route cannot be used.
+ * @throws the cancellation reason when the caller cancelled.
+ */
+export async function assertChoiceUsable(source: ModelInfoSourceLike | undefined, route: ModelRoute, plan: ChildPlan, signal: AbortSignal): Promise<void> {
+  if (plan.unresolved === undefined) return
+  let reason = plan.unresolved
+  if (source?.resolveCallConfig !== undefined) {
+    try {
+      await abortable(source.resolveCallConfig({ provider: route.provider, model: route.model }, signal), signal)
+      return // routable after all: only the description failed, and the user's pick stands
+    } catch (error: unknown) {
+      if (signal.aborted) throw abortReason(signal)
+      reason = error instanceof Error ? error.message : String(error)
+    }
+  }
+  throw new ChoiceUnusableError(
+    `dsh-orquestrator: the subagent model ${route.provider}/${route.model} cannot be used (${reason}). `
+    + 'Open /orquestrar to pick another model, or cancel the dialog to run subagents as DSH does.',
+  )
+}
+
+/** The error to raise for a cancelled call: always an Error, whatever the signal's reason was. */
+function abortReason(signal: AbortSignal): Error {
+  const reason: unknown = signal.reason
+  if (reason instanceof Error) return reason
+  return new Error(typeof reason === 'string' && reason !== '' ? reason : 'the call was aborted')
+}
+
+/**
+ * Wait for a lookup unless the caller cancels first. A lookup that ignores its signal (a custom adapter that does
+ * IO) must not leave a cancelled start pending.
+ * @param lookup - the pending lookup.
+ * @param signal - the caller's cancellation.
+ * @returns the lookup's value.
+ * @throws the cancellation reason as an Error, or the lookup's own failure.
+ */
+function abortable<T>(lookup: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    if (signal.aborted) {
+      lookup.catch(() => undefined)
+      reject(abortReason(signal))
+      return
+    }
+    const onAbort = (): void => { reject(abortReason(signal)) }
+    signal.addEventListener('abort', onAbort, { once: true })
+    lookup.then(
+      (value) => { signal.removeEventListener('abort', onAbort); resolve(value) },
+      (error: unknown) => { signal.removeEventListener('abort', onAbort); reject(error) },
+    )
+  })
+}
+
+/**
+ * Plan one child. Never throws, except for the caller's cancellation: when
+ * the model cannot be described the plan degrades to the user's own pick,
+ * which is what the plugin did before, and says why in `unresolved`.
  * @param input - the route, role, policy and LLM runtime.
  * @returns the plan.
+ * @throws the cancellation reason when the caller cancelled while the model was being described.
  */
 export async function planChild(input: PlanInput): Promise<ChildPlan> {
   const { source, parent, route, role, explicitEffort, policy, signal, logger } = input
   const inherited = parentOptionsOf(parent)
+  // DSH clears the parent's effort only when the child's route CHANGES; a child on the parent's own route (picked or
+  // not) inherits the parent's effort and token limit, so those, not the route's defaults, are what the ceiling sees.
+  const unchanged = route === null || (inherited.provider === route.provider && inherited.model === route.model)
   const target = route !== null
     ? { provider: route.provider, model: route.model }
     : inherited.provider !== undefined && inherited.model !== undefined ? { provider: inherited.provider, model: inherited.model } : undefined
 
-  const fallback = (why: string): ChildPlan => ({
+  const fallback = (why: string, unresolved?: string): ChildPlan => ({
     options: untouched(route, explicitEffort),
     route: target,
     ladder: undefined,
     effective: explicitEffort,
+    ...unresolved === undefined ? {} : { unresolved },
     summary: `${role}: ${target === undefined ? 'inherited route' : `${target.provider}/${target.model}`}, effort left as picked (${why})`,
   })
   if (!policy.enabled) return fallback('policy off')
@@ -111,15 +200,17 @@ export async function planChild(input: PlanInput): Promise<ChildPlan> {
 
   let info: ModelInfoLike
   try {
-    info = await source.resolveModelInfo(target.provider, target.model, signal)
+    if (signal.aborted) throw abortReason(signal)
+    info = await abortable(source.resolveModelInfo(target.provider, target.model, signal), signal)
   } catch (error: unknown) {
-    signal.throwIfAborted()
-    logger.warn(`dsh-orquestrator: cannot describe ${target.provider}/${target.model} (${error instanceof Error ? error.message : String(error)}); its effort is left as picked`)
-    return fallback('model not describable')
+    if (signal.aborted) throw abortReason(signal)
+    const reason = error instanceof Error ? error.message : String(error)
+    logger.warn(`dsh-orquestrator: cannot describe ${target.provider}/${target.model} (${reason}); its effort is left as picked`)
+    return fallback('model not describable', reason)
   }
 
   const ladder = info.reasoning === undefined ? [] : info.reasoning.efforts.map(effort => effort.id)
-  const current = route === null ? inherited.reasoningEffort ?? info.reasoning?.defaultEffort : info.reasoning?.defaultEffort
+  const current = unchanged ? inherited.reasoningEffort ?? info.reasoning?.defaultEffort : info.reasoning?.defaultEffort
   const cap = capFor(target, role, policy.caps[role])
   const choice = chooseEffort({ ladder, current, explicit: explicitEffort, cap })
   if (choice.dropped !== undefined) {
@@ -130,9 +221,12 @@ export async function planChild(input: PlanInput): Promise<ChildPlan> {
     ...route === null ? {} : { provider: route.provider, model: route.model },
     ...choice.effort === undefined ? {} : { reasoningEffort: choice.effort },
   }
+  // DSH hands a child the parent's creation token limit on EVERY route (only the effort is cleared on a route change),
+  // so the limit the child would run with is the parent's when it has one, else the route's own ceiling.
   const limit = policy.maxTokens[role]
-  const ceiling = route === null ? inherited.maxTokens ?? info.defaultMaxTokens : info.defaultMaxTokens
-  if (limit !== undefined && ceiling !== undefined && ceiling > limit) options.maxTokens = limit
+  const ceiling = inherited.maxTokens ?? info.defaultMaxTokens
+  // Never above what the model itself allows: a parent's larger limit would be refused by a smaller model.
+  if (limit !== undefined && ceiling !== undefined && ceiling > limit) options.maxTokens = info.defaultMaxTokens === undefined ? limit : Math.min(limit, info.defaultMaxTokens)
 
   const effective = choice.effort ?? current
   return {

@@ -5,8 +5,9 @@ checagem contra o código do DSH e contra dados públicos; veja [`sintese.md`](s
 cruzamento e [`README.md`](README.md) para o método. Aqui está o **porquê** de cada uma, e das
 recomendações que **não** foram adotadas, para que ninguém as reabra sem o contexto.
 
-* **D01 a D14**: adotadas (código, interface ou documentação mudaram).
-* **N01 a N16**: não adotadas ou adiadas, cada uma com o que faria reabri-la.
+* **D01 a D15**: adotadas (código, interface ou documentação mudaram). D15 é da 0.4.0 e não vem
+  dos estudos: vem de uma sessão real em que o plugin deixou de valer.
+* **N01 a N22**: não adotadas ou adiadas, cada uma com o que faria reabri-la (N17 a N22 são da 0.4.0).
 
 Resumo:
 
@@ -26,6 +27,7 @@ Resumo:
 | D12 | Custo e espera da revisão visíveis antes de confirmar | `src/client/` |
 | D13 | Bloco de esforço recolhido, "Recomendado" por padrão, escolha explícita até o host | `src/client/`, `src/shared.ts` |
 | D14 | Modelo de segurança e limites documentados | `README.md`, `docs/DESIGN.md` |
+| D15 | Guarda de início: a escolha vale para todo filho que o DSH inicia, não só para as ferramentas `subagent` | `src/guard.ts`, `src/pipeline.ts`, `src/index.ts`, `src/config.ts` |
 
 ---
 
@@ -64,8 +66,10 @@ usuário no diálogo (vale mesmo acima do teto), da configuração `effort.worke
   revisor em `low`, MiMo trabalhador em `low`); um único número serviria mal a todos. As linhas
   são datadas e citam as fontes, e nenhuma passa de `high`.
 * *Degrau mais alto que não passa do teto:* o GLM 5.3 só oferece `low`, `high` e `max`.
-* *Nunca falha a delegação:* se o modelo não pode ser descrito, o filho segue exatamente com o
-  que o usuário escolheu (o comportamento da 0.1.0), e o log diz.
+* *Não falha a delegação por não conseguir descrever o modelo:* se o modelo não pode ser descrito, o
+  filho segue exatamente com o que o usuário escolheu (o comportamento da 0.1.0), e o log diz. Desde a
+  0.4.0 há uma exceção deliberada: um modelo que o runtime não consegue **chamar** (a mesma checagem que
+  barra gravar a rota) rejeita o início com uma mensagem acionável (D15, N22).
 * *O reviewer nunca herda o esforço do trabalhador:* são papéis diferentes.
 
 **Onde.** `src/models.ts` (`MODEL_PROFILES`, `capFor`, `chooseEffort`, `lowerEffort`),
@@ -379,6 +383,88 @@ invisíveis ao modelo).
 um `APPROVED` quer dizer (uma verificação condicionada ao ambiente em que rodou, não uma garantia),
 e o que o operador deve ter no host para operações críticas. `docs/DESIGN.md` registra os limites.
 
+### D15 — O guarda de início: a escolha vale para todo filho que o DSH inicia (0.4.0)
+
+**Problema.** Numa sessão real (projeto `anonymous-browser`, 2026-10-04) o usuário tinha confirmado
+no diálogo "subagentes no DeepSeek V4.1 Flash". O agente principal (Claude Sonnet 5.5, `max`) delegou
+pela ferramenta `workflow`, e os 34 agentes do workflow (executores, verificadores e correções de
+13 histórias) rodaram **todos** em `claude-sonnet-5-5` a `max`, com 128 000 tokens: cerca de 7,2
+milhões de tokens de saída e 1,26 bilhão de leitura de cache, nenhuma mensagem de DeepSeek. O
+plugin tinha gravado a escolha (`sessions.json`) e nada a violou: ele só embrulhava as ferramentas
+`subagent` e `subagent_fork`, e esses agentes nunca foram uma chamada a elas.
+
+**Causa, no código do DSH.** O motor do workflow (`workflow-ptc/src/host.ts`, `startChild`) chama
+`ctx.subagents.start(this.provider, { ... })` direto, com `agentOptions` só de `provider` e `model`,
+e só quando o `agent()` do script os traz (`SUPPORTED_AGENT_OPTIONS` = `label`, `phase`, `schema`,
+`provider`, `model`: não há esforço nem limite de tokens). Sem eles, `resolveChildAgentOptions`
+entrega ao filho tudo o que é do pai. O `ralph` roda no mesmo motor; o job `subagent` one-shot em
+segundo plano e o time de agentes (experimental) também chamam `start` ou `startContinuable`. Nenhum
+passa por `tools/execute` de uma ferramenta de delegação. Fixado em `test/contract/dsh-source.test.ts`
+(as portas e quem as usa) e `test/contract/dsh-runtime.test.ts` (o `SubagentRuntime` real).
+
+**Evidência.** Reproduzido num DSH isolado, só com os três modelos: com o plugin 0.3.0 e
+`defaults.subagentModel` = DeepSeek V4.1 Flash, os dois agentes de um workflow de duas linhas
+rodaram em `openrouter/z-ai/glm-5.3` a `high`, sem teto de tokens (W0). Com o guarda, em
+`azure-opencode/DeepSeek-V4.1-Flash`, `medium`, 64 000 (W1). Detalhes em
+[docs/validation/README.md](../validation/README.md).
+
+**Decisão.** `src/guard.ts` põe `start` e `startContinuable` próprios na instância do
+`SubagentRuntime` (alcançada pelo símbolo registrado `Symbol.for('cordis.original')` do proxy do
+serviço). Para uma sessão com escolha confirmada (guardada, de um ancestral ou `defaults`), todo
+filho que o pipeline do plugin não iniciou é planejado como um trabalhador: a rota escolhida, o
+esforço pedido pelo usuário ou o teto do modelo, e o limite de tokens, entregues como `agentOptions`.
+O revisor **não** atua nesses filhos. Um modelo que o chamador nomeia perde para a escolha do
+usuário (`children.explicitModel: override`, padrão) ou vale (`keep`); sem modelo de subagente
+escolhido, o nomeado vale. `children: false` retira o guarda. Um modelo confirmado que o runtime de LLM
+não conhece mais (renomeado, removido) **rejeita o início** com uma mensagem que diz o que fazer
+(`ChoiceUnusableError`); o limite de tokens que o chamador definiu nunca é elevado. O diálogo ganhou
+duas linhas que dizem o escopo (en, pt, zh).
+
+**Achados da revisão independente (adversarial e por mutação) incorporados.** O marcador agora sobrevive
+a cópias do pedido (propriedade enumerável com símbolo registrado) e a saída do guarda também é marcada
+(dois guardas vivos planejam uma vez; vale a configuração mais nova). O planejador passou a planejar
+contra o que o DSH realmente mescla: o filho na própria rota do pai herda o esforço dele, e o limite de
+tokens de criação do pai desce em **toda** rota; o esforço que o chamador nomeou e o planejador recusou
+não é mais ressuscitado pelo merge. A espera pela descrição do modelo corre contra o cancelamento. Provedores
+com rota própria (SDK) ficam de fora quando não há modelo escolhido. Campos de configuração desconhecidos
+avisam. O que ficou documentado e não corrigido: o teto de tokens não sobrevive ao cold-resume (N21).
+
+**Por quê assim.**
+* *Uma porta, não N ferramentas.* `SubagentRuntime.start` e `startContinuable` são o único caminho
+  pelo qual um provedor é iniciado e um agente-filho é criado (fixado). Um guarda ali cobre quem
+  chama hoje e quem chamar amanhã; embrulhar ferramentas teria de nomear cada uma e perderia a próxima.
+* *A instância, não o provedor.* O filho `continuable` é composto pelo gerente de continuação, que lê
+  `spec.request.agentOptions`; o provedor só contribui com a semente. Um embrulho de provedor não o
+  alcançaria.
+* *Marcar, não detectar.* O pipeline planeja o próprio trabalhador, a nova tentativa e o revisor, e o
+  guarda não pode planejá-los de novo (poria o revisor no modelo do trabalhador). Um `WeakSet` global
+  de objetos de requisição, atrás de um símbolo registrado para que uma cópia recarregada do plugin
+  concorde, mais uma propriedade enumerável própria com símbolo registrado (uma cópia por espalhamento a
+  leva junto, então um embrulho empilhado acima do guarda não consegue apagar a marca), diz "já
+  planejado". Detectar pelo conteúdo falha no revisor que mantém a rota do trabalhador e portanto não
+  leva opções.
+* *Rejeitar, não forçar nem trocar, quando o modelo confirmado não existe mais.* Cair no modelo do agente
+  principal é o bug original; forçar a rota morta faz cada agente de workflow falhar na primeira
+  requisição e virar `null`, com uma única linha de log (N22).
+* *Falhar alto na instalação, nunca no uso.* Um guarda que não faz nada em silêncio é exatamente como o
+  furo ficou aberto. Um serviço que não pode ser embrulhado derruba o carregamento do plugin; já um
+  filho que não pode ser planejado vira uma linha de log e o início padrão do DSH, porque o guarda
+  nunca pode quebrar uma delegação. O cancelamento do chamador passa.
+* *Sem revisor.* O script do workflow consome o resultado de cada agente (muitas vezes dado validado
+  por esquema); trocar por um relatório de revisão quebraria o script. O diálogo e o README dizem isso.
+* *Trocar as opções por inteiro quando a rota do usuário vence.* `AgentOptions` são exatamente
+  `provider`, `model`, `reasoningEffort` e `maxTokens` (fixado), e um esforço escolhido para outro
+  modelo não pode viajar para este (um esforço não suportado falha a primeira requisição).
+
+**Onde.** `src/guard.ts`, `src/pipeline.ts` (marcação dos inícios), `src/index.ts`, `src/config.ts`
+(`children`), `src/effort.ts` (`childPolicyOf`), `src/tool-wrapper.ts` (aviso do job),
+`src/client/` (as duas linhas do diálogo).
+
+**Verificação.** `guard.test.ts`, `pipeline-v2.test.ts` (inícios marcados), `config.test.ts`,
+`host-wiring.test.ts`, `dsh-source.test.ts` (seis fixações novas), `dsh-runtime.test.ts` (o guarda no
+`SubagentRuntime` real, instalado por um plugin e chamado por outro). Ao vivo, nos três modelos: W0 a
+W4 e T3 ([validação](../validation/README.md)).
+
 ---
 
 ## Recomendações não adotadas ou adiadas
@@ -470,3 +556,51 @@ não.** O plugin entrega inerte e não decide o modelo do agente principal; `~/.
 é do usuário e não foi tocado. Uma observação para o usuário, não uma mudança: o
 `agent-default-model` com `reasoningEffort: max` em modelos que o estudo E02 mede melhor em
 `high` ou `xhigh`.
+
+### N17 — Embrulhar a ferramenta `workflow` ou reescrever o script do workflow (0.4.0)
+**Origem.** A primeira ideia diante do furo. **Por quê não.** O embrulho de `tools/execute` não
+reescreve argumentos (o registro os trata como imutáveis: `Input rewriting is excluded`), e o
+`agent()` do script aceita só `label`, `phase`, `schema`, `provider` e `model`: injetar o modelo no
+script deixaria o filho no esforço e no limite de tokens da rota (`max` e 384 000 no DeepSeek V4.1
+Flash), que é o que o plugin existe para evitar. Seria também um embrulho por ferramenta. O guarda
+(D15) planeja o filho no ponto onde esforço e limite existem. **Reabrir** nunca por esta via.
+
+### N18 — Revisar os agentes de um workflow (0.4.0)
+**Origem.** A pergunta natural ("o revisor também deve valer"). **Por quê não.** O script consome o
+resultado de cada `agent()` (texto ou dado validado por esquema) e decide o que fazer; substituir o
+resultado por um relatório de revisão quebra o contrato do script. O revisor continua nas delegações
+de `subagent` e `subagent_fork`, e o diálogo e o README dizem onde ele não atua. **Reabrir** se o DSH
+der ao workflow um ponto declarado de pós-processamento por agente, ou se um operador pedir uma fase
+de revisão como parte do script.
+
+### N19 — Trocar o modelo na cascata `agent/request` (0.4.0)
+**Origem.** O DSH expõe `agent/request` ("substitua a configuração congelada da chamada"), que
+alcançaria todo filho de qualquer origem. **Por quê não.** Ela roda a cada requisição de cada agente:
+sobrescreveria até a escolha manual do usuário numa conversa-filha (o seletor de modelo da sessão) e
+mudaria filhos já em andamento. O DSH projetou `agentOptions` na criação para isto, e o guarda o usa.
+
+### N20 — Provedor-embrulho, troca do `workflow-ptc.provider` ou esperar um gancho no DSH (0.4.0)
+**Origem.** Alternativas ao embrulho da instância. **Por quê não.** Registrar um provedor próprio e
+apontar o `workflow-ptc` para ele exigiria reescrever a configuração do `workflow-ptc` do usuário (um
+patch substitui a configuração inteira da linha) e não alcançaria o `startContinuable`, cujo gerente
+compõe o filho. Esperar um gancho deixaria o usuário sem a correção. **Reabrir** quando o DSH publicar
+um waterfall em volta do início de um filho (hoje `subagent/start` é só notificação): o guarda vira um
+listener e deixa de tocar a instância. Vale propor isso ao DSH.
+
+### N21 — Reaplicar o teto de tokens no cold-resume de um filho `continuable` (0.4.0)
+**Origem.** Revisão adversarial da 0.4.0. **Por quê não.** Quando o DSH retoma um filho já terminado, ele
+reconstrói as opções do **descritor** gravado (provedor, modelo, esforço; `continuation.ts`, `coldResume`), e
+o limite de tokens não é um campo do descritor: o teto vale só para a primeira execução, o esforço sobrevive.
+Reaplicar exigiria um ponto por requisição (a cascata `agent/request`), que roda a cada requisição de todo
+agente e não distingue trabalhador de revisor sem estado próprio; não foi verificado que um ouvinte de plugin
+a receba para agentes-filho. Fica documentado em `README.md` (Limits). **Reabrir** com um experimento de
+design que confirme o ouvinte e o papel do filho, ou se o DSH passar a gravar o limite no descritor.
+
+### N22 — Cair no início padrão do DSH quando o modelo confirmado não existe mais (0.4.0)
+**Origem.** Revisão adversarial da 0.4.0 (alternativa "falhar aberto"). **Por quê não.** O início padrão
+usaria o modelo do agente principal, no esforço dele: exatamente o furo que o guarda fecha, agora sem um
+erro que o denuncie. A rejeição com mensagem acionável custa uma delegação falha e evita o gasto. Vale só
+para o modelo que o **usuário** escolheu; um modelo que o chamador nomeou (`keep`) é do DSH. **Reabrir** se
+o runtime de LLM puder falhar de forma transitória na descrição de um modelo (hoje os adaptadores
+embutidos resolvem localmente e de forma determinística).
+

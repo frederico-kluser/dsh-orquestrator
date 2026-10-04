@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { parsePluginConfig } from '../../src/config.ts'
+import { parsePluginConfig, unknownConfigFields } from '../../src/config.ts'
 
 describe('parsePluginConfig', () => {
   it('defaults to the two tools of the shipped standard preset', () => {
@@ -81,5 +81,50 @@ describe('parsePluginConfig', () => {
     assert.throws(() => parsePluginConfig({ reviewerContext: 'sometimes' as never }), /reviewerContext/)
     assert.throws(() => parsePluginConfig({ sensitivePaths: [''] }), /sensitivePaths/)
     assert.throws(() => parsePluginConfig({ structuredVerdict: 'yes' as never }), /structuredVerdict/)
+    assert.throws(() => parsePluginConfig({ children: true as never }), /children/)
+    assert.throws(() => parsePluginConfig({ children: [] as never }), /children/)
+    assert.throws(() => parsePluginConfig({ children: { explicitModel: 'sometimes' as never } }), /children\.explicitModel/)
+    assert.throws(() => parsePluginConfig({ children: { explicitModels: 'keep' } as never }), /children\.explicitModels.*not a known field/)
+  })
+
+  it('turns the start guard on by default, overriding a model the caller names itself', () => {
+    assert.deepEqual(parsePluginConfig(undefined).guard, { enabled: true, explicitModel: 'override' })
+    assert.deepEqual(parsePluginConfig({ children: {} }).guard, { enabled: true, explicitModel: 'override' })
+  })
+
+  it('lets the operator keep a caller\'s model or turn the guard off', () => {
+    assert.deepEqual(parsePluginConfig({ children: { explicitModel: 'keep' } }).guard, { enabled: true, explicitModel: 'keep' })
+    assert.deepEqual(parsePluginConfig({ children: false }).guard, { enabled: false, explicitModel: 'override' })
+  })
+
+  it('rejects an empty `children:` key (YAML null) by name instead of crashing on it', () => {
+    assert.throws(() => parsePluginConfig({ children: null as never }), /invalid config field "children": must be false or an object/)
+  })
+
+  it('names the top-level fields it does not know, with a hint where a mis-indented one belongs', () => {
+    assert.deepEqual(unknownConfigFields(undefined), [])
+    assert.deepEqual(unknownConfigFields({ children: { explicitModel: 'keep' }, effort: false }), [])
+    assert.deepEqual(unknownConfigFields({ explicitModel: 'keep' }), ['unknown config field "explicitModel" is ignored (did you mean children.explicitModel?)'])
+    assert.deepEqual(unknownConfigFields({ workerMaxTokens: 1, subagentModel: {}, colour: 'blue' }), [
+      'unknown config field "workerMaxTokens" is ignored (did you mean limits.workerMaxTokens?)',
+      'unknown config field "subagentModel" is ignored (did you mean defaults.subagentModel?)',
+      'unknown config field "colour" is ignored',
+    ])
+    assert.deepEqual(unknownConfigFields(null), [])
+    assert.deepEqual(unknownConfigFields([]), [])
+  })
+
+  it('knows every field the configuration documents, and points each mis-indented block field at its block', () => {
+    const everything = {
+      tools: [], reviewerProvider: 'spawn', defaults: {}, stateDir: 'x', persist: true, workerHandoff: true, maxWorkerReportChars: 1, maxSessions: 1,
+      reviewerContext: 'auto', structuredVerdict: true, effort: false, limits: false, retryOnTokenLimit: true, workspaceChecks: true, sensitivePaths: [], children: false,
+    }
+    assert.deepEqual(unknownConfigFields(everything), [])
+    assert.deepEqual(unknownConfigFields({ worker: 'low', reviewer: 'low', reviewerMaxTokens: 1, workerEffort: 'low' }), [
+      'unknown config field "worker" is ignored (did you mean effort.worker?)',
+      'unknown config field "reviewer" is ignored (did you mean effort.reviewer or defaults.reviewer?)',
+      'unknown config field "reviewerMaxTokens" is ignored (did you mean limits.reviewerMaxTokens?)',
+      'unknown config field "workerEffort" is ignored (did you mean defaults.workerEffort?)',
+    ])
   })
 })

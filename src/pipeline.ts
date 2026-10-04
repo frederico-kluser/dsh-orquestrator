@@ -29,7 +29,8 @@ import type {
   SubagentResultLike, SubagentRunLike, SubagentStartRequestLike, SubagentsLike,
 } from './host-services.ts'
 import type { DelegationTool, PluginConfig } from './config.ts'
-import { planChild, type ChildPlan, type ChildPolicy } from './effort.ts'
+import { assertChoiceUsable, childPolicyOf, planChild, type ChildPlan } from './effort.ts'
+import { startContinuablePlanned, startPlanned } from './guard.ts'
 import { lowerEffort } from './models.ts'
 import type { ModelRoute, OrchestratorConfig } from './shared.ts'
 import {
@@ -172,11 +173,6 @@ function assertRouteSupported(subagents: SubagentsLike, providerName: string, ro
   }
 }
 
-/** The effort and token policy of a configuration. */
-function policyOf(config: PluginConfig): ChildPolicy {
-  return { enabled: config.effort.enabled, caps: config.effort.caps, maxTokens: { worker: config.limits.worker, reviewer: config.limits.reviewer } }
-}
-
 /** A route without the effort the user picked for another role. */
 function bareRoute(route: ModelRoute | null): ModelRoute | null {
   return route === null ? null : { provider: route.provider, model: route.model }
@@ -190,7 +186,8 @@ interface Finished {
 
 /** Start one child and wait for it, always disposing it. */
 async function runToEnd(subagents: SubagentsLike, provider: string, request: SubagentStartRequestLike): Promise<Finished> {
-  const run = await subagents.start(provider, request)
+  // Planned here, so the start guard does not plan it a second time.
+  const run = await startPlanned(subagents, provider, request)
   return { id: run.id, result: await settle(run) }
 }
 
@@ -304,11 +301,14 @@ export async function orchestrate(deps: PipelineDeps, input: PipelineInput): Pro
   const maxDepth = subagents.resolveMaxDepth(undefined)
   const workerRoute = choice.subagentModel
   const source = deps.models?.()
-  const policy = policyOf(config)
+  const policy = childPolicyOf(config)
   const workerPlan = await planChild({
     source, parent, route: workerRoute, role: 'worker', policy, signal, logger,
     explicitEffort: choice.workerEffort ?? workerRoute?.reasoningEffort,
   })
+  // The model the user confirmed is gone: say so now, with what to do, instead of a bare "subagent run failed" (the
+  // reviewer's route is not defended this way: a failed review delivers the worker's report under an UNREVIEWED banner).
+  if (workerRoute !== null) await assertChoiceUsable(source, workerRoute, workerPlan, signal)
   logger.info(`dsh-orquestrator: ${workerPlan.summary}`)
   // A provider that cannot take agent options keeps the user's pick (rejected above) and nothing else.
   const workerOptions = subagents.getProvider(tool.provider)?.capabilities.agentOptions === true ? workerPlan.options : undefined
@@ -322,7 +322,7 @@ export async function orchestrate(deps: PipelineDeps, input: PipelineInput): Pro
   if (!choice.reviewer.enabled) {
     const request = { ...base, prompt: [{ type: 'text', text: args.prompt }] satisfies ContentBlockLike[] }
     if (tool.mode === 'continuable' && args.runInBackground !== false) {
-      const started = await subagents.startContinuable({ provider: tool.provider, label: args.description, request, signal })
+      const started = await startContinuablePlanned(subagents, { provider: tool.provider, label: args.description, request, signal })
       logger.info(`dsh-orquestrator: ${tool.name} -> continuable ${started.childId} on ${describeRoute(workerRoute)}`)
       return { kind: 'continuable', subagentId: started.childId }
     }
@@ -374,7 +374,7 @@ export async function orchestrate(deps: PipelineDeps, input: PipelineInput): Pro
     })
     logger.info(`dsh-orquestrator: ${reviewerPlan.summary}`)
     const reviewerOptions = reviewerProvider.capabilities.agentOptions ? reviewerPlan.options : undefined
-    const reviewer = await subagents.start(config.reviewerProvider, {
+    const reviewer = await startPlanned(subagents, config.reviewerProvider, {
       parent,
       label: `Review: ${args.description}`,
       prompt: [{

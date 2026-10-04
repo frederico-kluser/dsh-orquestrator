@@ -116,6 +116,22 @@ describe('delegation wrapper', () => {
     assert.equal(warnings.length, 1)
   })
 
+  it('says the background JOB path is still governed, though not reviewed, when the start guard is on', async () => {
+    const warnings: string[] = []
+    const store = new ConfigStore({ maxSessions: 10 })
+    store.set('sess-1', reviewed)
+    const oneShot = createToolWrapper({
+      targets: new Map([['subagent', { name: 'subagent', provider: 'spawn', mode: 'one-shot' as const }]]),
+      store, defaults: null, parentOf: () => undefined,
+      pipeline: () => { throw new Error('pipeline must not be built') },
+      logger: { info: () => undefined, warn: message => warnings.push(message) },
+      guarded: true,
+    })
+    await oneShot(exec({ arguments: { description: 'd', prompt: 'p', run_in_background: true } }), next)
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0] ?? '', /is not reviewed; its child is still governed by the start guard/)
+  })
+
   it('turns a failing worker into a thrown error the registry reports to the model', async () => {
     const subagents = new FakeSubagents({ results: [textResult('nope', 'error', 'provider down')] })
     const store = new ConfigStore({ maxSessions: 10 })
@@ -126,5 +142,22 @@ describe('delegation wrapper', () => {
       logger: { info: () => undefined, warn: () => undefined },
     })
     await assert.rejects(wrapper(exec(), next), /provider down/)
+  })
+
+  it('says the stock behavior runs for the background JOB path when the start guard is off', async () => {
+    const warnings: string[] = []
+    const store = new ConfigStore({ maxSessions: 10 })
+    store.set('sess-1', reviewed)
+    const oneShot = createToolWrapper({
+      targets: new Map([['subagent', { name: 'subagent', provider: 'spawn', mode: 'one-shot' as const }]]),
+      store, defaults: null, parentOf: () => undefined,
+      pipeline: () => { throw new Error('pipeline must not be built') },
+      logger: { info: () => undefined, warn: message => warnings.push(message) },
+      guarded: false,
+    })
+    await oneShot(exec({ arguments: { description: 'd', prompt: 'p', run_in_background: true } }), next)
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0] ?? '', /is not orchestrated; the stock behavior runs/)
+    assert.doesNotMatch(warnings[0] ?? '', /start guard/, 'it must not promise what is not installed')
   })
 })

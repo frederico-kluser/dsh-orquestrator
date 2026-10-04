@@ -38,6 +38,8 @@ export interface WrapperDeps {
   /** Pipeline dependencies; resolved lazily so a late service does not fail the plugin. */
   readonly pipeline: () => PipelineDeps
   readonly logger: LoggerLike
+  /** Whether the start guard is installed: a one-shot background job is then still governed (the confirmed model and the ceilings), just not reviewed. */
+  readonly guarded?: boolean | undefined
 }
 
 /**
@@ -65,11 +67,14 @@ export function createToolWrapper(
       return next()
     }
 
-    // A one-shot tool's background JOB path is not orchestrated (documented limitation).
+    // A one-shot tool's background JOB path delivers through the job store, so it cannot be reviewed (documented
+    // limitation); with the start guard its child is still governed: the confirmed model, if one was picked, and the ceilings.
     if (tool.mode === 'one-shot' && args.runInBackground === true) {
       if (!warnedBackgroundJob) {
         warnedBackgroundJob = true
-        deps.logger.warn(`dsh-orquestrator: ${tool.name} with run_in_background on a one-shot tool is not orchestrated; the stock behavior runs`)
+        deps.logger.warn(deps.guarded === true
+          ? `dsh-orquestrator: ${tool.name} with run_in_background on a one-shot tool is not reviewed; its child is still governed by the start guard (the confirmed subagent model, if one was picked, and the ceilings)`
+          : `dsh-orquestrator: ${tool.name} with run_in_background on a one-shot tool is not orchestrated; the stock behavior runs`)
       }
       return next()
     }

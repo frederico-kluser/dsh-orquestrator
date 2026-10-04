@@ -9,9 +9,13 @@
  *   cancel    a new task raises the modal; Escape/Cancel sends it as stock DSH
  *   confirm   choose subagent + reviewer models, send, wait for "Reviewed delivery"
  *   light     light theme, keyboard focus trap, Esc handling while a menu is open
- *   command   /orquestrar opens the configure dialog, Save persists, next send skips the modal
+ *   command   /orquestrar opens the configure dialog, Save persists, and the next send asks again (pre-filled)
  *   effort    reasoning-effort block (recommended levels, explicit pick), model notes, same-model and
  *             same-family tips, reviewer cost hint; no model run needed
+ *   workflow  the choice made in the dialog (stored through the route, not a `defaults` config) governs the agents
+ *             of a `workflow` the main agent starts; needs ORQ_SESSIONS_DIR (the DSH home's sessions directory of
+ *             this server's workspace, which is the LAST workspace any DSH registered in that home, not the directory the
+ *             server was started in) so the children's route, effort and token cap are read back from the logs
  *
  * Models: ONLY the three target models are ever picked or run. The main agent is the DSH home's
  * default model (GLM 5.3); the dialog picks DeepSeek V4.1 Flash for subagents and MiMo-V2.6-Pro for
@@ -22,7 +26,9 @@
  * The token in DSH_URL is a per-process credential: it is never written out.
  */
 import { chromium } from 'playwright-core'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const url = process.env.DSH_URL
 const out = process.env.OUT_DIR ?? '.'
@@ -120,7 +126,7 @@ if (phase === 'cancel') {
     const switches = dialog().getByRole('switch')
     check('two switches (subagent model, reviewer)', (await switches.count()) === 2, await switches.count())
     check('both switches start off', (await switches.nth(0).getAttribute('aria-checked')) === 'false' && (await switches.nth(1).getAttribute('aria-checked')) === 'false')
-    check('remember checkbox present and unchecked', (await dialog().getByRole('checkbox').isChecked()) === false)
+    check('there is no "do not ask again" checkbox (0.3.0: the modal always asks)', (await dialog().getByRole('checkbox').count()) === 0)
     check('primary action is focused', await dialog().getByRole('button', { name: 'Send with these options' }).evaluate((element) => element === document.activeElement))
 
     await page.keyboard.press('Escape')
@@ -144,6 +150,78 @@ async function pick(triggerText, entryPattern) {
   const entry = page.getByRole('menuitem', { name: entryPattern }).or(page.getByRole('option', { name: entryPattern })).or(page.locator('[role=menu]').getByText(entryPattern)).first()
   await entry.waitFor({ state: 'visible', timeout: 8_000 })
   await entry.click()
+}
+
+const TASK_WORKFLOW = `Use the workflow tool exactly once, with exactly this meta and exactly this script, and change nothing in them.
+
+meta: {"name":"echo-two","description":"Ask two agents for one word each","phases":[{"title":"Ask"}]}
+
+script:
+const words = await parallel([
+  () => agent('Reply with exactly the single word ALPHA and nothing else.', { label: 'alpha', phase: 'Ask' }),
+  () => agent('Reply with exactly the single word BETA and nothing else.', { label: 'beta', phase: 'Ask' }),
+])
+return words
+
+When the workflow tool returns, reply with its result verbatim and nothing else.`
+
+/** Subagent children created at or after `since`, read back from the DSH session logs: route, effort, token cap and last stop. */
+function childrenSince(sessionsDir, since) {
+  const rows = []
+  for (const id of readdirSync(sessionsDir)) {
+    if (id.startsWith('session-')) continue
+    try {
+      const events = execFileSync('zstd', ['-dc', join(sessionsDir, id, 'session.v3.jsonl.zstd')], { maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString('utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+      const header = events[0] ?? {}
+      if (header.origin !== 'subagent' || !(header.createdAt >= since)) continue
+      const config = events.find((event) => event.type === 'request/header')?.data?.header?.config ?? {}
+      const end = events.findLast((event) => event.type === 'turn/end')
+      rows.push({ id: id.slice(0, 8), route: `${config.provider ?? '?'}/${config.model ?? '?'}`, effort: config.reasoningEffort, maxTokens: config.maxTokens, ended: end?.data?.reason?.kind })
+    } catch { /* a session still being written: read it on the next poll */ }
+  }
+  return rows
+}
+
+if (phase === 'workflow') {
+  const sessionsDir = process.env.ORQ_SESSIONS_DIR
+  if (sessionsDir === undefined) throw new Error('ORQ_SESSIONS_DIR is required for the workflow phase')
+  const since = Date.now()
+  await open()
+  await newSession() // the gate asks for a NEW task: an earlier conversation on this server would be a follow-up
+  // The task has line breaks: typing them would press Enter and send its first line alone, so the text is filled in whole.
+  await composer().click()
+  await composer().fill(TASK_WORKFLOW)
+  await page.keyboard.press('Enter')
+  await dialog().waitFor({ state: 'visible', timeout: 15_000 })
+  check('modal appears for the workflow task', true)
+  const switches = dialog().getByRole('switch')
+  await switches.nth(0).click()
+  await pick(/Choose a model/, TRIO.worker)
+  check('subagent model chosen: DeepSeek V4.1 Flash', await dialog().getByRole('button', { name: TRIO.worker }).first().isVisible())
+  check('the dialog says the choice covers the agents a workflow starts', (await dialog().innerText()).replace(/\s+/g, ' ').includes('Applies to every subagent, including the agents a workflow starts.'))
+  await shot('01-modal-subagent-model')
+  await dialog().getByRole('button', { name: 'Send with these options' }).click()
+  await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('modal closes after confirm', true), () => check('modal closes after confirm', false))
+  const posts = wire.filter((item) => item.method === 'POST')
+  const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
+  check('POST stored the subagent model (a stored choice, not a `defaults` config) and no reviewer', saved?.subagentModel?.model === TRIO.workerId && saved?.reviewer?.enabled === false, JSON.stringify(saved))
+
+  // The main agent now calls the workflow tool; its two agents appear as child sessions in the DSH logs.
+  let rows = []
+  for (let waited = 0; waited < 240_000; waited += 3_000) {
+    rows = childrenSince(sessionsDir, since)
+    if (rows.length >= 2 && rows.every((row) => row.ended !== undefined)) break
+    await page.waitForTimeout(3_000)
+  }
+  console.log('DEBUG children read back from the session logs:', JSON.stringify(rows))
+  await shot('02-after-workflow')
+  check('the workflow started two agents', rows.length === 2, rows.length)
+  check('both ran on DeepSeek V4.1 Flash, not on the main agent\'s model', rows.length > 0 && rows.every((row) => row.route === `azure-opencode/${TRIO.workerId}`), JSON.stringify(rows.map((row) => row.route)))
+  check('both at the recommended effort (medium) with the 64 000-token cap', rows.length > 0 && rows.every((row) => row.effort === 'medium' && row.maxTokens === 64000), JSON.stringify(rows.map((row) => [row.effort, row.maxTokens])))
+  check('both finished', rows.length > 0 && rows.every((row) => row.ended === 'completed'), JSON.stringify(rows.map((row) => row.ended)))
+  check('no page errors', relevantErrors().length === 0, relevantErrors().join(' | '))
+  await finish()
 }
 
 const TASK_CONFIRM = 'Use the subagent tool exactly once to do this work: in the current directory create wordcount.js (CommonJS) exporting wordCount(text) that returns how many words the text has, where a word is a run of non-whitespace characters, hyphenated words count as one, and an empty or whitespace-only string returns 0. Also create wordcount.test.js with node:test cases covering those rules. Run the tests with `node --test`. When the subagent tool returns, reply with its result verbatim and nothing else.'
@@ -240,18 +318,19 @@ if (phase === 'command') {
   await shot('02-configure')
   if (opened) {
     await dialog().getByRole('switch').nth(1).click()
-    await dialog().getByRole('checkbox').check()
     await dialog().getByRole('button', { name: 'Save' }).click()
     await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('Save closes the dialog', true), () => check('Save closes the dialog', false))
     const posts = wire.filter((item) => item.method === 'POST')
     const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
-    check('Save stored reviewer + "do not ask again"', saved?.reviewer?.enabled === true && saved?.remember === true, JSON.stringify(saved))
-    // With "do not ask again" on, the next task goes out without a modal.
-    await typeTask('Reply with exactly the word: quiet')
+    check('Save stored the reviewer choice and no "remember" flag', saved?.reviewer?.enabled === true && saved !== null && !('remember' in saved), JSON.stringify(saved))
+    // 0.3.0 and later: there is no "do not ask again", so the next task raises the modal again, pre-filled.
+    await typeTask('Reply with exactly the word: asks')
     await page.keyboard.press('Enter')
-    await page.waitForTimeout(4000)
-    check('the next task is sent without a modal', !(await dialog().isVisible().catch(() => false)))
-    await shot('03-quiet')
+    const asked = await dialog().waitFor({ state: 'visible', timeout: 15_000 }).then(() => true, () => false)
+    check('the next task raises the modal again (nothing can silence it)', asked)
+    check('the dialog is pre-filled with the saved choice (reviewer on)', asked && (await dialog().getByRole('switch').nth(1).getAttribute('aria-checked')) === 'true')
+    await shot('03-asks-again')
+    await page.keyboard.press('Escape')
   }
   check('no page errors', relevantErrors().length === 0, relevantErrors().join(' | '))
   await finish()

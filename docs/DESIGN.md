@@ -8,11 +8,13 @@ recommendation that was **not** adopted are in [estudos/](estudos/README.md).
 
 ## The problem
 
-DSH lets the main agent delegate through the `subagent` and `subagent_fork`
-tools. The user cannot say, per task, "run the subagents on another model" or
-"have someone independent check what the subagent produced before the main agent
-trusts it". This plugin asks once, when a new task is sent, and then enforces the
-answer.
+DSH lets the main agent delegate in several ways: the `subagent` and `subagent_fork`
+tools, and the `workflow` tool, whose script starts dozens of agents (plus one-shot
+background jobs, `ralph` and agent teams). The user cannot say, per task, "run the
+subagents on another model" or "have someone independent check what the subagent
+produced before the main agent trusts it". This plugin asks once, when a new task is
+sent, and then enforces the answer on every one of those paths (the reviewer on the
+two tools).
 
 Cancel, Escape and the close button all mean the same thing: **send the task
 exactly as stock DSH would**. Nothing else changes.
@@ -33,6 +35,13 @@ exactly as stock DSH would**. Nothing else changes.
                                                  │   ├ model only ─▶ startContinuable(...)  │
                                                  │   └ reviewer   ─▶ worker ─▶ reviewer     │
                                                  │        result = the REVIEWER's report    │
+                                                 │                                          │
+                                                 │  SubagentRuntime.start / startContinuable│
+                                                 │   (the start guard; the pipeline's own   │
+                                                 │    starts are marked and skipped)        │
+                                                 │   workflow, ralph, job, team child?      │
+                                                 │   ├ no stored choice ─▶ stock            │
+                                                 │   └ plan it like a worker ─▶ agentOptions│
                                                  └──────────────────────────────────────────┘
 ```
 
@@ -45,8 +54,9 @@ SDK profiles, driven by the `defaults` config.
 
 | File | Role |
 | --- | --- |
-| `src/tool-wrapper.ts` | The `tools/execute` around-listener. Falls through to `next()` whenever there is no active choice, the arguments do not parse, or the call is a one-shot background job. |
-| `src/pipeline.ts` | `orchestrate()`: model-only path and the worker-then-reviewer path, the retry after a token-limit stop, the clean-context decision and the delivery banners. |
+| `src/tool-wrapper.ts` | The `tools/execute` around-listener. Falls through to `next()` whenever there is no active choice, the arguments do not parse, or the call is a one-shot background job (which the start guard then still governs). |
+| `src/pipeline.ts` | `orchestrate()`: model-only path and the worker-then-reviewer path, the retry after a token-limit stop, the clean-context decision and the delivery banners. Every start it makes goes through `startPlanned` / `startContinuablePlanned`, which mark the request so the guard does not plan it again. |
+| `src/guard.ts` | The start guard. Installs own `start` and `startContinuable` on the `SubagentRuntime` instance (reached through the service proxy's `Symbol.for('cordis.original')`) and, for a session with a confirmed choice, plans every child the pipeline did not start: the picked route, the effort the user asked for or the model's ceiling, the output-token cap. Never breaks a start because of its own trouble; rejects a start whose confirmed model no longer exists; fails the plugin load if the service cannot be wrapped. |
 | `src/reviewer-protocol.ts` | The reviewer persona (two report formats), the delimited and sanitized review packet, the structured report schema with its renderer and self-consistency check, the worker handoff contract and the text-verdict parser. |
 | `src/models.ts` | Shared with the browser. Model family and lineage (which ids are really one model), dated per-model reasoning-effort ceilings and dialog notes, and `chooseEffort()`. |
 | `src/effort.ts` | `planChild()`: the route, reasoning effort and output-token ceiling of every child the plugin starts. |
@@ -77,7 +87,16 @@ SDK profiles, driven by the `defaults` config.
 | The modal opens only for a new task (idle, top-level, `queue`, not a `/` line) | Steering a running turn, sub-agent conversations and slash commands are not new tasks. |
 | There is no "do not ask again": the modal asks on every new task | Any remembered silence spreads. DSH's web client reuses a workspace's empty session for every "New session" (`ui-workspace` `connectWorkspace`), so a choice remembered in one conversation silenced the modal for every conversation the user opened in that workspace. The checkbox is gone, `remember` is dropped from the config (a legacy field is accepted and ignored), and a stored choice only pre-fills the dialog. |
 | Prompt wrapping on the prototype, not the instance | A reconnect can re-create the session face; a prototype patch survives it. |
-| `subagent` one-shot **background jobs** are not orchestrated | They deliver through the job store, outside the tool result the plugin substitutes. Documented limitation. |
+| `subagent` one-shot **background jobs** are governed (model and ceilings) but not reviewed | They deliver through the job store, outside the tool result the plugin substitutes, so no report can replace the worker's. The start guard still puts their child on the confirmed model. |
+| Every other child is governed in the two doors of `SubagentRuntime`, not by wrapping more tools | The `workflow` tool, `ralph`, jobs and agent teams do not call a delegation tool: they call `ctx.subagents.start()` / `startContinuable()`. Those two methods are the only way a provider is started and a child agent is created (pinned in `test/contract/dsh-source.test.ts`), so one guard there covers every present and future caller. Wrapping tools would have to name each one and would miss the next ([estudos D15](estudos/decisoes.md)). |
+| The guard wraps the service instance, and the plugin fails to load if it cannot | DSH has no hook around a child start (`subagent/start` is a notification after the child exists), so there is no supported seam. The instance behind a Cordis proxy is what every proxy reads, and it is reachable under a registered global symbol. A guard that silently did nothing is exactly how the workflow hole stayed open, so a service that cannot be wrapped is a load error; the contract tests (static pins and a run on the real built `SubagentRuntime`) fail first when DSH changes the assumption. |
+| The plugin's own starts are marked, not detected | The pipeline plans its worker, retry and reviewer itself; the guard must not plan them again (it would put the reviewer on the worker's model). A process-wide `WeakSet` of request objects, behind a registered symbol so a reloaded copy of the plugin agrees, plus an own enumerable symbol property on the request (an object spread copies it, so a wrapper stacked above the guard cannot strip the mark by copying the request), says "already planned". What the guard itself hands to DSH is marked too, so a second live guard plans each child once and the newer configuration wins. Detecting by content (options present or not) fails for a reviewer that keeps the worker's route and so carries none. |
+| A confirmed model that no longer exists rejects the start | Fail open would put the child on the main agent's model (the bug this guard exists for); forcing the dead route makes every workflow agent fail its first request into a silent `null` and leaves one log line. The start is rejected with a message that names the model and says what to do, so a workflow fails loudly (`AGENT_START`) and the main agent can tell the user. Only the user's own pick is defended this way; a model the caller named (`keep`) is left to DSH. |
+| The planner plans against what DSH really merges | DSH clears the parent's effort only when the child's route changes (a child on the parent's own route inherits it) and hands the parent's creation token limit down on every route. The ceiling therefore looks at the inherited level and limit, never above what the model allows, and the effort of a merged request comes from the plan alone (a level the planner dropped must not be spread back in from the caller's options). |
+| The output-token cap is not durable for `continuable` children | A finished child is released and a later message cold-resumes it from its recorded descriptor, which holds provider, model and effort but not the token limit. Documented, not fixed: a fix needs a per-request seam ([estudos N21](estudos/decisoes.md)). |
+| A workflow's agents are not reviewed | The script consumes each result itself, often as schema-checked data; substituting a review report would break it. They get the model and the ceilings, the dialog says they are not reviewed, and the README tells how to keep a verification step ([D15](estudos/decisoes.md)). |
+| The user's pick wins over a model the caller names (`children.explicitModel: override`) | The dialog is the user's explicit instruction; a script written by the main agent is not. `keep` lets a named model stand under the ceilings, for setups where a script legitimately pins a model (for example a vision model). With no subagent model picked, a named model always stands: the user did not state a preference. |
+| Replacing a child's options when the user's route wins, but never raising a limit the caller set | `AgentOptions` is provider, model, effort and token limit (pinned), and an effort chosen for another model must not travel to this one (an unsupported effort fails the first request). A token limit is route-agnostic in intent (an operator's tool row, a team roster), so the smaller of the caller's and the plan's stands. |
 | The plugin ships inert | No stored choice and no `defaults` means stock behavior. |
 | Every child gets a reasoning-effort **ceiling** and an output-token cap | DSH deletes the parent's effort when a child's route changes, so the child runs at the route's default, which is `max` on the deployments this targets, with the route's full declared output ceiling (131K to 943K tokens here). That produced a worker that spent its token budget on one edge case and a reviewer that needed minutes per turn. The ceiling is a ceiling, not a setting (a route already below it is untouched), comes from the model's own ladder, and yields to an explicit user pick ([estudos D01, D02](estudos/decisoes.md)). |
 | A worker that stops at its token limit is retried once, one level lower | Bounded, visible in the banner and on the same model, instead of a silent change of model ([D03](estudos/decisoes.md)). |

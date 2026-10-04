@@ -70,6 +70,14 @@ export interface Config {
   readonly workspaceChecks?: boolean
   /** Extra globs for files the reviewer must scrutinize when the worker changed them (`*` and `**`). */
   readonly sensitivePaths?: readonly string[]
+  /**
+   * The start guard: every child DSH starts for a session with a confirmed choice, whichever tool started it
+   * (the `workflow` tool, `ralph`, a one-shot background `subagent` job, ...), runs on the subagent model with the
+   * effort ceiling and token cap. `false` governs only the delegation tools listed in `tools`. `explicitModel`
+   * says what to do with a model the caller named itself (an `agent({ model })` call in a workflow script):
+   * `override` (default) runs it on the user's pick, `keep` lets the caller's model stand (with the ceilings).
+   */
+  readonly children?: false | { readonly explicitModel?: 'override' | 'keep' }
 }
 
 /** Validated configuration with every default resolved. */
@@ -91,6 +99,39 @@ export interface PluginConfig {
   readonly retryOnTokenLimit: boolean
   readonly workspaceChecks: boolean
   readonly sensitivePaths: readonly RegExp[]
+  /** The start guard (`children`): `enabled` false governs only the configured delegation tools. */
+  readonly guard: { readonly enabled: boolean; readonly explicitModel: 'override' | 'keep' }
+}
+
+/** Every top-level field of the configuration. */
+const KNOWN_FIELDS: ReadonlySet<string> = new Set([
+  'tools', 'reviewerProvider', 'defaults', 'stateDir', 'persist', 'workerHandoff', 'maxWorkerReportChars', 'maxSessions',
+  'reviewerContext', 'structuredVerdict', 'effort', 'limits', 'retryOnTokenLimit', 'workspaceChecks', 'sensitivePaths', 'children',
+])
+
+/** Where a field that belongs inside a block most often ends up when it is mis-indented to the top level. */
+const MISPLACED: Readonly<Record<string, string>> = Object.freeze({
+  explicitModel: 'children.explicitModel',
+  worker: 'effort.worker',
+  reviewer: 'effort.reviewer or defaults.reviewer',
+  workerMaxTokens: 'limits.workerMaxTokens',
+  reviewerMaxTokens: 'limits.reviewerMaxTokens',
+  subagentModel: 'defaults.subagentModel',
+  workerEffort: 'defaults.workerEffort',
+})
+
+/**
+ * The top-level fields the plugin does not know, with a hint where the field most likely belongs. A typo or a
+ * mis-indented key is otherwise ignored without a word, and the default quietly replaces the intent (a mis-indented
+ * `explicitModel: keep` runs as `override`).
+ * @param raw - the plugin's `config` from the loader.
+ * @returns one message per unknown field, empty when there is none.
+ */
+export function unknownConfigFields(raw: unknown): string[] {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return []
+  return Object.keys(raw)
+    .filter(key => !KNOWN_FIELDS.has(key))
+    .map(key => `unknown config field "${key}" is ignored${MISPLACED[key] === undefined ? '' : ` (did you mean ${MISPLACED[key]}?)`}`)
 }
 
 /** Default output-token ceilings: far below the 384K-943K some routes allow, far above any legitimate single step. */
@@ -212,6 +253,7 @@ export function parsePluginConfig(raw: Config | undefined): PluginConfig {
     retryOnTokenLimit: bool('retryOnTokenLimit', config.retryOnTokenLimit, true),
     workspaceChecks: bool('workspaceChecks', config.workspaceChecks, true),
     sensitivePaths: parseSensitivePaths(config.sensitivePaths),
+    guard: parseGuard(config.children),
   }
 }
 
@@ -234,6 +276,19 @@ function parseLimits(raw: Config['limits']): PluginConfig['limits'] {
     worker: ceiling('limits.workerMaxTokens', raw.workerMaxTokens, DEFAULT_LIMITS.worker),
     reviewer: ceiling('limits.reviewerMaxTokens', raw.reviewerMaxTokens, DEFAULT_LIMITS.reviewer),
   }
+}
+
+/** Resolve the `children` block (the start guard). Unknown keys fail loud: a typo must not silently keep the default. */
+function parseGuard(raw: Config['children']): PluginConfig['guard'] {
+  if (raw === undefined) return { enabled: true, explicitModel: 'override' }
+  if (raw === false) return { enabled: false, explicitModel: 'override' }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw invalid('children', 'must be false or an object')
+  for (const key of Object.keys(raw)) {
+    if (key !== 'explicitModel') throw invalid(`children.${key}`, 'is not a known field (explicitModel)')
+  }
+  const explicitModel = raw.explicitModel ?? 'override'
+  if (explicitModel !== 'override' && explicitModel !== 'keep') throw invalid('children.explicitModel', 'must be "override" or "keep"')
+  return { enabled: true, explicitModel }
 }
 
 /** Compile the extra sensitive-path globs. */

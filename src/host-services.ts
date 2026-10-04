@@ -125,6 +125,16 @@ export interface ContinuableStartLike {
   readonly childId: string
 }
 
+/** What a caller asks for when starting a continuable child (`ContinuableStartSpec`). */
+export interface ContinuableStartSpecLike {
+  readonly provider: string
+  readonly label: string
+  /** Optional caller-reserved child identity. */
+  readonly childId?: string
+  readonly request: Omit<SubagentStartRequestLike, 'label' | 'signal'>
+  readonly signal: AbortSignal
+}
+
 /** The `ctx.subagents` service slice (`SubagentRuntime`). */
 export interface SubagentsLike {
   /**
@@ -139,12 +149,7 @@ export interface SubagentsLike {
    * @param spec - provider, label, delegation request and caller cancellation.
    * @returns the child id once the child's inbox accepted the prompt.
    */
-  startContinuable(spec: {
-    readonly provider: string
-    readonly label: string
-    readonly request: Omit<SubagentStartRequestLike, 'label' | 'signal'>
-    readonly signal: AbortSignal
-  }): Promise<ContinuableStartLike>
+  startContinuable(spec: ContinuableStartSpecLike): Promise<ContinuableStartLike>
   /**
    * Resolve a delegation tool's depth policy against the current user setting.
    * @param configured - explicit tool limit, or provider-managed.
@@ -156,7 +161,11 @@ export interface SubagentsLike {
    * @param name - provider name.
    * @returns the provider, or undefined when absent.
    */
-  getProvider(name: string): { readonly capabilities: { readonly agentOptions: boolean; readonly persona: boolean; readonly outputSchema?: boolean } } | undefined
+  getProvider(name: string): {
+    readonly capabilities: { readonly agentOptions: boolean; readonly persona: boolean; readonly outputSchema?: boolean }
+    /** The provider's own static route, when its children do not run on the parent's (the SDK provider). */
+    readonly agentRouteDefaults?: { readonly provider: string; readonly model: string }
+  } | undefined
 }
 
 /** The web-server slice the plugin registers routes on. */
@@ -205,6 +214,13 @@ export interface ModelInfoSourceLike {
    * @param signal - cancellation.
    */
   resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<ModelInfoLike>
+  /**
+   * The check that gates storing a route (`LlmLike.resolveCallConfig`): rejects for a route the runtime cannot call.
+   * Optional here because the planner does not need it; the confirmed-choice check uses it when it is there.
+   * @param config - provider, model and optional effort.
+   * @param signal - cancellation.
+   */
+  resolveCallConfig?(config: AgentOptionsLike, signal?: AbortSignal): Promise<unknown>
 }
 
 /** The Cordis logger slice. */

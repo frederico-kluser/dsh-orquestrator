@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.4.0
+
+**The model, the effort ceiling and the token cap you confirm now reach every child DSH
+starts, not only the ones started by the `subagent` tools.** Until now a session that had
+confirmed "subagents run on DeepSeek V4.1 Flash" ran the agents of a `workflow` on the main
+agent's model: in the session that exposed it, 34 agents on Claude Sonnet 5.5 at `max`, about
+7.2 million output tokens and 1.26 billion cache-read tokens, none on DeepSeek. The plugin had
+stored the choice and nothing violated it: it only wrapped the `subagent` and `subagent_fork`
+tools, and a workflow (like `ralph`, a one-shot background `subagent` job and the experimental
+agent team) starts its children through `ctx.subagents.start()` / `startContinuable()` itself.
+Reproduced on an isolated DSH with the three target models (0.3.0: two workflow agents on GLM 5.3
+at `high`, no token cap, although DeepSeek V4.1 Flash was configured for subagents) and closed
+(0.4.0: DeepSeek V4.1 Flash at `medium` with 64 000 output tokens).
+
+- **Start guard (`src/guard.ts`).** `SubagentRuntime.start` and `startContinuable` are the only
+  doors (a provider is started from `start` alone and a child agent is created from those two paths
+  alone; pinned against the DSH source), so the plugin installs its own `start` and `startContinuable`
+  on the service instance, reached through the service proxy's `Symbol.for('cordis.original')`
+  (DSH has no hook around a child start). For a session with a confirmed choice (stored, an ancestor's
+  or `defaults`) every child the pipeline did not start is planned like a worker: the picked route, the
+  effort the user asked for or the model's ceiling, the output-token cap, handed to DSH as `agentOptions`.
+  The main agent and sessions with no confirmed choice are never touched.
+- **The pipeline's own starts are marked, not detected.** Its worker, retry and reviewer are planned by
+  the pipeline; a process-wide `WeakSet` of request objects tells the guard to leave them alone (a
+  reviewer that keeps the worker's route carries no options, so content cannot tell).
+- **A model the caller names itself** (`agent({ provider, model })` in a workflow script) loses to the
+  user's pick by default; `children.explicitModel: keep` lets it stand under the same ceilings. With only a
+  reviewer picked, children stay on the main agent's model under the ceilings and a named model stands.
+  `children: false` turns the guard off (the 0.3 behavior).
+- **No reviewer for workflow agents or one-shot jobs**, on purpose: a script consumes its agents' results
+  itself (often as schema-checked data) and a job delivers through the job store, so a replacement report
+  would break both. The dialog now says so (one line under each switch, en, pt, zh) and the README has a
+  table of every path with what applies to it.
+- **Fails loud at load, never half works.** A service that cannot be wrapped is a plugin load error. A child
+  the guard cannot plan becomes a log line and DSH's own start (it never breaks a delegation); a
+  cancellation passes through; a provider that cannot take agent options (`codex`, `claude-code`, ACP) is
+  left alone with one warning per provider.
+- **A confirmed model that is gone rejects the start.** If the LLM runtime no longer knows the model you
+  confirmed (renamed or removed after you confirmed), the child's start fails with a message that names it
+  and says what to do. Running the child on the main agent's model is the bug of this release, and forcing
+  the dead route fails every workflow agent into a silent `null`. Only the user's own pick is defended this
+  way; a model the caller named (`keep`) is left to DSH.
+- **Fixes from an independent review (adversarial and mutation testing).** The mark survives a copy of the
+  request and the guard marks its own output (two live copies of the plugin plan a child once; the newer
+  configuration wins). The planner now plans against what DSH really merges: a child on the parent's own
+  route inherits the parent's effort, and DSH hands the parent's creation token limit down on every route
+  (the ceiling missed both); an effort the caller named that the model does not offer is no longer spread
+  back in by the merge; a token limit a caller set is never raised. The wait for a model description races the
+  call's cancellation. A provider that runs its own default route (the SDK provider) is left alone when no
+  model is picked. Unknown top-level configuration fields now log a warning (a mis-indented
+  `explicitModel: keep` ran, silently, as `override`). The dialog's reviewer hint no longer says "the model
+  above" in a reviewer-only choice.
+- **Documented, not fixed:** the output-token cap does not survive DSH's cold resume of a finished
+  `continuable` child (the descriptor keeps provider, model and effort only); the effort ceiling does.
+- **Contract tests against the real thing.** Six new pins on the DSH source (the two doors and their only
+  callers, no hook around a start, the proxy symbol, the workflow engine's `agentOptions`, which providers
+  take agent options, the shape of `AgentOptions`) and a suite that runs the guard on the built
+  `SubagentRuntime` inside a real Cordis context: installed by one plugin, called through another's proxy.
+- **Live validation on the three target models** (GLM 5.3 main, DeepSeek V4.1 Flash subagent, MiMo-V2.6-Pro
+  reviewer), the bug reproduced and closed, `override`, `keep` and the switch, the `subagent` + reviewer path
+  unchanged, and 58 browser checks: [docs/validation/README.md](docs/validation/README.md).
+- **Validation tooling.** `scripts/e2e/run-workflow.sh` (the workflow scenarios), `setup-isolated-home.sh`
+  and `with-keys.sh` (only the two API keys the three models need reach the agents). The browser script's
+  `cancel` and `command` phases still expected the "do not ask again" checkbox that 0.3.0 removed; they now
+  check that the modal always asks. Lesson recorded in the setup script: never round-trip `settings.yaml`
+  through a YAML library (YAML 1.1 turns a reasoning ladder's `off:` key into `false:` and DSH then registers no
+  LLM adapter at all).
+
+Upgrading: nothing to migrate; stored choices keep working. The one behavior change is the point of
+the release: in a session with a confirmed choice, workflow agents now run on the subagent model. Restart
+`dsh` to load it. `children: false` restores the old behavior.
+
+Tests: 388 (357 without a DSH checkout, which is what CI runs), up from 260 (242). A mutation audit of the guard and the
+code around it killed 283 of 295 single-line mutants; the other 12 are equivalent (they cannot change behavior).
+
 ## 0.3.0
 
 **The "Do not ask again in this conversation" checkbox is gone: the modal now appears

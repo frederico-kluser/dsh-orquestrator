@@ -74,8 +74,10 @@ if (main !== undefined) {
     lines.push('', `Main agent called \`subagent\` with \`run_in_background: ${String(args.run_in_background)}\`, description "${clip(args.description ?? '', 80)}".`)
   }
   const results = main.entries.filter((entry) => entry.type === 'tool/result')
+  const toolNames = new Map(main.entries.filter((entry) => entry.type === 'tool/call').map((entry) => [entry.data.callId, entry.data.name]))
   for (const entry of results) {
-    lines.push('', 'The `subagent` tool result the main agent received (first 900 characters):', '', '```text', clip(textOf(entry.data.message.content), 900), '```')
+    const tool = toolNames.get(entry.data.message?.source?.callId) ?? 'tool'
+    lines.push('', `The \`${tool}\` tool result the main agent received (first 900 characters):`, '', '```text', clip(textOf(entry.data.message.content), 900), '```')
   }
   const final = [...main.entries].reverse().find((entry) => entry.type === 'assistant/message' && textOf(entry.data.message.content.filter((part) => part.type === 'text')).trim() !== '')
   if (final !== undefined) lines.push('', 'Main agent final answer (first 400 characters):', '', '```text', clip(textOf(final.data.message.content.filter((part) => part.type === 'text')), 400), '```')

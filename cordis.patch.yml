@@ -18,6 +18,12 @@
 #       defaults:
 #         subagentModel: { provider: openrouter, model: google/gemini-3.8-flash }
 #         reviewer: { enabled: true }
+#       # The confirmed choice also governs every child DSH starts outside the
+#       # `subagent` tools (the agents a `workflow` starts, ralph, one-shot jobs,
+#       # agent teams): the subagent model plus the effort ceiling and token cap,
+#       # never the reviewer. Options (README, "Which delegations are covered"):
+#       #   children: { explicitModel: keep }   # a model a workflow script names itself stands
+#       #   children: false                     # govern only the `subagent` tools (0.3 behavior)
 - insert:
     - id: orquestrator
       name: './lib/index.js'

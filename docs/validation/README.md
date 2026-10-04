@@ -2,8 +2,126 @@
 
 Everything in this plugin was validated against a real DeepSeek Harness, not only against
 mocks. This page states what was run, what it proved, what it found and what it did not
-cover: first the **0.2.0** validation on the three target models, then the **0.1.0**
-validation on a Mac mini.
+cover: first the **0.4.0** validation of the start guard on the three target models, then
+the **0.2.0** validation on the same three models, then the **0.1.0** validation on a Mac mini.
+
+## 0.4.0: the start guard, on the three target models (2026-10-04)
+
+The bug behind this release was found in a real session, then reproduced, closed and checked for
+regressions on an isolated DSH, again with only the three target models.
+[`run-workflow.sh`](../../scripts/e2e/run-workflow.sh) and [`run-trio.sh`](../../scripts/e2e/run-trio.sh)
+read the sessions back from the DSH logs and fail (exit 3) if any session ran on another model.
+
+### The incident
+
+A session in a real project had confirmed "subagents on DeepSeek V4.1 Flash" in the dialog (the plugin's
+`sessions.json` held it, written at 10:46:39, 94 ms before the session's first model request). The main
+agent (Claude Sonnet 5.5 at `max`) then called the `workflow` tool once and 34 agents followed (13 executors,
+11 verifiers, 9 corrections, 1 probe). Read back from the session logs, every one of the 3 900 assistant
+messages of that session and its children came from `azure-opencode-claude/claude-sonnet-5-5`, each child
+at `max` with 128 000 output tokens, about 7.2 million output tokens and 1.26 billion cache-read tokens
+in the children alone, none from DeepSeek. The plugin had done what it was built to do; the workflow does not
+call a delegation tool, so it never ran. Root cause and decision: [D15](../estudos/decisoes.md).
+
+### Roles, machine, build
+
+| Role | Model | Route |
+| --- | --- | --- |
+| Main agent | GLM 5.3, reasoning `high` | `openrouter/z-ai/glm-5.3` |
+| Subagent (worker) | DeepSeek V4.1 Flash | `azure-opencode/DeepSeek-V4.1-Flash` |
+| Reviewer | MiMo-V2.6-Pro | `openrouter-extra/xiaomi/mimo-v2.6-pro` |
+
+The session that exposed the bug ran Claude Sonnet 5.5 as its main agent. That model never ran here (live runs
+use the three models only). The guard reads the main agent's route only to complete a route a caller named by
+model alone and as the baseline of a reviewer-only choice, so the fix does not depend on it, but it was not run
+under a Sonnet main agent.
+
+| | |
+| --- | --- |
+| Machine | This Linux workstation (CachyOS) |
+| DSH | 0.1.6-alpha.2 from source (`ddefc45`). Isolated `DSH_HOME` with three profiles: `headless` (this build, `link:`), `before` (the 0.3.0 build, commit `487e720`) and `web` (this build, for the browser phases, on `--port 0`) |
+| Isolation | The DSH the user was working in (port 3080, its running session) was never touched: no restart, no profile edit, no file of `~/.dsh` read except one copy of `settings.yaml` (variable names, no key values) |
+| Keys | [`with-keys.sh`](../../scripts/e2e/with-keys.sh): only `OPENROUTER_API_KEY` and `AZURE_OPENCODE_API_KEY` reach the agents; every other secret of the user's environment is removed first |
+| Toolchain | Node 24.19.0, pnpm 11.7.0 |
+| Build under test | `lib/index.js` sha256 `a6f5d8f77852d82c...`, `lib/client.cjs` `b63b0e348e2e8721...` (two consecutive builds are byte-identical) |
+| Tests | 388 of 388 pass with `DSH_CHECKOUT` set (both contract suites included) and 357 of 357 without it (what CI runs); `tsc` clean; `check:lib` clean. Audited by mutation: 295 single-line mutants of the guard and the code around it, 283 killed by the suite and 12 equivalent (they cannot change behavior) |
+| Browser | Google Chrome (system), headless, driven by `playwright-core` |
+
+### What each agent was asked
+
+Read back from the DSH session logs (`request/header` of each session). Per-run pages in [`runs/`](runs).
+
+| Run | Plugin and setup | Main agent | The two agents the workflow (or the tool) started |
+| --- | --- | --- | --- |
+| [**W0**](runs/0.4.0-W0-before-bug.md) the bug, reproduced | 0.3.0; `defaults.subagentModel` = DeepSeek V4.1 Flash, reviewer MiMo; a two-agent workflow naming no model | GLM 5.3 `high` | both on **GLM 5.3** at `high`, no token cap |
+| [**W1**](runs/0.4.0-W1-workflow-governed.md) closed | 0.4.0, same task | GLM 5.3 `high` | both on **DeepSeek V4.1 Flash**, `medium`, **64 000**; no reviewer started for them |
+| [**W2**](runs/0.4.0-W2-explicit-override.md) `override` | the script names MiMo for one agent | GLM 5.3 `high` | both on DeepSeek V4.1 Flash, `medium`, 64 000 (the named route dropped) |
+| [**W3**](runs/0.4.0-W3-explicit-keep.md) `keep` | `children: { explicitModel: keep }`, same script | GLM 5.3 `high` | MiMo-V2.6-Pro at `low` with 64 000 (its ceiling, below the route's `max`/131 072); the other on DeepSeek V4.1 Flash `medium` 64 000 |
+| [**W4**](runs/0.4.0-W4-guard-off.md) the switch | `children: false` | GLM 5.3 `high` | both back on GLM 5.3 `high`, no cap |
+| [**W5**](runs/0.4.0-W5-background-continuable.md) not a workflow | the `subagent` tool in the background (`continuable`, the preset's default), model only | GLM 5.3 `high` | one child on DeepSeek V4.1 Flash `medium` 64 000, planned once |
+| [**W6**](runs/0.4.0-W6-confirmed-model-gone.md) the model is gone | `defaults.subagentModel` = a model the runtime does not know (never called) | GLM 5.3 `high` | none: the workflow fails at once with `the subagent model azure-opencode/Retired-Model-9 cannot be used (...). Open /orquestrar to pick another model` |
+| [**W7**](runs/0.4.0-W7-subagent-tool-model-gone.md) the same, through the tool | the `subagent` tool | GLM 5.3 `high` | none: the tool result is the same message, not a bare `subagent run failed` |
+| [**T3**](runs/0.4.0-T3-readonly-claims.md) regression | the `subagent` tool, foreground, reviewer on | GLM 5.3 `high` | worker DeepSeek V4.1 Flash `medium` 64 000; reviewer MiMo-V2.6-Pro `medium` 32 000 with `structured_output`; verdict `APPROVED` delivered to the main agent |
+
+### The browser (68 checks, real Chrome against a real `dsh web`)
+
+| Phase | Checks | What it covers |
+| --- | ---: | --- |
+| `small` | 3/3 | the dialog with both sections open, now with the two scope lines, still fits 1024 x 600 (556 px, [screenshot](screenshots/0.4.0-small-01-both-open-600px.png)) |
+| `effort` | 19/19 | recommended levels, explicit pick on the wire, model notes, same-model and same-family tips |
+| `light` | 5/5 | light theme, focus trap, Escape handling; the new "applies to every subagent, including the agents a workflow starts" line is on the page |
+| `cancel` | 11/11 | Escape sends the task as stock; the stored choice is cleared |
+| `command` | 7/7 | `/orquestrar` opens the configure dialog; Save persists; the next task asks again, pre-filled |
+| `confirm` | 13/13 | the full path through the dialog: GLM main, DeepSeek worker, MiMo reviewer, a reviewed delivery |
+| `workflow` | 10/10 | **the user's own path**: the choice made in the dialog ([screenshot](screenshots/0.4.0-workflow-01-modal-subagent-model.png); stored through the route, not a `defaults` config) governs the two agents of a workflow the main agent starts: both on DeepSeek V4.1 Flash, `medium`, 64 000, both finished |
+
+### What it showed
+
+1. **The bug is real and reproduced on the unmodified 0.3.0** (W0), with the plugin configured exactly as the user
+   had it. The agents of a workflow, `ralph`, a one-shot job and an agent team never pass through the tool the
+   plugin wrapped.
+2. **The guard closes it where the plugin has the means to: at the two doors every child passes through** (W1 to W3, W5,
+   `workflow` browser phase). The effort ceiling and the token cap travel with the model: DeepSeek V4.1 Flash on a
+   route whose own default is `max` with 384 000 ran at `medium` with 64 000.
+3. **The semantics are the documented ones**: the user's pick wins over a model a script names (W2), `keep` lets it
+   stand under the ceilings (W3), `children: false` is the old behavior (W4).
+4. **The `subagent` tool and the reviewer are unchanged** (T3, `confirm`): the pipeline's own worker and reviewer are
+   not planned a second time, which is what the request mark is for (the reviewer stays on MiMo, not on the worker's model).
+5. **A dead confirmed model is loud** (W6, W7), never forced onto the child or silently replaced.
+
+### What it found about the plugin and about the validation
+
+* Two independent reviews of the change (an adversarial one against the DSH source and the real runtime, and a
+  mutation audit of the tests) found and fixed: the "already planned" mark was the identity of one object (now it also
+  survives a copy); a child on the parent's own route inherits the parent's effort and the parent's token limit is handed
+  down on every route, which the planner assumed otherwise; a caller's effort that the model does not offer was spread back
+  in by the merge; a dead stored model was forced onto every workflow agent; 55 real test gaps (the first mutation round
+  killed 142 of 206 mutants, 68.9%; the final tree, with the tests that round asked for and the 128 new ones in all, kills
+  283 of 295, and the 12 that live are equivalent mutants). The contract tests were hardened the same way (a simulated DSH
+  drift now fails them: a second door through `getProvider`, a new hook, extra workflow `agentOptions` keys, a built resolver
+  that stops clearing the effort). One limit is documented, not fixed: the token cap does not survive DSH's cold resume of
+  a finished `continuable` child ([N21](../estudos/decisoes.md)).
+* The validation itself needed three corrections worth keeping: a `settings.yaml` rewritten through a YAML library turns
+  a reasoning ladder's `off:` key into `false:` and DSH then registers no LLM adapter (`NO_ADAPTER`), so the setup
+  script copies it verbatim and edits two blocks as text; the foreground command runner has a 600 s limit and the MiMo
+  reviewer took 504 s in one run and 91 s in the next, so T3 runs in the background; two scenarios run at the same time
+  hand each other's `cordis.patch.yml` to the DSH that boots second (an early T3 ran on W6's dead model that way and its
+  exit code 3 is the model guard doing its job), so one script at a time. The browser script's `cancel` and `command`
+  phases still expected the "do not ask again" checkbox that 0.3.0 removed; they check the current behavior now.
+
+### What it did not cover
+
+* **Claude Sonnet 5.5 as the main agent** (the rule for live runs is the three models). The main agent's route only
+  matters as described above.
+* **`ralph`, agent teams, a one-shot background `subagent` job, the SDK provider and `codex` / `claude-code` / ACP** were
+  not run live. They are covered by construction (the doors they use are pinned against the DSH source and the guard is
+  exercised on the built `SubagentRuntime`), not by a run.
+* **The browser path was run with a workflow that names no model and with the default `override`**; `keep` was run
+  headless only.
+* **One sample per condition**, a task small enough that no agent ran for long, Linux only.
+* **The token cap on a resumed child** (above), and any cold resume of a continuable child.
+* The long-running real workflow of the incident was not replayed: the guard was validated on small workflows, the
+  agents' behavior under a 64 000-token cap on large tasks was not measured.
 
 ## 0.2.0: the three target models (2026-10-03)
 

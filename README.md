@@ -17,10 +17,16 @@ report.
 **Cancel, Escape and the close button send the task exactly as DSH always did.**
 Nothing else about DSH changes.
 
-Every subagent and reviewer the plugin starts also gets a **reasoning-effort ceiling**
-and an output-token cap, because DSH otherwise runs a re-routed child at its route's
-default (`max` on many setups): the cause of workers that burn their whole budget on one
-edge case and reviewers that need minutes per turn. See [Reasoning effort](#reasoning-effort).
+The choice governs **every child DSH starts for that session**, not only the `subagent`
+tools: the agents a `workflow` starts, `ralph` rounds, one-shot background `subagent` jobs and
+agent teams run on the subagent model too, under the same ceilings. The reviewer works on
+`subagent` and `subagent_fork` delegations. See
+[Which delegations are covered](#which-delegations-are-covered).
+
+Every child governed this way also gets a **reasoning-effort ceiling** and an output-token
+cap, because DSH otherwise runs a re-routed child at its route's default (`max` on many
+setups): the cause of workers that burn their whole budget on one edge case and reviewers
+that need minutes per turn. See [Reasoning effort](#reasoning-effort).
 
 | Dark | Light |
 | --- | --- |
@@ -49,9 +55,12 @@ build output, so no build step is needed to install.
 Type a task in the composer and send it. The dialog appears once per new task:
 
 - **Subagent model**: turn it on and pick a model from the same provider-grouped
-  list the composer's model seat uses. Off means subagents keep the main agent's model.
+  list the composer's model seat uses. It applies to every subagent, including the agents a
+  workflow starts. Off means subagents keep the main agent's model.
 - **Independent reviewer**: turn it on and pick its model (default: the subagent's).
-  A reviewer on a different model family tends to catch different mistakes, so the
+  It reviews `subagent` and `subagent_fork` delegations; the agents a workflow starts use the
+  subagent model but are not reviewed, because the workflow script consumes their results
+  itself (the dialog says so). A reviewer on a different model family tends to catch different mistakes, so the
   dialog says so when both are the same model (under any provider spelling) or come
   from the same vendor family. It also shows short, dated notes for models that need
   them (for example: DeepSeek's own API now serves `deepseek-v4-pro` with V4.1 Flash;
@@ -102,6 +111,51 @@ delivery banner. A provider without structured capture, or a model that answers 
 falls back to a verdict-first text report. If the review fails or has no valid verdict, the
 worker's report is delivered under a `WARNING - UNREVIEWED` banner instead of being lost.
 
+## Which delegations are covered
+
+DSH has more ways to start a child than the two `subagent` tools. The plugin governs them in
+two places: it wraps the `subagent` and `subagent_fork` tools (model, ceilings **and** reviewer),
+and it stands in the two doors every other start goes through, `SubagentRuntime.start()` and
+`startContinuable()` (model and ceilings; the **start guard**, `src/guard.ts`).
+
+| How DSH starts the child | Model, effort ceiling, token cap | Reviewer |
+| --- | --- | --- |
+| `subagent` and `subagent_fork` tools (the standard preset) | yes | yes |
+| `subagent` as a one-shot background job (`backgroundMode: one-shot`, `run_in_background: true`) | yes | no: the result goes through the job store |
+| the `workflow` tool: every `agent()` call of the script | yes | no: the script consumes the results itself |
+| `ralph` (off in the standard preset; it runs on the workflow engine) | yes | no |
+| agent teams (experimental) | yes | no |
+| `codex`, `claude-code` and ACP providers | no: they run their own agents on their own models and take no agent options (the plugin logs a warning once per provider) | no |
+| the DSH SDK provider (a separate DSH child runtime) | yes when a subagent model is picked (it takes the route, effort and token limit); with only a reviewer picked its child keeps the provider's own model | no |
+
+What was run live, on the three target models: the `subagent` tool (in the foreground with the
+reviewer, and in the background) and the `workflow` tool (with the default `override`, with `keep`
+and with the guard off). The other rows follow from the doors they use, which the contract tests pin
+against the DSH source (`ralph` runs on the workflow engine, a one-shot job and the team call
+`start` / `startContinuable`, the SDK provider takes agent options); no live run used a one-shot
+background job, `ralph`, an agent team, the SDK provider or `codex` / `claude-code` / ACP.
+
+Why a second mechanism: the tool wrapper never saw a `workflow` call's agents, because the
+engine starts them through the service itself. In the session that exposed it, 34 workflow
+agents ran on Claude Sonnet 5.5 at `max` (about 7.2 million output tokens and 1.26 billion
+cache-read tokens) although DeepSeek V4.1 Flash was confirmed for subagents. Version 0.3 and
+older have this hole; [the validation page](docs/validation/README.md) reproduces it on an isolated DSH and shows it closed.
+
+What a governed child gets is what the `subagent` tool gives its workers: the model the user
+picked, the effort the user picked (or the model's ceiling) and the output-token cap. The
+main agent is never touched, and a session with no confirmed choice is never touched.
+
+If the model you confirmed is gone (renamed or removed from your DSH settings after you confirmed it),
+the child's start is rejected with a message that says so and what to do (`/orquestrar`, or cancel the
+dialog). The alternatives are worse: running the child on the main agent's model is the bug this
+release fixes, and forcing the dead route makes every workflow agent fail into a silent `null`.
+
+A model the caller names itself (`agent({ provider, model })` in a workflow script) loses to the
+user's pick by default (`children.explicitModel: override`): the dialog is the user's explicit
+instruction. `keep` lets the caller's model stand, under the same ceilings. When the user picked
+only a reviewer (no subagent model), children stay on the main agent's model under the ceilings
+and a model a script names itself stands.
+
 ## Configuration
 
 Everything is optional; without configuration the plugin does nothing until a user
@@ -136,9 +190,11 @@ confirms the dialog. Add overrides to your profile's `cordis.patch.yml`
     persist: true                  # remember choices across restarts
     stateDir: ~/.dsh/dsh-orquestrator
     maxSessions: 500               # stored sessions before the oldest are pruned
-    tools:                         # which delegation tools are orchestrated
+    tools:                         # which delegation tools are orchestrated (model, ceilings and reviewer)
       - { name: subagent,      provider: spawn, mode: continuable }
       - { name: subagent_fork, provider: fork,  mode: continuable }
+    children:                      # every other child DSH starts (workflow, ralph, jobs, teams); false governs only `tools`
+      explicitModel: override      # override | keep: a model the caller names itself, e.g. agent({ model }) in a workflow script
 ```
 
 ### Reasoning effort
@@ -177,12 +233,35 @@ were left out and why: [docs/estudos/](docs/estudos/README.md).
 
 ## Limits
 
-- One-shot `subagent` **background jobs** (`backgroundMode: one-shot` with
-  `run_in_background: true`) deliver through the job store and are not orchestrated.
-  The standard preset uses `continuable`, which is.
-- The reasoning-effort ceiling and the token cap apply to the children this plugin
-  starts, never to the main agent. A model that cannot be described through the LLM
-  runtime keeps exactly the options the user picked.
+- **The reviewer does not run on the agents a workflow starts, nor on one-shot `subagent`
+  background jobs.** A workflow script consumes its agents' results itself (often as
+  schema-checked data) and a job delivers through the job store, so substituting a report would
+  break both. Those children get the model and the ceilings; keep a verification phase in the
+  workflow, or run the check as a `subagent` call.
+- Providers that cannot take agent options (`codex`, `claude-code`, ACP) keep the models they
+  run on; the plugin logs a warning (once per provider) and does not touch their children. A
+  provider that runs its own default route (the SDK provider) is left alone when no subagent
+  model is picked, because the plugin cannot know what its child runs on.
+- **The output-token cap is not durable for `continuable` children.** When DSH later resumes a
+  finished child (a follow-up message after it released the child, or after a restart) it rebuilds
+  the child's options from the recorded descriptor, which holds the provider, model and effort but
+  not the token limit. The effort ceiling survives; the cap applies to the first run only. Fixing it
+  needs another seam (see [decisoes.md](docs/estudos/decisoes.md), N21).
+- A model the main agent names in a `subagent` call (DSH's model selection, on in the standard
+  preset) is ignored while a choice is confirmed, as it always was; `override` applies the same rule
+  to every other caller. A token limit a caller sets (an operator's tool row, a team roster) is never
+  raised: the smaller of the caller's and the plugin's stands.
+- Unknown top-level configuration fields are ignored with a warning in the DSH log (a mis-indented
+  `explicitModel: keep` would otherwise run as `override`).
+- DSH has no hook around a child start (`subagent/start` fires after the child exists), so the
+  start guard installs its own `start` and `startContinuable` on the service instance. The
+  contract tests (`test/contract/`) pin that assumption against a DSH checkout and a real
+  `SubagentRuntime`, and fail first when DSH changes it. If the service cannot be wrapped the
+  plugin fails to load; it never half works. `children: false` takes the guard out.
+- The reasoning-effort ceiling and the token cap apply to the children the plugin governs,
+  never to the main agent. A model the LLM runtime cannot describe but can call keeps exactly
+  the options the user picked (the log says so); one it cannot call at all is rejected, as
+  described above.
 - Clean-context review needs `git` and a repository. Two workers editing the same tree at
   once can blur each other's change list; the plugin then errs toward handing over the
   report, which is what version 0.1 always did.
@@ -258,9 +337,12 @@ DSH_CHECKOUT=/path/to/deepseek-harness pnpm test   # also pins the DSH seams thi
 ```
 
 Live validation against a real DSH uses only the three target models and fails if any other
-one runs: `scripts/e2e/run-trio.sh` (headless, with `session-config.mjs` reading back what each
-session was asked) and `scripts/e2e/ui-e2e.mjs` (browser). See
-[docs/validation/README.md](docs/validation/README.md) for the isolated `DSH_HOME` they expect.
+one runs: `scripts/e2e/run-trio.sh` (the `subagent` tool and the reviewer) and
+`scripts/e2e/run-workflow.sh` (the `workflow` tool and the start guard), both headless, with
+`session-config.mjs` reading back what each session was asked, and `scripts/e2e/ui-e2e.mjs`
+(browser). `scripts/e2e/setup-isolated-home.sh` builds the isolated `DSH_HOME` they expect and
+`scripts/e2e/with-keys.sh` runs them with only the two API keys the three models need. See
+[docs/validation/README.md](docs/validation/README.md).
 
 Layout: `src/` (host), `src/client/` (browser), `test/` (unit, integration,
 contract), `scripts/e2e/` (headless and browser runs against a real DSH),

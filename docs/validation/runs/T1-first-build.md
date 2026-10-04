@@ -3,7 +3,7 @@
 Same task and models as T1. Kept because the reviewer caught a real error that the **main agent** had written into its own delegation prompt.
 
 Models, and only these three: main agent GLM 5.3, subagent DeepSeek V4.1 Flash, reviewer MiMo-V2.6-Pro.
-Produced by [`scripts/e2e/run-trio.sh`](../../../scripts/e2e/run-trio.sh).
+Produced by `scripts/e2e/run-trio.sh` (removed in 0.5.0 with the reviewer).
 
 ### The task the main agent was given
 

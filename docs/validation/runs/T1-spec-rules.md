@@ -3,7 +3,7 @@
 The worker writes `duration.js` and its tests; the reviewer has to verify them. The ceilings are on (the default).
 
 Models, and only these three: main agent GLM 5.3, subagent DeepSeek V4.1 Flash, reviewer MiMo-V2.6-Pro.
-Produced by [`scripts/e2e/run-trio.sh`](../../../scripts/e2e/run-trio.sh).
+Produced by `scripts/e2e/run-trio.sh` (removed in 0.5.0 with the reviewer).
 
 ### The task the main agent was given
 

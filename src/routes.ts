@@ -74,7 +74,6 @@ function parseSessionId(value: unknown): string | undefined {
 function routesOf(config: OrchestratorConfig): ModelRoute[] {
   const routes: ModelRoute[] = []
   if (config.subagentModel !== null) routes.push(config.subagentModel)
-  if (config.reviewer.model !== null) routes.push(config.reviewer.model)
   return routes
 }
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { parsePluginConfig, type Config } from '../../src/config.ts'
-import { ChoiceUnusableError, governedOptions, installGuard, isPlanned, markPlanned, startContinuablePlanned, startPlanned, type GuardDeps } from '../../src/guard.ts'
+import { ChoiceUnusableError, governedOptions, installGuard, isGoverned, type GuardDeps } from '../../src/guard.ts'
 import type { AgentLike, ModelInfoLike, ModelInfoSourceLike, SubagentStartRequestLike } from '../../src/host-services.ts'
 import { OFF_CONFIG, buildConfig, type OrchestratorConfig } from '../../src/shared.ts'
 import { ConfigStore } from '../../src/store.ts'
@@ -28,7 +28,10 @@ function sonnet(id = 'main'): AgentLike {
   return { ...fakeAgent(id), options: { provider: 'azure-opencode-claude', model: 'claude-sonnet-5-5', reasoningEffort: 'max', maxTokens: 128_000 } }
 }
 
-const picked = (over: Partial<Parameters<typeof buildConfig>[0]> = {}): OrchestratorConfig => buildConfig({ subagentModel: DEEPSEEK, reviewerEnabled: false, reviewerModel: null, ...over })
+const picked = (over: Partial<Parameters<typeof buildConfig>[0]> = {}): OrchestratorConfig => buildConfig({ subagentModel: DEEPSEEK, ...over })
+
+/** A choice with no subagent model, only a reasoning level (what `defaults.workerEffort` alone makes): children stay on the parent's model. */
+const effortOnly = (workerEffort = 'high'): OrchestratorConfig => buildConfig({ subagentModel: null, workerEffort })
 
 interface RigOptions {
   readonly config?: Config
@@ -267,7 +270,7 @@ describe('installGuard', () => {
   })
 })
 
-describe('a child the plugin did not start itself', () => {
+describe('a child DSH starts', () => {
   it('is left exactly as it is when the session has no confirmed choice', async () => {
     const r = rig()
     const req = request()
@@ -289,7 +292,7 @@ describe('a child the plugin did not start itself', () => {
     assert.deepEqual(lastOptions(r), { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash', reasoningEffort: 'medium', maxTokens: 64_000 })
     assert.equal(req.agentOptions, undefined, 'the caller\'s request is not mutated')
     assert.equal(r.subagents.starts[0]?.request.prompt, req.prompt, 'everything else passes through')
-    assert.ok(r.logs.some(line => /child of session main on provider spawn: worker: azure-opencode\/DeepSeek-V4\.1-Flash, effort medium/.test(line)))
+    assert.ok(r.logs.some(line => /child of session main on provider spawn: azure-opencode\/DeepSeek-V4\.1-Flash, effort medium/.test(line)))
   })
 
   it('honors the effort the user picked, above the ceiling, and still caps the output', async () => {
@@ -342,10 +345,10 @@ describe('a child the plugin did not start itself', () => {
     await none.subagents.start('spawn', request({ agentOptions: { ...MIMO, reasoningEffort: 'high' } }))
     assert.equal(lastOptions(none)?.reasoningEffort, undefined)
 
-    // The same in a reviewer-only choice, where the child stays on the parent's route.
-    const reviewerOnly = rig({ stored: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }), models: () => ({ resolveModelInfo: () => Promise.resolve(plain) }) })
-    await reviewerOnly.subagents.start('spawn', request({ agentOptions: { reasoningEffort: 'high' } }))
-    assert.equal(lastOptions(reviewerOnly)?.reasoningEffort, undefined)
+    // The same in an effort-only choice, where the child stays on the parent's route.
+    const stays = rig({ stored: effortOnly(), models: () => ({ resolveModelInfo: () => Promise.resolve(plain) }) })
+    await stays.subagents.start('spawn', request({ agentOptions: { reasoningEffort: 'high' } }))
+    assert.equal(lastOptions(stays)?.reasoningEffort, undefined)
   })
 
   it('keeps a smaller token limit the caller asked for', async () => {
@@ -354,16 +357,16 @@ describe('a child the plugin did not start itself', () => {
     assert.equal(lastOptions(r)?.maxTokens, 8_000)
   })
 
-  it('stays on the parent\'s model, under the ceilings, when the user picked only a reviewer', async () => {
-    const r = rig({ stored: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }) })
+  it('stays on the parent\'s model, with the level and the token cap, when the user picked only an effort', async () => {
+    const r = rig({ stored: effortOnly('high') })
     await r.subagents.start('spawn', request())
-    assert.deepEqual(lastOptions(r), { reasoningEffort: 'high', maxTokens: 64_000 }, 'Sonnet is capped at high for a worker; no route is named')
+    assert.deepEqual(lastOptions(r), { reasoningEffort: 'high', maxTokens: 64_000 }, 'no route is named: the parent\'s Sonnet, at the level asked for')
   })
 
   it('does not take a model away from a caller when the user picked none', async () => {
-    const r = rig({ stored: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }) })
+    const r = rig({ stored: effortOnly('high') })
     await r.subagents.start('spawn', request({ agentOptions: MIMO }))
-    assert.deepEqual(lastOptions(r), { provider: 'openrouter-extra', model: 'xiaomi/mimo-v2.6-pro', reasoningEffort: 'low', maxTokens: 64_000 })
+    assert.deepEqual(lastOptions(r), { provider: 'openrouter-extra', model: 'xiaomi/mimo-v2.6-pro', reasoningEffort: 'high', maxTokens: 64_000 }, 'the level the user asked for, which MiMo offers')
   })
 
   it('uses the choice of the nearest ancestor session (a child that delegates further)', async () => {
@@ -495,22 +498,22 @@ describe('a child the plugin did not start itself', () => {
     assert.deepEqual(lastOptions(r), { provider: 'openrouter-extra', model: 'xiaomi/mimo-v2.6-pro', reasoningEffort: 'low', maxTokens: 8_000 })
   })
 
-  it('keeps a smaller token limit the caller asked for when the user picked only a reviewer', async () => {
-    const r = rig({ stored: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }) })
+  it('keeps a smaller token limit the caller asked for when the user picked only an effort', async () => {
+    const r = rig({ stored: effortOnly('high') })
     await r.subagents.start('spawn', request({ agentOptions: { maxTokens: 8_000 } }))
     assert.deepEqual(lastOptions(r), { reasoningEffort: 'high', maxTokens: 8_000 })
   })
 
-  it('honors an effort the caller named for the parent\'s own route when the user picked only a reviewer', async () => {
-    const r = rig({ stored: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }) })
+  it('lets the effort the user chose win over the one a caller named for the parent\'s own route', async () => {
+    const r = rig({ stored: effortOnly('high') })
     await r.subagents.start('spawn', request({ agentOptions: { reasoningEffort: 'max' } }))
-    assert.deepEqual(lastOptions(r), { reasoningEffort: 'max', maxTokens: 64_000 }, 'a named level is explicit: above the ceiling of high for Sonnet')
+    assert.deepEqual(lastOptions(r), { reasoningEffort: 'high', maxTokens: 64_000 })
   })
 
-  it('honors the worker effort stored next to a reviewer-only choice (the deployment `defaults` can carry one)', async () => {
-    const r = rig({ stored: buildConfig({ subagentModel: null, workerEffort: 'max', reviewerEnabled: true, reviewerModel: null }) })
+  it('honors an effort-only choice above the ceiling too (the deployment `defaults` can carry one)', async () => {
+    const r = rig({ stored: effortOnly('max') })
     await r.subagents.start('spawn', request())
-    assert.deepEqual(lastOptions(r), { reasoningEffort: 'max', maxTokens: 64_000 })
+    assert.deepEqual(lastOptions(r), { reasoningEffort: 'max', maxTokens: 64_000 }, 'asked for: above the ceiling of high for Sonnet')
   })
 
   it('honors the effort carried by the picked route when the dialog set none', async () => {
@@ -519,9 +522,11 @@ describe('a child the plugin did not start itself', () => {
     assert.deepEqual(lastOptions(r), { ...DEEPSEEK, reasoningEffort: 'high', maxTokens: 64_000 }, 'above the ceiling of medium: it was asked for')
   })
 
-  it('leaves the request exactly as it is when the plan has nothing to override', async () => {
-    const r = rig({ stored: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }), models: () => undefined })
-    const req = request()
+  it('leaves the request exactly as it is when the plan has nothing to override (a model with no reasoning levels, already under the cap)', async () => {
+    const plain: ModelInfoLike = { defaultMaxTokens: 8_000 }
+    const parent: AgentLike = { ...sonnet(), options: { provider: 'openrouter', model: 'plain', maxTokens: undefined } }
+    const r = rig({ stored: effortOnly(), models: () => ({ resolveModelInfo: () => Promise.resolve(plain) }) })
+    const req = request({ parent })
     await r.subagents.start('spawn', req)
     assert.equal(r.subagents.starts[0]?.request, req)
     assert.equal(r.logs.some(line => /child of session/.test(line)), false, 'a child nothing was changed for is not announced')
@@ -597,14 +602,13 @@ describe('a child the plugin did not start itself', () => {
     assert.deepEqual(lastOptions(r), { ...DEEPSEEK, reasoningEffort: 'medium', maxTokens: 64_000 })
   })
 
-  it('hands back what DSH answered and starts on the provider it was asked for, governed or not', async () => {
+  it('hands back what DSH answered and starts on the provider it was asked for', async () => {
     const r = rig({ stored: picked() })
     const spec = () => ({ provider: 'fork', label: 'a task', request: { prompt: [{ type: 'text', text: 'x' }], parent: sonnet() }, signal: new AbortController().signal })
-    assert.equal(await r.subagents.start('fork', request()), r.subagents.starts[0]?.run, 'governed')
-    assert.equal((await startPlanned(r.subagents, 'fork', request())).id, 'run-2', 'planned by the pipeline')
-    assert.deepEqual(r.subagents.starts.map(started => started.provider), ['fork', 'fork'])
-    assert.deepEqual(await r.subagents.startContinuable(spec()), { childId: 'child-1' }, 'governed')
-    assert.deepEqual(await startContinuablePlanned(r.subagents, spec()), { childId: 'child-2' }, 'planned by the pipeline')
+    assert.equal(await r.subagents.start('fork', request()), r.subagents.starts[0]?.run)
+    assert.deepEqual(r.subagents.starts.map(started => started.provider), ['fork'])
+    assert.deepEqual(await r.subagents.startContinuable(spec()), { childId: 'child-1' })
+    assert.equal(r.subagents.continuables[0]?.provider, 'fork')
   })
 
   it('names what it failed on in the warning: an Error\'s message, or whatever else was thrown', async () => {
@@ -623,49 +627,6 @@ describe('a child the plugin did not start itself', () => {
     const r = rig({ stored: picked(), models: () => { controller.abort('the user cancelled'); return thrown('lookup failed') } })
     await assert.rejects(r.subagents.start('spawn', request({ signal: controller.signal })), (error: unknown) => error instanceof Error)
     assert.equal(r.subagents.starts.length, 0)
-  })
-})
-
-describe('a child the plugin planned itself', () => {
-  it('is never planned a second time (the pipeline\'s own starts)', async () => {
-    const r = rig({ stored: picked() })
-    const own = request({ agentOptions: MIMO })
-    assert.equal(isPlanned(own), false)
-    await startPlanned(r.subagents, 'spawn', own)
-    assert.equal(isPlanned(own), true)
-    assert.equal(r.subagents.starts[0]?.request, own)
-    assert.deepEqual(lastOptions(r), MIMO)
-  })
-
-  it('applies to a request that carries no options at all (a reviewer that keeps the worker\'s route)', async () => {
-    const r = rig({ stored: picked() })
-    const own = request()
-    await startPlanned(r.subagents, 'spawn', own)
-    assert.equal(lastOptions(r), undefined)
-  })
-
-  it('applies to continuable starts, marked on the spec or on its request', async () => {
-    const r = rig({ stored: picked() })
-    const mk = () => ({ provider: 'spawn', label: 'l', request: { prompt: [{ type: 'text', text: 'x' }], parent: sonnet() }, signal: new AbortController().signal })
-    await startContinuablePlanned(r.subagents, mk())
-    const viaRequest = mk()
-    markPlanned(viaRequest.request)
-    await r.subagents.startContinuable(viaRequest)
-    const viaSpec = mk()
-    markPlanned(viaSpec)
-    await r.subagents.startContinuable(viaSpec)
-    for (const seen of r.subagents.continuables) assert.equal((seen.request as { agentOptions?: unknown }).agentOptions, undefined)
-  })
-
-  it('is known to a reloaded copy of the plugin: the registry of planned requests is process-wide', async () => {
-    const reloaded = await import(new URL('../../src/guard.ts?reloaded', import.meta.url).href) as typeof import('../../src/guard.ts')
-    assert.notEqual(reloaded.markPlanned, markPlanned, 'a second, separate copy of the module')
-    const ours = request()
-    markPlanned(ours)
-    assert.equal(reloaded.isPlanned(ours), true)
-    const theirs = request()
-    reloaded.markPlanned(theirs)
-    assert.equal(isPlanned(theirs), true)
   })
 })
 
@@ -728,8 +689,8 @@ describe('a confirmed model the LLM runtime no longer knows', () => {
     const none = rig({ models: () => retired })
     await none.subagents.start('spawn', request())
     assert.equal(lastOptions(none), undefined)
-    const reviewerOnly = rig({ stored: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }), models: () => retired })
-    await reviewerOnly.subagents.start('spawn', request())
+    const effortOnlyChoice = rig({ stored: effortOnly(), models: () => retired })
+    await effortOnlyChoice.subagents.start('spawn', request())
     const noRuntime = rig({ stored: picked(), models: () => undefined })
     await noRuntime.subagents.start('spawn', request())
     assert.deepEqual(lastOptions(noRuntime), DEEPSEEK)
@@ -742,24 +703,24 @@ describe('a confirmed model the LLM runtime no longer knows', () => {
   })
 })
 
-describe('the mark on a planned request', () => {
-  it('survives a wrapper stacked above the guard that copies the request: the pipeline\'s reviewer is never re-planned as a worker', async () => {
-    const r = rig({ stored: picked() })
-    const guarded = r.subagents.start.bind(r.subagents)
-    r.subagents.start = (provider, req) => guarded(provider, { ...req }) // telemetry, permissions: anything that normalizes with a spread
-    const reviewer = request({ agentOptions: { ...MIMO, reasoningEffort: 'medium', maxTokens: 32_000 } })
-    await startPlanned(r.subagents, 'spawn', reviewer)
-    assert.deepEqual(lastOptions(r), { ...MIMO, reasoningEffort: 'medium', maxTokens: 32_000 }, 'still on MiMo, not on the worker\'s DeepSeek')
-    assert.equal(r.logs.some(line => /child of session/.test(line)), false)
+describe('the mark on a request the guard planned', () => {
+  const make = (subagents: FakeSubagents, store: ConfigStore, logs: string[], config: Config = {}): GuardDeps => ({
+    subagents, store, defaults: null, parentOf: () => undefined, config: parsePluginConfig(config),
+    models: () => llm, logger: { info: message => logs.push(message), warn: message => logs.push(message) },
   })
 
-  it('also carries over a request that cannot take a property (a frozen one): the registry alone says planned', async () => {
-    const r = rig({ stored: picked() })
-    const frozen = Object.freeze(request({ agentOptions: MIMO }))
-    markPlanned(frozen)
-    assert.equal(isPlanned(frozen), true)
-    await r.subagents.start('spawn', frozen)
-    assert.equal(r.subagents.starts[0]?.request, frozen)
+  it('survives a copy made between two guards: the inner guard does not plan the child again', async () => {
+    const subagents = new FakeSubagents({ results: Array.from({ length: 4 }, () => textResult('ok')) })
+    const store = new ConfigStore({ maxSessions: 4 })
+    store.set('main', picked())
+    const logs: string[] = []
+    installGuard(make(subagents, store, logs, { effort: { worker: 'high' } })) // the inner, older guard
+    const inner = subagents.start.bind(subagents)
+    subagents.start = (provider, req) => inner(provider, { ...req }) // telemetry, permissions: anything that normalizes with a spread
+    installGuard(make(subagents, store, logs, { effort: { worker: 'low' } })) // the outer, newer guard
+    await subagents.start('spawn', request())
+    assert.equal(subagents.starts[0]?.request.agentOptions?.reasoningEffort, 'low', 'the outer, newer guard planned it')
+    assert.equal(logs.filter(line => /child of session/.test(line)).length, 1, 'and the inner one saw a planned request')
   })
 
   it('is put on what the guard hands to DSH, so a second live guard (another copy of the plugin) plans each child once and the NEWER configuration wins', async () => {
@@ -767,35 +728,44 @@ describe('the mark on a planned request', () => {
     const store = new ConfigStore({ maxSessions: 4 })
     store.set('main', picked())
     const logs: string[] = []
-    const make = (config: Config): GuardDeps => ({
-      subagents, store, defaults: null, parentOf: () => undefined, config: parsePluginConfig(config),
-      models: () => llm, logger: { info: message => logs.push(message), warn: message => logs.push(message) },
-    })
-    installGuard(make({ effort: { worker: 'high' } })) // the older copy
-    installGuard(make({ effort: { worker: 'low' } })) // the newer copy, outermost
+    installGuard(make(subagents, store, logs, { effort: { worker: 'high' } })) // the older copy
+    installGuard(make(subagents, store, logs, { effort: { worker: 'low' } })) // the newer copy, outermost
     await subagents.start('spawn', request())
     assert.equal(subagents.starts[0]?.request.agentOptions?.reasoningEffort, 'low', 'the outer, newer guard planned it')
     assert.equal(logs.filter(line => /child of session/.test(line)).length, 1, 'and the inner one saw a planned request')
-    assert.equal(isPlanned(subagents.starts[0]?.request ?? {}), true)
+    assert.equal(isGoverned(subagents.starts[0]?.request ?? {}), true)
   })
 
   it('never marks the caller\'s own request: the same request object may be started again under another choice', async () => {
     const r = rig({ stored: picked() })
     const req = request()
     await r.subagents.start('spawn', req)
-    assert.equal(isPlanned(req), false)
+    assert.equal(isGoverned(req), false)
     r.store.clear('main')
     await r.subagents.start('spawn', req)
     assert.equal(r.subagents.starts[1]?.request, req, 'now untouched')
   })
 
-  it('is shared with a reloaded copy of the plugin: a frozen request through the registry, a copy of a request through the mark itself', async () => {
+  it('is read by a reloaded copy of the plugin: the mark is a registered symbol, so another copy of the module recognizes a copy of the request', async () => {
     const reloaded = await import(new URL('../../src/guard.ts?reloaded-mark', import.meta.url).href) as typeof import('../../src/guard.ts')
-    const frozen = Object.freeze(request())
-    markPlanned(frozen)
-    assert.equal(reloaded.isPlanned(frozen), true, 'the registry is process-wide')
-    const marked = markPlanned(request())
-    assert.equal(reloaded.isPlanned({ ...marked }), true, 'the mark is a registered symbol, so the other copy reads it on a copy of the request')
+    assert.notEqual(reloaded.isGoverned, isGoverned, 'a second, separate copy of the module')
+    const r = rig({ stored: picked() })
+    await r.subagents.start('spawn', request())
+    const governed = r.subagents.starts[0]?.request ?? {}
+    assert.equal(reloaded.isGoverned({ ...governed }), true)
+    assert.equal(reloaded.isGoverned(request()), false)
+  })
+
+  it('marks a continuable spec\'s request as well, so a second guard leaves it alone', async () => {
+    const subagents = new FakeSubagents({ results: [] })
+    const store = new ConfigStore({ maxSessions: 4 })
+    store.set('main', picked())
+    const logs: string[] = []
+    installGuard(make(subagents, store, logs, { effort: { worker: 'high' } }))
+    installGuard(make(subagents, store, logs, { effort: { worker: 'low' } }))
+    await subagents.startContinuable({ provider: 'spawn', label: 'l', request: { prompt: [{ type: 'text', text: 'x' }], parent: sonnet() }, signal: new AbortController().signal })
+    assert.equal((subagents.continuables[0]?.request as { agentOptions?: { reasoningEffort?: string } }).agentOptions?.reasoningEffort, 'low')
+    assert.equal(logs.filter(line => /child of session/.test(line)).length, 1)
   })
 })
 
@@ -803,7 +773,7 @@ describe('a provider that runs on a route of its own (the SDK provider)', () => 
   const sdk = { routeDefaults: { sdk: { provider: 'openrouter', model: 'google/gemini-3.8-flash' } } }
 
   it('is left alone when no subagent model is picked: its child does not run on the parent\'s model, so there is nothing to plan against', async () => {
-    const r = rig({ stored: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }), ...sdk })
+    const r = rig({ stored: effortOnly(), ...sdk })
     const req = request()
     await r.subagents.start('sdk', req)
     assert.equal(r.subagents.starts[0]?.request, req)
@@ -816,15 +786,15 @@ describe('a provider that runs on a route of its own (the SDK provider)', () => 
   })
 
   it('completes a route the caller named by model only from the provider\'s own route, not the parent\'s', async () => {
-    const r = rig({ stored: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }), config: { effort: false, limits: false }, ...sdk })
+    const r = rig({ stored: effortOnly(), config: { effort: false, limits: false }, ...sdk })
     await r.subagents.start('sdk', request({ agentOptions: { model: 'google/gemini-3.8-pro' } }))
-    assert.deepEqual(lastOptions(r), { provider: 'openrouter', model: 'google/gemini-3.8-pro' })
+    assert.deepEqual(lastOptions(r), { provider: 'openrouter', model: 'google/gemini-3.8-pro', reasoningEffort: 'high' })
   })
 })
 
 describe('the effort and the limit a caller names', () => {
   it('applies the effort stored next to a choice with no subagent model to a model the caller named, when that model offers it', async () => {
-    const r = rig({ stored: buildConfig({ subagentModel: null, workerEffort: 'high', reviewerEnabled: true, reviewerModel: null }), config: { children: { explicitModel: 'keep' } } })
+    const r = rig({ stored: effortOnly('high'), config: { children: { explicitModel: 'keep' } } })
     await r.subagents.start('spawn', request({ agentOptions: MIMO }))
     assert.equal(lastOptions(r)?.reasoningEffort, 'high', 'asked for in the dialog, and MiMo offers it')
   })
@@ -837,11 +807,11 @@ describe('the effort and the limit a caller names', () => {
 
   it('strips an effort the caller named when the plan has nothing else to say and the model offers no levels', async () => {
     const plain: ModelInfoLike = { defaultMaxTokens: 8_000 }
-    const r = rig({ stored: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }), models: () => ({ resolveModelInfo: () => Promise.resolve(plain) }) })
+    const r = rig({ stored: effortOnly(), models: () => ({ resolveModelInfo: () => Promise.resolve(plain) }) })
     const parent: AgentLike = { ...sonnet(), options: { provider: 'openrouter', model: 'plain', maxTokens: undefined } }
     await r.subagents.start('spawn', request({ parent, agentOptions: { reasoningEffort: 'high' } }))
     assert.deepEqual(lastOptions(r), {}, 'nothing left to override, and no level the model would refuse')
-    const bare = rig({ stored: buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null }), models: () => ({ resolveModelInfo: () => Promise.resolve(plain) }) })
+    const bare = rig({ stored: effortOnly(), models: () => ({ resolveModelInfo: () => Promise.resolve(plain) }) })
     const untouched = request({ parent })
     await bare.subagents.start('spawn', untouched)
     assert.equal(bare.subagents.starts[0]?.request, untouched, 'and with no level named the request is left exactly as it is')

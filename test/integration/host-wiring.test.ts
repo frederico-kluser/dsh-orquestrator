@@ -7,12 +7,10 @@ import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import type { Context } from '@deepseek-ai/cordis'
 import { apply, inject, name } from '../../src/index.ts'
-import type { ToolDispatchExecutionLike, ToolExecutionResultLike } from '../../src/host-services.ts'
 import { CONFIG_ROUTE, buildConfig } from '../../src/shared.ts'
-import { FakeSubagents, fakeAgent, promptText, textResult } from '../helpers.ts'
+import { FakeSubagents, fakeAgent, textResult } from '../helpers.ts'
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
-type Wrapper = (exec: ToolDispatchExecutionLike, next: () => Promise<ToolExecutionResultLike>) => Promise<ToolExecutionResultLike>
 
 const scratch = mkdtempSync(join(tmpdir(), 'orq-wiring-'))
 after(() => { rmSync(scratch, { recursive: true, force: true }) })
@@ -25,7 +23,6 @@ interface Rig {
   /** The subset of `logs` that was logged at warn level. */
   readonly warnings: string[]
   readonly handler: () => Handler
-  readonly wrapper: () => Wrapper
   readonly subagents: FakeSubagents
 }
 
@@ -35,13 +32,11 @@ function rig(options: { services?: Record<string, unknown>; fence?: 401 | 403 | 
   const logs: string[] = []
   const warnings: string[] = []
   let handler: Handler | undefined
-  let wrapper: Wrapper | undefined
-  const subagents = new FakeSubagents({ results: [textResult('worker report'), textResult('VERDICT: APPROVED\nreviewed body')] })
+  const subagents = new FakeSubagents({ results: Array.from({ length: 8 }, () => textResult('ok')) })
   const services: Record<string, unknown> = {
     webServer: { register: (route: { path: string; handler: Handler }) => { handler = route.handler; return () => undefined } },
     connection: { requestRejection: () => options.fence },
     subagents,
-    tools: {},
     ...options.services,
   }
   const ctx = {
@@ -50,38 +45,38 @@ function rig(options: { services?: Record<string, unknown>; fence?: 401 | 403 | 
       if (names.every(service => services[service] !== undefined)) callback(ctx)
     },
     effect: (fn: () => unknown, label: string) => { effects.push(label); return fn() },
-    on: (event: string, listener: Wrapper) => { events.push(event); if (event === 'tools/execute') wrapper = listener; return () => true },
+    on: (event: string) => { events.push(event); return () => true },
     logger: { info: (message: string) => logs.push(message), warn: (message: string) => { logs.push(message); warnings.push(message) } },
   } as unknown as Context
   return {
     ctx, effects, events, logs, warnings, subagents,
     handler: () => { assert.ok(handler, 'the route was not registered'); return handler },
-    wrapper: () => { assert.ok(wrapper, 'the tools/execute listener was not registered'); return wrapper },
   }
 }
 
 describe('plugin identity', () => {
   it('declares its name and the services it waits for (never logger)', () => {
     assert.equal(name, 'dsh-orquestrator')
-    assert.deepEqual(inject, ['tools', 'subagents'])
+    assert.deepEqual(inject, ['subagents'])
     assert.equal(inject.includes('logger'), false)
   })
 })
 
 describe('apply', () => {
-  it('registers the route, the delegation wrapper and the start guard as effects', () => {
+  it('registers the route and the start guard as effects, and listens to no tool', () => {
     const r = rig()
     apply(r.ctx, { stateDir: join(scratch, 'a') })
-    assert.deepEqual([...r.effects].sort(), ['dsh-orquestrator: delegation wrapper', 'dsh-orquestrator: routes', 'dsh-orquestrator: start guard'])
-    assert.deepEqual(r.events, ['tools/execute'])
-    assert.ok(r.logs.some(line => /ready \(tools: subagent, subagent_fork; persisted sessions: 0; effort ceilings: on; reviewer context: auto; start guard: on, explicit models override\)/.test(line)))
+    assert.deepEqual([...r.effects].sort(), ['dsh-orquestrator: routes', 'dsh-orquestrator: start guard'])
+    assert.deepEqual(r.events, [], 'no tools/execute wrapper: the guard is the only mechanism')
+    assert.ok(r.logs.some(line => /ready \(persisted sessions: 0; effort ceilings: on; start guard: on, explicit models override\)/.test(line)))
     assert.equal(Object.hasOwn(r.subagents, 'start'), true, 'the guard stands in the start door')
+    assert.equal(Object.hasOwn(r.subagents, 'startContinuable'), true, 'and in the continuable door')
   })
 
-  it('leaves the start door alone with `children: false` (the 0.3 behavior)', () => {
+  it('leaves the start doors alone with `children: false` (the enforcement off; the dialog still stores choices)', () => {
     const r = rig()
     apply(r.ctx, { stateDir: join(scratch, 'noguard'), children: false })
-    assert.deepEqual([...r.effects].sort(), ['dsh-orquestrator: delegation wrapper', 'dsh-orquestrator: routes'])
+    assert.deepEqual([...r.effects], ['dsh-orquestrator: routes'])
     assert.equal(Object.hasOwn(r.subagents, 'start'), false)
     assert.ok(r.logs.some(line => /start guard: off\)/.test(line)))
   })
@@ -106,12 +101,11 @@ describe('apply', () => {
     assert.throws(() => apply(r.ctx, { stateDir: join(scratch, 'b') }), /`subagents` service is missing/)
   })
 
-  it('still installs the delegation wrapper, without a route, where there is no web server', () => {
+  it('still installs the start guard, without a route, where there is no web server (headless, tui, sdk)', () => {
     for (const missing of ['webServer', 'connection']) {
       const r = rig({ services: { [missing]: undefined } })
       apply(r.ctx, { stateDir: join(scratch, 'headless') })
-      assert.deepEqual(r.effects, ['dsh-orquestrator: delegation wrapper', 'dsh-orquestrator: start guard'])
-      assert.deepEqual(r.events, ['tools/execute'])
+      assert.deepEqual(r.effects, ['dsh-orquestrator: start guard'])
     }
   })
 
@@ -127,6 +121,19 @@ describe('apply', () => {
     assert.ok(r.logs.some(line => /start guard: on, explicit models override\)/.test(line)), 'and the plugin still loads, with the default it was left with')
   })
 
+  it('says, at warn level and once per field, that a reviewer field of 0.4.0 does nothing now, and still loads', () => {
+    const r = rig()
+    apply(r.ctx, { stateDir: join(scratch, 'legacy'), reviewerContext: 'claims', tools: [], defaults: { subagentModel: { provider: 'p', model: 'm' }, reviewer: { enabled: true } } } as never)
+    const removed = r.warnings.filter(line => /removed in 0\.5\.0/.test(line))
+    assert.deepEqual(removed, [
+      'dsh-orquestrator: config field "reviewerContext" belonged to the independent reviewer, removed in 0.5.0, and is ignored',
+      'dsh-orquestrator: config field "tools" belonged to the independent reviewer, removed in 0.5.0, and is ignored',
+      'dsh-orquestrator: config field "defaults.reviewer" belonged to the independent reviewer, removed in 0.5.0, and is ignored',
+    ])
+    assert.equal(r.warnings.some(line => /unknown config field/.test(line)), false, 'a removed field is not "unknown"')
+    assert.ok(r.logs.some(line => /ready \(/.test(line)), 'the plugin loaded')
+  })
+
   it('fails loud on a malformed config before touching anything', () => {
     const r = rig()
     assert.throws(() => apply(r.ctx, { maxSessions: -1 }), /maxSessions/)
@@ -137,7 +144,7 @@ describe('apply', () => {
     const dir = mkdtempSync(join(scratch, 'guard-wiring-'))
     const picked = { provider: 'openrouter', model: 'google/gemini-3.8-flash' }
     const fallback = { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash' }
-    const stored = buildConfig({ subagentModel: picked, reviewerEnabled: false, reviewerModel: null })
+    const stored = buildConfig({ subagentModel: picked })
     writeFileSync(join(dir, 'sessions.json'), JSON.stringify({ version: 1, sessions: { 'sess-g': { config: stored, updatedAt: 1 } } }))
     const subagents = new FakeSubagents({ results: Array.from({ length: 6 }, () => textResult('ok')) })
     const llm = { resolveModelInfo: () => Promise.resolve({ reasoning: { efforts: ['low', 'medium', 'high', 'max'].map(id => ({ id })), defaultEffort: 'max' }, defaultMaxTokens: 384_000 }) }
@@ -162,27 +169,6 @@ describe('apply', () => {
     assert.ok(r.logs.some(line => /child of session sess-g on provider spawn/.test(line)), 'the guard logs through the plugin\'s logger')
     assert.ok(r.logs.some(line => /start guard: on, explicit models keep\)/.test(line)))
 
-    // The delegation tools see the same LLM runtime (the pipeline is wired with the same `models`).
-    const next = (): Promise<ToolExecutionResultLike> => Promise.reject(new Error('the stock tool must not run'))
-    const call: ToolDispatchExecutionLike = { callId: 'c', name: 'subagent', arguments: { description: 'd', prompt: 'p' }, agent: fakeAgent('sess-g'), signal: new AbortController().signal }
-    await r.wrapper()(call, next)
-    assert.equal((subagents.continuables[0]?.request as { agentOptions?: { maxTokens?: number } }).agentOptions?.maxTokens, 64_000)
-  })
-
-  it('tells the operator, from the real guard setting, whether a one-shot background job is still governed', async () => {
-    const oneShot = { name: 'subagent', provider: 'spawn', mode: 'one-shot' as const }
-    const job: ToolDispatchExecutionLike = {
-      callId: 'c', name: 'subagent', arguments: { description: 'd', prompt: 'p', run_in_background: true },
-      agent: fakeAgent('sess-job'), signal: new AbortController().signal,
-    }
-    const next = (): Promise<ToolExecutionResultLike> => Promise.resolve({ isError: false, value: 'stock', content: [] })
-    for (const [children, expected] of [[undefined, /still governed by the start guard/], [false as const, /is not orchestrated; the stock behavior runs/]] as const) {
-      const r = rig()
-      apply(r.ctx, { stateDir: join(scratch, 'job-warning'), tools: [oneShot], defaults: { subagentModel: { provider: 'openrouter', model: 'google/gemini-3.8-flash' } }, ...children === undefined ? {} : { children } })
-      await r.wrapper()(job, next)
-      assert.equal(r.logs.filter(line => /run_in_background/.test(line)).length, 1)
-      assert.ok(r.logs.some(line => /run_in_background/.test(line) && expected.test(line)), String(expected))
-    }
   })
 })
 
@@ -202,60 +188,57 @@ describe('end to end on the host', () => {
   after(() => { server.close() })
 
   const route = { provider: 'openrouter', model: 'google/gemini-3.8-flash' }
-  const exec = (sessionId: string): ToolDispatchExecutionLike => ({
-    callId: 'c', name: 'subagent', arguments: { description: 'Add slugify', prompt: 'Create slugify().' },
-    agent: fakeAgent(sessionId), signal: new AbortController().signal,
+  const start = (target: Rig, sessionId: string) => target.subagents.start('spawn', {
+    prompt: [{ type: 'text', text: 'x' }], parent: fakeAgent(sessionId), signal: new AbortController().signal,
   })
-  const stock: ToolExecutionResultLike = { isError: false, value: 'stock', content: [] }
-  const stockNext = (): Promise<ToolExecutionResultLike> => Promise.resolve(stock)
+  const post = (body: unknown) => fetch(`${base}${CONFIG_ROUTE}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
 
   it('runs stock DSH until the user confirms the modal', async () => {
-    assert.equal(await r.wrapper()(exec('sess-a'), stockNext), stock)
-    assert.equal(r.subagents.starts.length, 0)
+    await start(r, 'sess-a')
+    assert.equal(r.subagents.starts[0]?.request.agentOptions, undefined)
   })
 
-  it('applies the choice stored through the route, delivering only the reviewer report', async () => {
-    const config = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: null })
-    const saved = await fetch(`${base}${CONFIG_ROUTE}`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 'sess-a', config }),
-    })
+  it('puts the next child on the model stored through the route', async () => {
+    const saved = await post({ sessionId: 'sess-a', config: buildConfig({ subagentModel: route }) })
     assert.equal(saved.status, 200)
-
-    const result = await r.wrapper()(exec('sess-a'), () => Promise.reject(new Error('stock tool must not run')))
-    assert.equal(result.isError, false)
-    const value = (result as { value: { kind: string; output: { text: string }[] } }).value
-    assert.equal(value.kind, 'foreground')
-    assert.match(value.output[0]?.text ?? '', /reviewed body/)
-    assert.equal((value.output[0]?.text ?? '').includes('worker report'), false)
-    assert.equal(r.subagents.starts.length, 2)
-    assert.deepEqual(r.subagents.starts[0]?.request.agentOptions, route)
-    assert.match(promptText(r.subagents.starts[1]?.request.prompt ?? []), /worker report/)
+    await start(r, 'sess-a')
+    assert.deepEqual(r.subagents.starts[1]?.request.agentOptions, route)
   })
 
   it('persists the choice under the state directory, owner-only, without secrets', () => {
-    const persisted = JSON.parse(readFileSync(join(stateDir, 'sessions.json'), 'utf8')) as { version: number; sessions: Record<string, unknown> }
+    const persisted = JSON.parse(readFileSync(join(stateDir, 'sessions.json'), 'utf8')) as { version: number; sessions: Record<string, { config: Record<string, unknown> }> }
     assert.equal(persisted.version, 1)
     assert.deepEqual(Object.keys(persisted.sessions), ['sess-a'])
+    assert.deepEqual(Object.keys(persisted.sessions['sess-a']?.config ?? {}).sort(), ['subagentModel', 'version', 'workerEffort'], 'no reviewer block any more')
   })
 
   it('goes back to stock DSH after the user cancels (config null)', async () => {
-    await fetch(`${base}${CONFIG_ROUTE}`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 'sess-a', config: null }),
-    })
+    await post({ sessionId: 'sess-a', config: null })
     const before = r.subagents.starts.length
-    assert.equal(await r.wrapper()(exec('sess-a'), stockNext), stock)
-    assert.equal(r.subagents.starts.length, before)
+    await start(r, 'sess-a')
+    assert.equal(r.subagents.starts[before]?.request.agentOptions, undefined)
   })
 
   it('a restarted host re-reads the persisted choice', async () => {
-    const config = buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null })
-    await fetch(`${base}${CONFIG_ROUTE}`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 'sess-b', config }),
-    })
+    await post({ sessionId: 'sess-b', config: buildConfig({ subagentModel: route }) })
     const again = rig()
     apply(again.ctx, { stateDir })
     assert.ok(again.logs.some(line => /persisted sessions: 1/.test(line)))
-    await again.wrapper()(exec('sess-b'), stockNext)
-    assert.equal(again.subagents.starts.length, 2)
+    await start(again, 'sess-b')
+    assert.deepEqual(again.subagents.starts[0]?.request.agentOptions, route)
+  })
+
+  it('keeps the model a user picked with 0.4.0: a stored choice that still carries a reviewer block is read, and the block is dropped', async () => {
+    const dir = mkdtempSync(join(scratch, 'migrate-'))
+    const legacy = { version: 1, subagentModel: route, workerEffort: null, reviewer: { enabled: true, model: { provider: 'p', model: 'm' }, effort: null } }
+    writeFileSync(join(dir, 'sessions.json'), JSON.stringify({ version: 1, sessions: { 'sess-old': { config: legacy, updatedAt: 1 }, 'sess-reviewer-only': { config: { ...legacy, subagentModel: null }, updatedAt: 2 } } }))
+    const old = rig()
+    apply(old.ctx, { stateDir: dir })
+    assert.ok(old.logs.some(line => /persisted sessions: 2/.test(line)))
+    await start(old, 'sess-old')
+    assert.deepEqual(old.subagents.starts[0]?.request.agentOptions, route)
+    // A choice that only had a reviewer has nothing left to apply: DSH starts the child as it always did.
+    await start(old, 'sess-reviewer-only')
+    assert.equal(old.subagents.starts[1]?.request.agentOptions, undefined)
   })
 })

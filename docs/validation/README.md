@@ -2,14 +2,100 @@
 
 Everything in this plugin was validated against a real DeepSeek Harness, not only against
 mocks. This page states what was run, what it proved, what it found and what it did not
-cover: first the **0.4.0** validation of the start guard on the three target models, then
-the **0.2.0** validation on the same three models, then the **0.1.0** validation on a Mac mini.
+cover: first the **0.5.0** validation (the reviewer removed, the start guard on its own), then the
+**0.4.0** validation of the start guard on the three target models, then the **0.2.0** validation
+on the same three models, then the **0.1.0** validation on a Mac mini. The 0.4.0 and older sections
+describe versions that still had the independent reviewer, which 0.5.0 removed
+([D16](../estudos/decisoes.md)); they are kept as the record of what was run.
+
+## 0.5.0: the reviewer removed, the start guard on its own (2026-10-04)
+
+Version 0.5.0 removed the independent reviewer, the `subagent` tool wrapper and the pipeline that
+existed for them (about 1 250 of the 3 430 lines of the host). What is left is the start guard, the
+planner and the dialog. This validation checks three things: that the guard alone governs every
+path, including the `subagent` and `subagent_fork` tools that no code wraps any more; that the dialog
+(now one switch and an effort block) works in a real browser; and that what 0.4.0 wrote to disk and to
+configuration files keeps working. Same machine, isolation and keys as the [0.4.0 section](#040-the-start-guard-on-the-three-target-models-2026-10-04)
+below, and the same models: GLM 5.3 as the main agent, DeepSeek V4.1 Flash for subagents, and
+MiMo-V2.6-Pro only as the model a workflow script names itself (W2, W3). Read the sessions back from the
+DSH logs with [`run-workflow.sh`](../../scripts/e2e/run-workflow.sh), which fails (exit 3) if any session ran
+on another model.
+
+| | |
+| --- | --- |
+| Build under test | `lib/index.js` sha256 `d6b0211a5f06251c...` (48 kB, from 100+ kB), `lib/client.cjs` `1f8f663607b5c51b...` (two consecutive builds are byte-identical) |
+| Tests | 253 of 253 pass with `DSH_CHECKOUT` set (both contract suites included) and 228 of 228 without it (what CI runs); `tsc` clean |
+| DSH | 0.1.6-alpha.2 from source (`ddefc45`), isolated `DSH_HOME`, the plugin linked from this working tree |
+
+### Headless: what each agent was asked
+
+Read back from the DSH session logs (`request/header` of each session). Per-run pages in [`runs/`](runs).
+
+| Run | Setup | Main agent | What started |
+| --- | --- | --- | --- |
+| [**W1**](runs/0.5.0-W1-workflow-governed.md) workflow | `defaults.subagentModel` = DeepSeek V4.1 Flash; a two-agent workflow naming no model | GLM 5.3 `high` | both agents on **DeepSeek V4.1 Flash**, `medium`, **64 000** |
+| [**W2**](runs/0.5.0-W2-explicit-override.md) `override` | the script names MiMo for one agent | GLM 5.3 `high` | both on DeepSeek V4.1 Flash, `medium`, 64 000 (the named route dropped) |
+| [**W3**](runs/0.5.0-W3-explicit-keep.md) `keep` | `children: { explicitModel: keep }`, same script | GLM 5.3 `high` | MiMo-V2.6-Pro at `low` with 64 000; the other on DeepSeek V4.1 Flash `medium` 64 000 |
+| [**W4**](runs/0.5.0-W4-guard-off.md) the switch | `children: false` | GLM 5.3 `high` | both back on GLM 5.3 `high`, no cap |
+| [**W5**](runs/0.5.0-W5-background-continuable.md) `subagent`, background | the standard preset's `continuable` tool, **nothing wraps it** | GLM 5.3 `high` | one child on DeepSeek V4.1 Flash, `medium`, 64 000 |
+| [**W6**](runs/0.5.0-W6-confirmed-model-gone.md) dead model, workflow | `defaults.subagentModel` = a model the runtime no longer knows | GLM 5.3 `high` | **no child session**; the workflow fails at once with a message that names the model and says what to do |
+| [**W7**](runs/0.5.0-W7-subagent-tool-model-gone.md) dead model, tool | same, through the `subagent` tool | GLM 5.3 `high` | **no child session**; the tool result is the same message |
+| [**W8**](runs/0.5.0-W8-fork-governed.md) `subagent_fork` | the fork provider (the child inherits the parent's conversation) | GLM 5.3 `high` | one child on DeepSeek V4.1 Flash, `medium`, 64 000 |
+
+Before these, three smaller runs checked the central claim in isolation: with the delegation-tool list
+of the 0.4 wrapper pointed at a tool that does not exist, so that the wrapper could never match, the
+`subagent` tool (foreground and background) and `subagent_fork` still ran on DeepSeek V4.1 Flash at `medium`
+with 64 000. The guard alone does the job; the wrapper was only ever needed for the reviewer.
+
+### The dialog, in a real browser
+
+[`ui-e2e.mjs`](../../scripts/e2e/ui-e2e.mjs) drives Google Chrome (headless, `playwright-core`) against a real
+`dsh web` on the isolated home. 65 of 65 checks pass, in seven phases:
+
+| Phase | Checks | What it proves |
+| --- | ---: | --- |
+| `cancel` | 11 | A new task raises the dialog (one switch, off, no "do not ask again" checkbox, no mention of a reviewer); Escape sends the task as stock DSH and writes `config: null` |
+| `small` | 3 | At 1024 x 600 with the model chosen and the effort block open, the dialog fits and the primary action is inside the viewport |
+| `light` | 5 | Light theme; Tab never leaves the dialog; Escape closes an open menu first and the dialog second |
+| `command` | 7 | `/orquestrar` opens the configure dialog; Save stores the model; the next task asks again, pre-filled |
+| `effort` | 16 | No effort block until a model is chosen; recommended levels (DeepSeek `medium`, GLM 5.3 `high`, MiMo `low`); the model notes; an explicit `high` reaches the wire (`{ version, subagentModel, workerEffort }` and nothing about a reviewer) and the dialog reopens with it |
+| `confirm` | 13 | Choose DeepSeek V4.1 Flash, send, and read the child back from the logs: one subagent on DeepSeek V4.1 Flash, `medium`, 64 000, finished, answer `42` in the transcript |
+| `workflow` | 10 | The choice stored through the route (not a `defaults` config) governs a real workflow: two agents on DeepSeek V4.1 Flash, `medium`, 64 000, both completed |
+
+Screenshots: [empty dialog](screenshots/0.5.0-cancel-02-modal.png), [model chosen](screenshots/0.5.0-confirm-01-modal-filled.png),
+[effort block open](screenshots/0.5.0-effort-04-explicit-high.png), [light theme](screenshots/0.5.0-light-01-modal-light.png),
+[600 px high](screenshots/0.5.0-small-01-open-600px.png), [workflow task](screenshots/0.5.0-workflow-01-modal-subagent-model.png).
+
+### What 0.4.0 left on disk and in configuration
+
+The isolated web profile's `state-web/sessions.json` held choices written by 0.4.0, each with a `reviewer`
+block (one of them a DeepSeek V4.1 Flash choice at `high` with a MiMo reviewer). The 0.5.0 server loaded the
+file, and after its next saves the same sessions were rewritten with exactly `version`, `subagentModel` and
+`workerEffort`: the file holds eight entries and none has a reviewer block. Unit and integration tests cover the rest: a stored choice
+with a reviewer block, a reviewer-only choice (it becomes the inert configuration), a stale browser tab still
+posting the 0.4.0 shape (accepted, the block dropped), and a 0.4.0 patch file (every removed field ignored with
+one warning, never a load error).
+
+### What this did not cover
+
+- **No Sonnet 5.5 as the main agent, and no macOS, on 0.5.0.** The session that exposed the original bug ran
+  Claude Sonnet 5.5; here the main agent is GLM 5.3. The guard reads the main agent's route only to complete a
+  route a caller named by model alone and as the baseline of an effort-only choice, so the fix does not depend on
+  it. (The 0.4.0 build was run on a Mac mini with Sonnet 5.5 as the main agent and passed on the same path; that
+  run is not part of this page.)
+- **One sample per condition**, small tasks, a few seconds each. This shows the mechanism, not behavior on
+  a long workflow of dozens of agents on real work (provider rate limits, an agent hitting the 64 000-token cap
+  and, with no retry any more, failing).
+- No live run used a one-shot background job, `ralph`, an agent team, the SDK provider or
+  `codex` / `claude-code` / ACP; those rows of the README follow from the doors they use, which the contract tests pin.
+- The output-token cap is still lost when DSH resumes a finished `continuable` child (N21).
+- **Nothing checks what a subagent produces any more.** That is the decision, not an omission ([D16](../estudos/decisoes.md)).
 
 ## 0.4.0: the start guard, on the three target models (2026-10-04)
 
 The bug behind this release was found in a real session, then reproduced, closed and checked for
 regressions on an isolated DSH, again with only the three target models.
-[`run-workflow.sh`](../../scripts/e2e/run-workflow.sh) and [`run-trio.sh`](../../scripts/e2e/run-trio.sh)
+[`run-workflow.sh`](../../scripts/e2e/run-workflow.sh) and `run-trio.sh` (removed in 0.5.0 with the reviewer)
 read the sessions back from the DSH logs and fail (exit 3) if any session ran on another model.
 
 ### The incident
@@ -126,7 +212,7 @@ Read back from the DSH session logs (`request/header` of each session). Per-run 
 ## 0.2.0: the three target models (2026-10-03)
 
 Only three models ever ran, in the roles the studies defined for them.
-[`scripts/e2e/run-trio.sh`](../../scripts/e2e/run-trio.sh) enforces it: after every run it
+`scripts/e2e/run-trio.sh` (removed in 0.5.0 with the reviewer) enforces it: after every run it
 reads the sessions back from the DSH logs and fails (exit 3) if any session ran on another model.
 Exploratory runs made earlier on other models were discarded and are not cited.
 

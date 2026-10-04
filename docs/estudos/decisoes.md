@@ -5,9 +5,13 @@ checagem contra o código do DSH e contra dados públicos; veja [`sintese.md`](s
 cruzamento e [`README.md`](README.md) para o método. Aqui está o **porquê** de cada uma, e das
 recomendações que **não** foram adotadas, para que ninguém as reabra sem o contexto.
 
-* **D01 a D15**: adotadas (código, interface ou documentação mudaram). D15 é da 0.4.0 e não vem
-  dos estudos: vem de uma sessão real em que o plugin deixou de valer.
+* **D01 a D16**: adotadas (código, interface ou documentação mudaram). D15 é da 0.4.0 e não vem
+  dos estudos: vem de uma sessão real em que o plugin deixou de valer. **D16 é da 0.5.0 e removeu o
+  revisor independente**: D03 a D10, D12 e D14 descrevem o revisor e ficam como história da 0.2.0 a
+  0.4.0 (a 0.4.0 é a última versão que o tem); D01, D02, D11, D13 e D15 continuam valendo, agora só
+  para o subagente.
 * **N01 a N22**: não adotadas ou adiadas, cada uma com o que faria reabri-la (N17 a N22 são da 0.4.0).
+  N01 a N16 e N18 tratam do revisor e ficam como história.
 
 Resumo:
 
@@ -28,6 +32,7 @@ Resumo:
 | D13 | Bloco de esforço recolhido, "Recomendado" por padrão, escolha explícita até o host | `src/client/`, `src/shared.ts` |
 | D14 | Modelo de segurança e limites documentados | `README.md`, `docs/DESIGN.md` |
 | D15 | Guarda de início: a escolha vale para todo filho que o DSH inicia, não só para as ferramentas `subagent` | `src/guard.ts`, `src/pipeline.ts`, `src/index.ts`, `src/config.ts` |
+| D16 | Remover o revisor independente (0.5.0): o guarda vira o único mecanismo | `src/pipeline.ts`, `src/reviewer-protocol.ts`, `src/workspace.ts` e `src/tool-wrapper.ts` (removidos), `src/guard.ts`, `src/shared.ts`, `src/config.ts`, `src/client/` |
 
 ---
 
@@ -464,6 +469,63 @@ avisam. O que ficou documentado e não corrigido: o teto de tokens não sobreviv
 `host-wiring.test.ts`, `dsh-source.test.ts` (seis fixações novas), `dsh-runtime.test.ts` (o guarda no
 `SubagentRuntime` real, instalado por um plugin e chamado por outro). Ao vivo, nos três modelos: W0 a
 W4 e T3 ([validação](../validation/README.md)).
+
+### D16 — Remover o revisor independente (0.5.0)
+**Decisão.** A 0.5.0 remove o revisor. O que fica é o que o plugin impõe **em código**: o modelo dos
+subagentes, o teto de esforço de raciocínio e o limite de tokens, em todo filho que o DSH inicia (o guarda
+de D15). Depois da remoção o guarda é o único mecanismo do plugin.
+
+**Por quê.**
+* *Determinismo.* Qual modelo roda, o quanto pensa e quanto pode escrever é decidido pelo código e o
+  agente principal não o contorna. O `APPROVED` do revisor era a opinião de uma LLM sobre o trabalho de
+  outra: o plugin só conseguia conferir o formato e a coerência do relatório (D04, D05), nunca a verdade
+  dele. A pergunta do dono do projeto, em 2026-10-04, foi exatamente esta: controlar algo que é da
+  ferramenta, em vez de uma abstração no fim de cada subagente que tenta inferir e resolver o problema.
+* *Custo e espera.* Cerca do dobro do custo e cada delegação esperando um segundo modelo (o MiMo-V2.6-Pro
+  leva minutos por turno em esforço alto; D12 só tornava isso visível).
+* *Cobertura.* O revisor só atuava nas duas ferramentas `subagent`. Os agentes de um `workflow`, `ralph`,
+  jobs one-shot e times nunca foram revisados (D15, N18): o plugin prometia uma verificação que valia para
+  uma fração dos caminhos.
+* *Um mecanismo a menos.* O embrulho da ferramenta e o pipeline existiam para o revisor. A 0.4.0 mostrou
+  que o guarda sozinho governa todo caminho; na 0.5.0 isso foi **verificado ao vivo sem o embrulho**:
+  `subagent` em primeiro e em segundo plano e `subagent_fork` rodaram no DeepSeek V4.1 Flash, `medium`, com
+  limite de 64 000 tokens, só pelo guarda. Com o embrulho fora, some também a marcação por `WeakSet` dos
+  inícios do pipeline (só ficou a marca na cópia que o guarda entrega, para dois guardas vivos).
+
+**O que saiu.** `src/pipeline.ts`, `src/reviewer-protocol.ts`, `src/workspace.ts`, `src/tool-wrapper.ts`
+(cerca de 1 250 das 3 430 linhas do host); os campos de configuração `tools`, `reviewerProvider`,
+`reviewerContext`, `structuredVerdict`, `workerHandoff`, `maxWorkerReportChars`, `retryOnTokenLimit`,
+`workspaceChecks`, `sensitivePaths`, `defaults.reviewer`, `effort.reviewer` e `limits.reviewerMaxTokens`; a
+seção do revisor no diálogo (e as dicas de mesmo modelo, mesma família e custo); a família e a linhagem dos
+modelos em `src/models.ts` (só serviam a essas dicas); `lowerEffort` (só servia à nova tentativa); os
+cenários e os executores de validação do revisor.
+
+**O que ficou.** O guarda, o planejador (`planChild`, agora com um papel só), os tetos de esforço (a coluna
+do subagente da tabela de `models.ts`), o diálogo com a chave do modelo e o bloco de esforço, a rota, o
+estado persistido, `/orquestrar`.
+
+**Compatibilidade.** Nada que o usuário já tenha gravado quebra. `parseConfig` lê um registro da 0.4.0 com o
+bloco `reviewer` e o descarta (uma escolha só com revisor vira a configuração inerte); os campos de
+configuração removidos são ignorados com um aviso cada; uma aba do navegador ainda com o diálogo da 0.4.0
+continua gravando sem erro. Verificado num servidor real: um `sessions.json` da 0.4.0 foi carregado e
+regravado só com `subagentModel`, `workerEffort` e `version`. Uma mudança de semântica: um esforço
+sozinho, sem modelo (`defaults.workerEffort`), agora conta como escolha (antes só valia junto do revisor) e
+aplica o nível aos filhos que ficam no modelo do agente principal.
+
+**O que se perde, dito claramente.** Nada confere o que o subagente produz. Quem confere é o agente
+principal, lendo o resultado como o DSH sempre entregou, e os testes do próprio projeto. Na validação da
+0.2.0 o revisor pegou uma contradição na tarefa e uma conta errada no prompt do agente principal (uma
+amostra, de uma LLM). **Se uma conferência voltar, que seja uma porta determinística** (rodar os testes do
+projeto por código, dentro do sandbox do DSH, e recusar a aprovação se falharem), não outra LLM.
+
+**Onde.** Remoções em `src/`; `src/shared.ts` (configuração só com modelo e esforço, leitura tolerante),
+`src/config.ts` (campos removidos ignorados, `removedConfigFields`), `src/guard.ts` (só a marca
+`isGoverned`), `src/effort.ts` e `src/models.ts` (um papel), `src/index.ts` (`inject = ['subagents']`),
+`src/client/` (diálogo de uma seção).
+
+**Verificação.** 253 testes (com `DSH_CHECKOUT`), entre eles a leitura tolerante e a compatibilidade com uma
+aba antiga (`shared.test.ts`, `routes.test.ts`, `host-wiring.test.ts`). Ao vivo, nos três modelos: W1 a W8
+(sem revisor, sem embrulho) e 65 verificações de navegador ([validação](../validation/README.md)).
 
 ---
 

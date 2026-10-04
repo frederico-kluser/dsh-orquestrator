@@ -6,21 +6,22 @@
  *   DSH_URL=<authenticated dsh web URL> OUT_DIR=<dir> PHASE=<name> node ui-e2e.mjs
  *
  * PHASE:
- *   cancel    a new task raises the modal; Escape/Cancel sends it as stock DSH
- *   confirm   choose subagent + reviewer models, send, wait for "Reviewed delivery"
+ *   cancel    a new task raises the modal (one switch, no "do not ask again"); Escape/Cancel sends it as stock DSH
+ *   small     a short laptop screen with the model and the effort block open: the actions stay reachable
  *   light     light theme, keyboard focus trap, Esc handling while a menu is open
  *   command   /orquestrar opens the configure dialog, Save persists, and the next send asks again (pre-filled)
- *   effort    reasoning-effort block (recommended levels, explicit pick), model notes, same-model and
- *             same-family tips, reviewer cost hint; no model run needed
+ *   effort    reasoning-effort block (recommended levels, explicit pick) and the model notes; no model run needed
+ *   confirm   choose the subagent model, send, and read the child back from the DSH session logs (needs ORQ_SESSIONS_DIR)
+ *   readme    README screenshots: a realistic task, the dialog empty and then with a model chosen. The browser is closed
+ *             without answering the dialog, so the task is never sent to a model (`readme` is dark, `readme-light` light)
  *   workflow  the choice made in the dialog (stored through the route, not a `defaults` config) governs the agents
  *             of a `workflow` the main agent starts; needs ORQ_SESSIONS_DIR (the DSH home's sessions directory of
  *             this server's workspace, which is the LAST workspace any DSH registered in that home, not the directory the
  *             server was started in) so the children's route, effort and token cap are read back from the logs
  *
  * Models: ONLY the three target models are ever picked or run. The main agent is the DSH home's
- * default model (GLM 5.3); the dialog picks DeepSeek V4.1 Flash for subagents and MiMo-V2.6-Pro for
- * the reviewer (the `TRIO` patterns below). The phases that need no model run only click through the
- * dialog.
+ * default model (GLM 5.3); the dialog picks DeepSeek V4.1 Flash for subagents (the `TRIO` patterns below). The
+ * phases that need no model run only click through the dialog.
  *
  * Writes <OUT_DIR>/<phase>.report.json (one entry per check) and screenshots.
  * The token in DSH_URL is a per-process credential: it is never written out.
@@ -41,10 +42,8 @@ const COMPOSER = /Describe what you want to build/
 const TRIO = {
   worker: /DeepSeek V4\.1 Flash \(Azure\)/,
   workerId: 'DeepSeek-V4.1-Flash',
-  reviewer: /MiMo-V2\.6-Pro/i,
-  reviewerId: 'xiaomi/mimo-v2.6-pro',
+  mimo: /MiMo-V2\.6-Pro/i,
   glm: /GLM 5\.3/,
-  officialFlash: /DeepSeek-V41-Flash/i,
 }
 const DIALOG = 'Orchestrate subagents'
 const checks = []
@@ -56,7 +55,7 @@ const check = (name, ok, detail = '') => {
 }
 
 const browser = await chromium.launch({ channel: 'chrome', headless: true })
-const scheme = phase === 'light' ? 'light' : 'dark'
+const scheme = phase === 'light' || phase === 'readme-light' ? 'light' : 'dark'
 const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, colorScheme: scheme })
 const page = await context.newPage()
 const pageErrors = []
@@ -124,9 +123,9 @@ if (phase === 'cancel') {
     check('title and gate description shown', await dialog().getByText('Cancel sends the task as usual.').isVisible())
     check('task preview shows what is being sent', await dialog().getByText(TASK_CANCEL).isVisible())
     const switches = dialog().getByRole('switch')
-    check('two switches (subagent model, reviewer)', (await switches.count()) === 2, await switches.count())
-    check('both switches start off', (await switches.nth(0).getAttribute('aria-checked')) === 'false' && (await switches.nth(1).getAttribute('aria-checked')) === 'false')
-    check('there is no "do not ask again" checkbox (0.3.0: the modal always asks)', (await dialog().getByRole('checkbox').count()) === 0)
+    check('one switch (the subagent model); there is no reviewer', (await switches.count()) === 1 && (await dialog().getByText(/reviewer/i).count()) === 0, await switches.count())
+    check('the switch starts off', (await switches.nth(0).getAttribute('aria-checked')) === 'false')
+    check('there is no "do not ask again" checkbox: the modal always asks', (await dialog().getByRole('checkbox').count()) === 0)
     check('primary action is focused', await dialog().getByRole('button', { name: 'Send with these options' }).evaluate((element) => element === document.activeElement))
 
     await page.keyboard.press('Escape')
@@ -205,7 +204,7 @@ if (phase === 'workflow') {
   await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('modal closes after confirm', true), () => check('modal closes after confirm', false))
   const posts = wire.filter((item) => item.method === 'POST')
   const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
-  check('POST stored the subagent model (a stored choice, not a `defaults` config) and no reviewer', saved?.subagentModel?.model === TRIO.workerId && saved?.reviewer?.enabled === false, JSON.stringify(saved))
+  check('POST stored the subagent model (a stored choice, not a `defaults` config) and nothing about a reviewer', saved?.subagentModel?.model === TRIO.workerId && !('reviewer' in saved), JSON.stringify(saved))
 
   // The main agent now calls the workflow tool; its two agents appear as child sessions in the DSH logs.
   let rows = []
@@ -224,10 +223,14 @@ if (phase === 'workflow') {
   await finish()
 }
 
-const TASK_CONFIRM = 'Use the subagent tool exactly once to do this work: in the current directory create wordcount.js (CommonJS) exporting wordCount(text) that returns how many words the text has, where a word is a run of non-whitespace characters, hyphenated words count as one, and an empty or whitespace-only string returns 0. Also create wordcount.test.js with node:test cases covering those rules. Run the tests with `node --test`. When the subagent tool returns, reply with its result verbatim and nothing else.'
+const TASK_CONFIRM = 'Use the subagent tool exactly once, with run_in_background set to false, to answer this question: "What is 17 plus 25?" When the subagent tool returns, reply with its result verbatim and nothing else.'
 
 if (phase === 'confirm') {
+  const sessionsDir = process.env.ORQ_SESSIONS_DIR
+  if (sessionsDir === undefined) throw new Error('ORQ_SESSIONS_DIR is required for the confirm phase')
+  const since = Date.now()
   await open()
+  await newSession()
   await typeTask(TASK_CONFIRM)
   await page.keyboard.press('Enter')
   await dialog().waitFor({ state: 'visible', timeout: 15_000 })
@@ -235,15 +238,10 @@ if (phase === 'confirm') {
 
   const switches = dialog().getByRole('switch')
   await switches.nth(0).click()
-  check('subagent switch on reveals the model picker', await dialog().getByText('Model for subagents').isVisible())
+  check('the switch reveals the model picker and the scope line', (await dialog().getByText('Model for subagents').isVisible()) && (await dialog().getByText('including the agents a workflow starts').isVisible()))
   check('confirm is disabled until a subagent model is chosen', await dialog().getByRole('button', { name: 'Send with these options' }).isDisabled())
   await pick(/Choose a model/, TRIO.worker)
   check('subagent model chosen', await dialog().getByRole('button', { name: TRIO.worker }).first().isVisible())
-
-  await switches.nth(1).click()
-  check('reviewer switch reveals the four-step description and its picker', (await dialog().getByText('Fixes only what is actually broken').isVisible()) && (await dialog().getByText('Model for the reviewer').isVisible()))
-  check('reviewer defaults to "same as the subagent"', await dialog().getByRole('button', { name: /Same model as the subagent/ }).isVisible())
-  await pick(/Same model as the subagent/, TRIO.reviewer)
   await page.waitForTimeout(400)
   await shot('01-modal-filled')
   check('confirm is enabled', await dialog().getByRole('button', { name: 'Send with these options' }).isEnabled())
@@ -252,18 +250,24 @@ if (phase === 'confirm') {
   await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('modal closes after confirm', true), () => check('modal closes after confirm', false))
   const posts = wire.filter((item) => item.method === 'POST')
   const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
-  check('POST stored the chosen routes', saved !== null && saved.subagentModel?.model === TRIO.workerId && saved.reviewer?.enabled === true && saved.reviewer?.model?.model === TRIO.reviewerId, JSON.stringify(saved))
+  check('POST stored the chosen route and nothing else', saved !== null && saved.subagentModel?.model === TRIO.workerId && saved.workerEffort === null && Object.keys(saved).sort().join() === 'subagentModel,version,workerEffort', JSON.stringify(saved))
   check('host accepted the config (200)', posts.at(-1)?.status === 200, posts.at(-1)?.status)
   await shot('02-running')
 
-  // The real thing: the main agent (GLM 5.3) delegates, the worker runs on DeepSeek V4.1 Flash, the
-  // reviewer on MiMo-V2.6-Pro, and the tool result the main agent receives is the reviewer's report.
-  const delivered = await page.getByText('Reviewed delivery', { exact: false }).first().waitFor({ state: 'visible', timeout: 20 * 60_000 }).then(() => true, () => false)
-  check('the main agent received a "Reviewed delivery" result', delivered)
+  // The real thing: the main agent (GLM 5.3) delegates and the subagent runs on DeepSeek V4.1 Flash.
+  let rows = []
+  for (let waited = 0; waited < 240_000; waited += 3_000) {
+    rows = childrenSince(sessionsDir, since)
+    if (rows.length >= 1 && rows.every((row) => row.ended !== undefined)) break
+    await page.waitForTimeout(3_000)
+  }
+  console.log('DEBUG children read back from the session logs:', JSON.stringify(rows))
   await page.waitForTimeout(1500)
   await shot('03-delivered')
-  const transcript = await page.locator('body').innerText()
-  check('the transcript carries a reviewer verdict', /verdict:\s*(APPROVED|APPROVED_WITH_FIXES|NOT_RESOLVED)/i.test(transcript))
+  check('the main agent started one subagent', rows.length === 1, rows.length)
+  check('it ran on DeepSeek V4.1 Flash, not on the main agent\'s model', rows.length === 1 && rows[0].route === `azure-opencode/${TRIO.workerId}`, JSON.stringify(rows.map((row) => row.route)))
+  check('at the recommended effort (medium) with the 64 000-token cap', rows.length === 1 && rows[0].effort === 'medium' && rows[0].maxTokens === 64000, JSON.stringify(rows.map((row) => [row.effort, row.maxTokens])))
+  check('it finished and the transcript shows its answer (42)', rows.length === 1 && rows[0].ended === 'completed' && /42/.test(await page.locator('body').innerText()))
   check('no page errors', relevantErrors().length === 0, relevantErrors().join(' | '))
   await finish()
 }
@@ -317,18 +321,19 @@ if (phase === 'command') {
   check('the command opens the dialog in configure mode', opened && (await dialog().getByText('The options apply from the next task.').isVisible()))
   await shot('02-configure')
   if (opened) {
-    await dialog().getByRole('switch').nth(1).click()
+    await dialog().getByRole('switch').nth(0).click()
+    await pick(/Choose a model/, TRIO.worker)
     await dialog().getByRole('button', { name: 'Save' }).click()
     await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('Save closes the dialog', true), () => check('Save closes the dialog', false))
     const posts = wire.filter((item) => item.method === 'POST')
     const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
-    check('Save stored the reviewer choice and no "remember" flag', saved?.reviewer?.enabled === true && saved !== null && !('remember' in saved), JSON.stringify(saved))
-    // 0.3.0 and later: there is no "do not ask again", so the next task raises the modal again, pre-filled.
+    check('Save stored the subagent model and no "remember" flag', saved?.subagentModel?.model === TRIO.workerId && !('remember' in saved), JSON.stringify(saved))
+    // There is no "do not ask again", so the next task raises the modal again, pre-filled.
     await typeTask('Reply with exactly the word: asks')
     await page.keyboard.press('Enter')
     const asked = await dialog().waitFor({ state: 'visible', timeout: 15_000 }).then(() => true, () => false)
     check('the next task raises the modal again (nothing can silence it)', asked)
-    check('the dialog is pre-filled with the saved choice (reviewer on)', asked && (await dialog().getByRole('switch').nth(1).getAttribute('aria-checked')) === 'true')
+    check('the dialog is pre-filled with the saved choice (switch on, DeepSeek V4.1 Flash)', asked && (await dialog().getByRole('switch').nth(0).getAttribute('aria-checked')) === 'true' && (await dialog().getByRole('button', { name: TRIO.worker }).first().isVisible()))
     await shot('03-asks-again')
     await page.keyboard.press('Escape')
   }
@@ -337,110 +342,101 @@ if (phase === 'command') {
 }
 
 if (phase === 'effort') {
-  // The 0.2.0 dialog: what "recommended" shows per model, the explicit pick that reaches the wire,
-  // the advice notes, and the same-model tip. It runs no delegation: it only clicks through the
-  // dialog, and only ever with the three target models.
+  // What "recommended" shows per model, the explicit pick that reaches the wire, and the advice notes.
+  // It runs no delegation: it only clicks through the dialog, and only ever with the three target models.
   await open()
   await typeTask('Reply with exactly the word: effort')
   await page.keyboard.press('Enter')
   await dialog().waitFor({ state: 'visible', timeout: 15_000 })
   const text = async () => (await dialog().innerText()).replace(/\s+/g, ' ')
-  check('no effort block while both switches are off', !(await text()).includes('Reasoning effort'))
+  check('no effort block while the switch is off', !(await text()).includes('Reasoning effort'))
 
-  const switches = dialog().getByRole('switch')
-  await switches.nth(0).click()
+  await dialog().getByRole('switch').nth(0).click()
+  check('no effort block until a model is chosen', !(await text()).includes('Reasoning effort'))
   await pick(/Choose a model/, TRIO.worker)
-  check('the effort block appears once something is switched on, collapsed, recommended', (await text()).includes('Reasoning effort') && (await text()).includes('Recommended level for each model'))
+  check('the effort block appears once a model is chosen, collapsed, recommended', (await text()).includes('Reasoning effort') && (await text()).includes('Recommended level for the model'))
   check('the overthinking note is shown for the DeepSeek V4.1 Flash subagent', (await text()).includes('spend its whole token budget on one numeric edge case'))
   await dialog().getByRole('button', { name: 'Show', exact: true }).click()
-  check('the subagent effort is Recommended: Medium (the route itself defaults to max)', await dialog().getByRole('button', { name: /Recommended: Medium/ }).first().isVisible())
+  check('the effort is Recommended: Medium (the route itself defaults to max)', await dialog().getByRole('button', { name: /Recommended: Medium/ }).first().isVisible())
+  await shot('01-deepseek-recommended')
 
-  await switches.nth(1).click()
-  check('the reviewer cost hint is shown', (await text()).includes('expect about double the cost and wait per delegation'))
-  check('a reviewer on the same model gets the same-model tip', (await text()).includes('a reviewer on a different model tends to catch different mistakes'))
-
-  await pick(/Same model as the subagent/, TRIO.glm)
-  check('GLM 5.3 as reviewer: no same-model and no same-family tip', !(await text()).includes('a reviewer on a different model') && !(await text()).includes('same vendor family'))
-  check('GLM 5.3 reviewer is Recommended: Low (its ladder is low, high, max)', await dialog().getByRole('button', { name: /Recommended: Low/ }).first().isVisible())
+  await pick(TRIO.worker, TRIO.glm)
+  check('GLM 5.3 is Recommended: High (its ladder is low, high, max, capped at high)', await dialog().getByRole('button', { name: /Recommended: High/ }).first().isVisible())
   check('GLM 5.3 carries the text-only note', (await text()).includes('Text only: it cannot look at screenshots'))
-  await shot('01-glm-reviewer')
+  await shot('02-glm')
 
-  await pick(TRIO.glm, TRIO.reviewer)
-  check('MiMo-V2.6-Pro reviewer is Recommended: Medium, not Max', await dialog().getByRole('button', { name: /Recommended: Medium/ }).nth(1).isVisible())
+  await pick(TRIO.glm, TRIO.mimo)
+  check('MiMo-V2.6-Pro is Recommended: Low, not Max', await dialog().getByRole('button', { name: /Recommended: Low/ }).first().isVisible())
   check('MiMo-V2.6-Pro carries the slow-at-high-effort note', (await text()).includes('about two minutes per turn at high effort'))
-  await shot('02-mimo-reviewer')
+  await shot('03-mimo')
 
-  // An explicit level: the subagent at High.
+  // An explicit level: back on DeepSeek, the subagent at High.
+  await pick(TRIO.mimo, TRIO.worker)
   await dialog().getByRole('button', { name: /Recommended: Medium/ }).first().click()
   await page.getByRole('menuitem', { name: /^High$/ }).first().click()
   check('picking a level marks the block as customized', (await text()).includes('Customized'))
-  check('the subagent picker now shows High', (await text()).includes('High'))
-  await shot('03-explicit-high')
+  check('the picker now shows High', (await text()).includes('High'))
+  await shot('04-explicit-high')
 
   await dialog().getByRole('button', { name: 'Send with these options' }).click()
   await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('modal closes after confirm', true), () => check('modal closes after confirm', false))
   const posts = wire.filter((item) => item.method === 'POST')
   const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
-  check('the wire carries the explicit subagent effort and the recommended (null) reviewer effort', saved?.workerEffort === 'high' && saved?.reviewer?.effort === null && saved?.reviewer?.model?.model === TRIO.reviewerId, JSON.stringify(saved))
+  check('the wire carries the model and the explicit effort, and nothing about a reviewer', saved?.workerEffort === 'high' && saved?.subagentModel?.model === TRIO.workerId && !('reviewer' in saved), JSON.stringify(saved))
   check('host accepted the config (200)', posts.at(-1)?.status === 200, posts.at(-1)?.status)
 
-  // The same model under another route: DeepSeek V4.1 Flash on Azure and on DeepSeek's own API.
-  // The dialog opens with the last confirmed choice, so change the reviewer in place.
+  // The dialog opens with the last confirmed choice, effort included.
   await newSession()
-  await typeTask('Reply with exactly the word: alias')
+  await typeTask('Reply with exactly the word: again')
   await page.keyboard.press('Enter')
   await dialog().waitFor({ state: 'visible', timeout: 15_000 })
-  check('the dialog reopens with the last confirmed choice', (await text()).includes('DeepSeek V4.1 Flash (Azure)'))
-  await pick(TRIO.reviewer, TRIO.officialFlash)
-  check('DeepSeek V4.1 Flash on two routes is flagged as the same model', (await text()).includes('a reviewer on a different model tends to catch different mistakes'))
-  await shot('04-same-model-two-routes')
+  check('the dialog reopens with the last confirmed choice and its explicit effort', (await text()).includes('DeepSeek V4.1 Flash (Azure)') && (await text()).includes('Customized'))
+  await shot('05-reopened')
   await page.keyboard.press('Escape')
   check('no page errors', relevantErrors().length === 0, relevantErrors().join(' | '))
   await finish()
 }
 
+if (phase === 'readme' || phase === 'readme-light') {
+  await open()
+  await newSession()
+  await typeTask('Add input validation to the signup form and cover it with tests')
+  await page.keyboard.press('Enter')
+  await dialog().waitFor({ state: 'visible', timeout: 15_000 })
+  await page.waitForTimeout(400)
+  await shot('01-empty')
+  check('the dialog is up, with one switch', (await dialog().getByRole('switch').count()) === 1)
+  if (phase === 'readme') {
+    await dialog().getByRole('switch').nth(0).click()
+    await pick(/Choose a model/, TRIO.worker)
+    await page.waitForTimeout(400)
+    await shot('02-filled')
+    check('a model is chosen', await dialog().getByRole('button', { name: TRIO.worker }).first().isVisible())
+  }
+  // No answer on purpose: closing the browser leaves the dialog unanswered, so the task is never sent.
+  await finish()
+}
+
 if (phase === 'small') {
-  // A short laptop screen with both sections open: the actions must stay reachable.
+  // A short laptop screen with the model chosen and the effort block open: the actions must stay reachable.
   await page.setViewportSize({ width: 1024, height: 600 })
   await open()
   await typeTask('Reply with exactly the word: small')
   await page.keyboard.press('Enter')
   await dialog().waitFor({ state: 'visible', timeout: 15_000 })
-  const switches = dialog().getByRole('switch')
-  await switches.nth(0).click()
-  await switches.nth(1).click()
+  await dialog().getByRole('switch').nth(0).click()
+  await pick(/Choose a model/, TRIO.worker)
+  await dialog().getByRole('button', { name: 'Show', exact: true }).click()
   await page.waitForTimeout(600)
-  await shot('01-both-open-600px')
+  await shot('01-open-600px')
   const box = await dialog().boundingBox()
   const send = dialog().getByRole('button', { name: 'Send with these options' })
   const sendBox = await send.boundingBox()
   check('dialog is not taller than the viewport', box !== null && box.height <= 600, JSON.stringify(box))
   check('primary action is inside the viewport', sendBox !== null && sendBox.y >= 0 && sendBox.y + sendBox.height <= 600, JSON.stringify(sendBox))
-  const scrollable = await dialog().evaluate((el) => { const nodes = [el, ...el.querySelectorAll('*')]; return nodes.some((n) => n.scrollHeight > n.clientHeight + 1 && ['auto', 'scroll'].includes(getComputedStyle(n).overflowY)) })
-  console.log('DEBUG scrollable region inside dialog:', scrollable)
   await page.keyboard.press('Escape')
   check('no page errors', relevantErrors().length === 0, relevantErrors().join(' | '))
   await finish()
-}
-
-if (phase === 'debug') {
-  await open()
-  await typeTask('Reply with exactly the word: debug')
-  await page.keyboard.press('Enter')
-  await dialog().waitFor({ state: 'visible', timeout: 15_000 })
-  await dialog().getByRole('switch').nth(0).click()
-  await dialog().getByRole('switch').nth(1).click()
-  await page.waitForTimeout(800)
-  await dialog().getByRole('button', { name: /Same model as the subagent/ }).first().click()
-  await page.waitForTimeout(800)
-  await shot('01-debug-after-switch')
-  const items = await page.locator('[role=menu] *, [role=menuitem], [role=option], [role=listbox] *').evaluateAll((els) => els.map((el) => `${el.tagName.toLowerCase()}[${el.getAttribute('role') ?? ''}]:${(el.textContent ?? '').trim().slice(0, 50)}`).filter((t, i, a) => a.indexOf(t) === i).slice(0, 60))
-  console.log('MENU', JSON.stringify(items))
-  console.log((await dialog().innerText()).replace(/\s+/g, ' ').slice(0, 600))
-  const buttons = await dialog().getByRole('button').evaluateAll((els) => els.map((el) => `${el.getAttribute('aria-label') ?? ''}|${(el.textContent ?? '').trim().slice(0, 40)}|disabled=${String(el.disabled)}`))
-  console.log(JSON.stringify(buttons))
-  await browser.close()
-  process.exit(0)
 }
 
 console.error(`unknown phase: ${phase}`)

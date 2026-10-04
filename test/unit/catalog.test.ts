@@ -96,22 +96,20 @@ describe('ladderOf', () => {
 })
 
 describe('adviseEffort', () => {
-  it('shows the same level the host will use: the profile ceiling for the role, below the route default of max', () => {
-    const worker = adviseEffort(withLadders, { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash' }, 'worker')
-    assert.equal(worker.level?.id, 'medium')
-    assert.equal(worker.level?.name, 'Medium')
-    const reviewer = adviseEffort(withLadders, { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash' }, 'reviewer')
-    assert.equal(reviewer.level?.id, 'low')
-    assert.equal(adviseEffort(withLadders, { provider: 'azure-opencode-claude', model: 'claude-sonnet-5-5' }, 'reviewer').level?.id, 'high')
+  it('shows the same level the host will use: the profile ceiling, below the route default of max', () => {
+    const flash = adviseEffort(withLadders, { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash' })
+    assert.equal(flash.level?.id, 'medium')
+    assert.equal(flash.level?.name, 'Medium')
+    assert.equal(adviseEffort(withLadders, { provider: 'azure-opencode-claude', model: 'claude-sonnet-5-5' }).level?.id, 'high')
   })
 
   it('uses the main agent\'s own level when the child inherits its route', () => {
     const route = { provider: 'azure-opencode-claude', model: 'claude-sonnet-5-5' }
-    assert.equal(adviseEffort(withLadders, route, 'worker', 'medium').level?.id, 'medium') // already within the ceiling: kept
-    assert.equal(adviseEffort(withLadders, route, 'worker', 'max').level?.id, 'high') // above it: lowered
+    assert.equal(adviseEffort(withLadders, route, 'medium').level?.id, 'medium') // already within the ceiling: kept
+    assert.equal(adviseEffort(withLadders, route, 'max').level?.id, 'high') // above it: lowered
   })
 
   it('has no ladder for a model without reasoning levels', () => {
-    assert.deepEqual(adviseEffort(withLadders, { provider: 'azure-opencode-claude', model: 'claude-haiku-4-5' }, 'reviewer'), { ladder: undefined, level: undefined })
+    assert.deepEqual(adviseEffort(withLadders, { provider: 'azure-opencode-claude', model: 'claude-haiku-4-5' }), { ladder: undefined, level: undefined })
   })
 })

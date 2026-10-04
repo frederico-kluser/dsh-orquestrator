@@ -1,7 +1,7 @@
 {
   "name": "dsh-orquestrator",
-  "version": "0.4.0",
-  "description": "DeepSeek Harness plugin: a native-looking modal on task send lets you pick a different model for subagents and an independent reviewer (own model) that validates each subagent's work, fixes only real defects, and delivers the result to the main agent. The picked model, a reasoning-effort ceiling and an output-token cap reach every child DSH starts, including the agents a workflow starts.",
+  "version": "0.5.0",
+  "description": "DeepSeek Harness plugin: a native-looking modal on task send lets you pick the model subagents run on. The pick, a reasoning-effort ceiling and an output-token cap are enforced in code on every child DSH starts, whichever tool starts it: the subagent tools, a workflow, ralph or a one-shot background job.",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -73,7 +73,8 @@
     "cordis",
     "deepseek-harness",
     "subagents",
-    "reviewer",
+    "workflow",
+    "reasoning-effort",
     "orchestration",
     "multi-model"
   ]

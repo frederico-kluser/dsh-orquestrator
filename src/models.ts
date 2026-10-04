@@ -1,19 +1,15 @@
 /**
- * Model knowledge shared by both bundles (host and browser): which vendor
- * family a route belongs to, which ids are really the same model, what
- * reasoning effort each role should run at, and the short notes the dialog
- * shows next to a model. Pure data and pure functions, like `shared.ts`,
- * because both bundles inline this file.
+ * Model knowledge shared by both bundles (host and browser): what reasoning
+ * effort a subagent should run at on each model, and the short notes the
+ * dialog shows next to a model. Pure data and pure functions, like
+ * `shared.ts`, because both bundles inline this file.
  *
  * Every row of {@link MODEL_PROFILES} is dated and names the studies it comes
  * from (`docs/estudos/`). It is advice, never a block: the user's pick in the
  * dialog always wins over it, and an unknown model simply falls back to the
- * generic caps.
+ * generic ceiling.
  * @module dsh-orquestrator/models
  */
-
-/** The two roles the plugin starts children for. */
-export type Role = 'worker' | 'reviewer'
 
 /**
  * Reasoning levels in DSH's canonical escalation order (pi-ai's thinking
@@ -25,17 +21,14 @@ export const EFFORT_ORDER = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh',
 export type EffortLevel = typeof EFFORT_ORDER[number]
 
 /**
- * The ceiling used for a role when neither the operator nor a model profile
- * says otherwise. `medium` is the level the studies' "30 to 50 on a 1-100
- * scale" advice maps to, and no study recommends `max` for either role.
+ * The ceiling used when neither the operator nor a model profile says
+ * otherwise. `medium` is the level the studies' "30 to 50 on a 1-100 scale"
+ * advice maps to, and no study recommends `max` for a subagent.
  */
-export const DEFAULT_CAPS: Readonly<Record<Role, EffortLevel>> = Object.freeze({ worker: 'medium', reviewer: 'medium' })
-
-/** Vendor lineage of a model, as far as the id tells. */
-export type Family = 'deepseek' | 'anthropic' | 'google' | 'xiaomi' | 'zai' | 'moonshot' | 'openai' | 'qwen' | 'meta' | 'mistral' | 'xai' | 'unknown'
+export const DEFAULT_CAP: EffortLevel = 'medium'
 
 /** Short advice the dialog can show next to a model (keys of the `note.*` dictionary entries). */
-export type NoteId = 'redirected' | 'overthinks' | 'compact' | 'slowAtHighEffort' | 'premiumVariant' | 'textOnly' | 'reasoningAlwaysOn' | 'maxEffortRegresses'
+export type NoteId = 'redirected' | 'overthinks' | 'slowAtHighEffort' | 'premiumVariant' | 'textOnly' | 'reasoningAlwaysOn' | 'maxEffortRegresses'
 
 /** Anything with a provider and a model id (a `ModelRoute` fits). */
 export interface RouteLike {
@@ -49,10 +42,10 @@ export interface ModelProfile {
   readonly id: string
   /** Whether the row describes this route. */
   readonly matches: (route: RouteLike) => boolean
-  /** Reasoning-effort ceilings per role; absent means the generic cap. */
-  readonly caps: { readonly worker?: EffortLevel; readonly reviewer?: EffortLevel }
-  /** Notes to show per role. */
-  readonly notes: { readonly worker?: readonly NoteId[]; readonly reviewer?: readonly NoteId[] }
+  /** Reasoning-effort ceiling for a subagent on this model; absent means the generic ceiling. */
+  readonly cap?: EffortLevel
+  /** Notes to show next to the model. */
+  readonly notes: readonly NoteId[]
   /** When the underlying facts were last checked (ISO date). */
   readonly verifiedAt: string
   /** Study ids (`docs/estudos/README.md`) and primary sources behind the row. */
@@ -89,72 +82,72 @@ export const MODEL_PROFILES: readonly ModelProfile[] = Object.freeze([
   {
     id: 'deepseek-v4-pro-official',
     matches: route => route.provider === OFFICIAL_DEEPSEEK && bare(route) === 'deepseek-v4-pro',
-    caps: { worker: 'medium', reviewer: 'low' },
-    notes: { worker: ['redirected', 'overthinks'], reviewer: ['redirected', 'compact'] },
+    cap: 'medium',
+    notes: ['redirected', 'overthinks'],
     verifiedAt: '2026-10-03',
     sources: ['E05', 'E07', 'E08', 'E10', 'E11', 'api-docs.deepseek.com/news/news260910'],
   },
   {
     id: 'deepseek-flash',
     matches: isDeepSeekFlashLine,
-    caps: { worker: 'medium', reviewer: 'low' },
-    notes: { worker: ['overthinks'], reviewer: ['compact'] },
+    cap: 'medium',
+    notes: ['overthinks'],
     verifiedAt: '2026-10-03',
     sources: ['E01', 'E03', 'E05', 'E07', 'E08', 'E10', 'E11', 'E12', 'E13'],
   },
   {
     id: 'mimo-ultraspeed',
     matches: route => /mimo.*ultraspeed/.test(lowered(route)),
-    caps: { worker: 'low', reviewer: 'medium' },
-    notes: { worker: ['premiumVariant'], reviewer: ['premiumVariant'] },
+    cap: 'low',
+    notes: ['premiumVariant'],
     verifiedAt: '2026-10-03',
     sources: ['E01', 'E02', 'E13'],
   },
   {
     id: 'mimo',
     matches: route => /mimo/.test(lowered(route)),
-    caps: { worker: 'low', reviewer: 'medium' },
-    notes: { worker: ['slowAtHighEffort'], reviewer: ['slowAtHighEffort'] },
+    cap: 'low',
+    notes: ['slowAtHighEffort'],
     verifiedAt: '2026-10-03',
     sources: ['E01', 'E02', 'E03', 'E05', 'E07', 'E08', 'E09', 'E11', 'E12', 'E13'],
   },
   {
     id: 'glm-flash',
     matches: route => /glm-5[.-]3-flash/.test(lowered(route)),
-    caps: { worker: 'high', reviewer: 'low' },
-    notes: { worker: ['reasoningAlwaysOn'], reviewer: ['reasoningAlwaysOn', 'compact'] },
+    cap: 'high',
+    notes: ['reasoningAlwaysOn'],
     verifiedAt: '2026-10-03',
     sources: ['E01', 'E05', 'E11'],
   },
   {
     id: 'glm',
     matches: route => /glm-5[.-]3/.test(lowered(route)),
-    caps: { worker: 'high', reviewer: 'low' },
-    notes: { worker: ['textOnly', 'reasoningAlwaysOn'], reviewer: ['textOnly', 'reasoningAlwaysOn'] },
+    cap: 'high',
+    notes: ['textOnly', 'reasoningAlwaysOn'],
     verifiedAt: '2026-10-03',
     sources: ['E01', 'E02', 'E05', 'E06', 'E08'],
   },
   {
     id: 'claude-large',
     matches: route => /claude-(sonnet|opus)/.test(lowered(route)),
-    caps: { worker: 'high', reviewer: 'high' },
-    notes: { worker: ['maxEffortRegresses'], reviewer: ['maxEffortRegresses'] },
+    cap: 'high',
+    notes: ['maxEffortRegresses'],
     verifiedAt: '2026-10-03',
     sources: ['E02', 'E04', 'E09'],
   },
   {
     id: 'claude-haiku',
     matches: route => /claude-haiku/.test(lowered(route)),
-    caps: { worker: 'medium', reviewer: 'medium' },
-    notes: { reviewer: ['compact'] },
+    cap: 'medium',
+    notes: [],
     verifiedAt: '2026-10-03',
     sources: ['E03', 'E07', 'E09', 'E10'],
   },
   {
     id: 'gemini-flash',
     matches: route => /gemini-.*flash/.test(lowered(route)),
-    caps: { worker: 'medium', reviewer: 'medium' },
-    notes: {},
+    cap: 'medium',
+    notes: [],
     verifiedAt: '2026-10-03',
     sources: ['E07', 'E10', 'E13'],
   },
@@ -167,72 +160,6 @@ export const MODEL_PROFILES: readonly ModelProfile[] = Object.freeze([
  */
 export function profileOf(route: RouteLike): ModelProfile | undefined {
   return MODEL_PROFILES.find(profile => profile.matches(route))
-}
-
-/** Family patterns tested against the whole lowercased id (vendor prefix included). */
-const FAMILY_PATTERNS: readonly (readonly [Family, RegExp])[] = [
-  ['deepseek', /deepseek/],
-  ['anthropic', /claude|anthropic\//],
-  ['google', /gemini|gemma|google\//],
-  ['xiaomi', /mimo|xiaomi\//],
-  ['zai', /glm|z-ai\/|zhipu/],
-  ['moonshot', /kimi|moonshot/],
-  ['openai', /(^|\/)(gpt|chatgpt|codex|o\d)([-.\d]|$)|openai\//],
-  ['qwen', /qwen|alibaba\//],
-  ['meta', /llama|meta-llama\//],
-  ['mistral', /mistral|mixtral|codestral|devstral/],
-  ['xai', /grok|x-ai\//],
-]
-
-/**
- * Vendor family of a route, from the model id alone. Provider names are
- * deployment choices (an `azure-opencode` route can host DeepSeek), so they
- * say nothing about lineage.
- * @param route - provider and model id.
- * @returns the family, or `unknown`.
- */
-export function familyOf(route: RouteLike): Family {
-  const id = lowered(route)
-  for (const [family, pattern] of FAMILY_PATTERNS) if (pattern.test(id)) return family
-  return 'unknown'
-}
-
-/**
- * Canonical identity of the model behind a route, so differently spelled ids of
- * one model compare equal (`claude-sonnet-5-5` on Azure and
- * `anthropic/claude-sonnet-5.5` on OpenRouter). On DeepSeek's own API
- * `deepseek-v4-pro` and `deepseek-v4-flash` are routed to V4.1 Flash since
- * 2026-09-14, so they are the same model as `deepseek-flash` there.
- * @param route - provider and model id.
- * @returns a stable lineage key.
- */
-export function lineageOf(route: RouteLike): string {
-  const id = bare(route)
-  if (isDeepSeekFlashLine(route) && /^deepseek-(v4\.1-flash|flash)/.test(id)) return 'deepseek:v4.1-flash'
-  if (route.provider === OFFICIAL_DEEPSEEK && /^deepseek-v4-(pro|flash)/.test(id)) return 'deepseek:v4.1-flash'
-  return `${familyOf(route)}:${id.replace(/(\d)\.(\d)/g, '$1-$2')}`
-}
-
-/**
- * Whether two routes are the same model, under any spelling or provider.
- * @param a - first route.
- * @param b - second route.
- * @returns true when their lineages match.
- */
-export function sameModel(a: RouteLike, b: RouteLike): boolean {
-  return lineageOf(a) === lineageOf(b)
-}
-
-/**
- * Whether two routes come from one vendor family. Unknown models never match,
- * so a deployment with exotic ids is never told it reuses a family.
- * @param a - first route.
- * @param b - second route.
- * @returns true when both families are known and equal.
- */
-export function sameFamily(a: RouteLike, b: RouteLike): boolean {
-  const family = familyOf(a)
-  return family !== 'unknown' && family === familyOf(b)
 }
 
 /**
@@ -254,25 +181,23 @@ export function isEffortLevel(value: unknown): value is EffortLevel {
 }
 
 /**
- * The ceiling for one role on one route.
+ * The ceiling for a subagent on one route.
  * @param route - the route the child will run on.
- * @param role - worker or reviewer.
- * @param override - the operator's configured ceiling for the role, which beats the profile.
+ * @param override - the operator's configured ceiling, which beats the profile.
  * @returns the highest level the plugin will pick on its own.
  */
-export function capFor(route: RouteLike | undefined, role: Role, override?: string): EffortLevel {
+export function capFor(route: RouteLike | undefined, override?: string): EffortLevel {
   if (override !== undefined && isEffortLevel(override)) return override
-  return (route === undefined ? undefined : profileOf(route)?.caps[role]) ?? DEFAULT_CAPS[role]
+  return (route === undefined ? undefined : profileOf(route)?.cap) ?? DEFAULT_CAP
 }
 
 /**
- * Notes to show for a route in a role.
+ * Notes to show next to a route.
  * @param route - the route.
- * @param role - worker or reviewer.
  * @returns the note ids, possibly none.
  */
-export function notesFor(route: RouteLike, role: Role): readonly NoteId[] {
-  return profileOf(route)?.notes[role] ?? []
+export function notesFor(route: RouteLike): readonly NoteId[] {
+  return profileOf(route)?.notes ?? []
 }
 
 /** Why {@link chooseEffort} decided what it did. */
@@ -295,7 +220,7 @@ export interface EffortInput {
   readonly current: string | undefined
   /** A level the user or the operator asked for explicitly. */
   readonly explicit: string | undefined
-  /** The ceiling for this role and route. */
+  /** The ceiling for this route. */
   readonly cap: string
 }
 
@@ -330,17 +255,4 @@ export function chooseEffort(input: EffortInput): EffortChoice {
   const atOrBelow = capRank === -1 ? [] : usable.filter(level => rankOf(level) <= capRank)
   const picked = atOrBelow.length > 0 ? atOrBelow[atOrBelow.length - 1] : usable[0]
   return { effort: picked, reason: 'capped', ...note }
-}
-
-/**
- * The next level below one, among the levels a model offers. Used to retry a
- * worker that ran out of tokens while thinking.
- * @param ladder - the model's offered levels.
- * @param level - the level that just failed.
- * @returns the highest offered level strictly below it (never `off`), or undefined when none is left.
- */
-export function lowerEffort(ladder: readonly string[], level: string | undefined): string | undefined {
-  if (level === undefined || rankOf(level) === -1) return undefined
-  const below = ladder.filter(candidate => rankOf(candidate) > 0 && rankOf(candidate) < rankOf(level)).sort((a, b) => rankOf(a) - rankOf(b))
-  return below[below.length - 1]
 }

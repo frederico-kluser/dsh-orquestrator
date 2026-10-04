@@ -17,28 +17,26 @@
 
 import type { PluginConfig } from './config.ts'
 import type { AgentLike, AgentOptionsLike, LoggerLike, ModelInfoLike, ModelInfoSourceLike } from './host-services.ts'
-import { capFor, chooseEffort, type EffortLevel, type Role } from './models.ts'
+import { capFor, chooseEffort, type EffortLevel } from './models.ts'
 import type { ModelRoute } from './shared.ts'
 
 /** The slice of the plugin configuration the planner reads. */
 export interface ChildPolicy {
   /** False leaves children exactly as the user picked them (no ceiling, no cap). */
   readonly enabled: boolean
-  /** Operator ceilings per role; a missing role falls back to the model's profile, then `medium`. */
-  readonly caps: { readonly worker?: EffortLevel; readonly reviewer?: EffortLevel }
-  /** Output-token ceilings per role. */
-  readonly maxTokens: { readonly worker?: number | undefined; readonly reviewer?: number | undefined }
+  /** Operator ceiling on the reasoning effort; absent falls back to the model's profile, then `medium`. */
+  readonly cap?: EffortLevel
+  /** Output-token ceiling per request; absent means none. */
+  readonly maxTokens?: number | undefined
 }
 
 /**
- * The effort and token policy of a configuration. One definition for every
- * child the plugin plans, whether its pipeline starts it or the start guard
- * adopts it.
+ * The effort and token policy of a configuration.
  * @param config - the validated plugin configuration.
  * @returns the policy the planner reads.
  */
 export function childPolicyOf(config: PluginConfig): ChildPolicy {
-  return { enabled: config.effort.enabled, caps: config.effort.caps, maxTokens: { worker: config.limits.worker, reviewer: config.limits.reviewer } }
+  return { enabled: config.effort.enabled, ...config.effort.cap === undefined ? {} : { cap: config.effort.cap }, maxTokens: config.limits.worker }
 }
 
 /** Inputs of {@link planChild}. */
@@ -46,9 +44,8 @@ export interface PlanInput {
   /** The LLM runtime, or undefined when it is not available (the plan then keeps the user's pick untouched). */
   readonly source: ModelInfoSourceLike | undefined
   readonly parent: AgentLike
-  /** The route the user picked for this role, or null to inherit the parent's. */
+  /** The route the user picked, or null to inherit the parent's. */
   readonly route: ModelRoute | null
-  readonly role: Role
   /** A reasoning level the user or the operator asked for explicitly. */
   readonly explicitEffort: string | undefined
   readonly policy: ChildPolicy
@@ -173,12 +170,12 @@ function abortable<T>(lookup: Promise<T>, signal: AbortSignal): Promise<T> {
  * Plan one child. Never throws, except for the caller's cancellation: when
  * the model cannot be described the plan degrades to the user's own pick,
  * which is what the plugin did before, and says why in `unresolved`.
- * @param input - the route, role, policy and LLM runtime.
+ * @param input - the route, policy and LLM runtime.
  * @returns the plan.
  * @throws the cancellation reason when the caller cancelled while the model was being described.
  */
 export async function planChild(input: PlanInput): Promise<ChildPlan> {
-  const { source, parent, route, role, explicitEffort, policy, signal, logger } = input
+  const { source, parent, route, explicitEffort, policy, signal, logger } = input
   const inherited = parentOptionsOf(parent)
   // DSH clears the parent's effort only when the child's route CHANGES; a child on the parent's own route (picked or
   // not) inherits the parent's effort and token limit, so those, not the route's defaults, are what the ceiling sees.
@@ -193,7 +190,7 @@ export async function planChild(input: PlanInput): Promise<ChildPlan> {
     ladder: undefined,
     effective: explicitEffort,
     ...unresolved === undefined ? {} : { unresolved },
-    summary: `${role}: ${target === undefined ? 'inherited route' : `${target.provider}/${target.model}`}, effort left as picked (${why})`,
+    summary: `${target === undefined ? 'inherited route' : `${target.provider}/${target.model}`}, effort left as picked (${why})`,
   })
   if (!policy.enabled) return fallback('policy off')
   if (target === undefined || source === undefined) return fallback('route or runtime unknown')
@@ -211,7 +208,7 @@ export async function planChild(input: PlanInput): Promise<ChildPlan> {
 
   const ladder = info.reasoning === undefined ? [] : info.reasoning.efforts.map(effort => effort.id)
   const current = unchanged ? inherited.reasoningEffort ?? info.reasoning?.defaultEffort : info.reasoning?.defaultEffort
-  const cap = capFor(target, role, policy.caps[role])
+  const cap = capFor(target, policy.cap)
   const choice = chooseEffort({ ladder, current, explicit: explicitEffort, cap })
   if (choice.dropped !== undefined) {
     logger.warn(`dsh-orquestrator: ${target.provider}/${target.model} does not offer reasoning effort "${choice.dropped}"; using the recommended level instead`)
@@ -223,7 +220,7 @@ export async function planChild(input: PlanInput): Promise<ChildPlan> {
   }
   // DSH hands a child the parent's creation token limit on EVERY route (only the effort is cleared on a route change),
   // so the limit the child would run with is the parent's when it has one, else the route's own ceiling.
-  const limit = policy.maxTokens[role]
+  const limit = policy.maxTokens
   const ceiling = inherited.maxTokens ?? info.defaultMaxTokens
   // Never above what the model itself allows: a parent's larger limit would be refused by a smaller model.
   if (limit !== undefined && ceiling !== undefined && ceiling > limit) options.maxTokens = info.defaultMaxTokens === undefined ? limit : Math.min(limit, info.defaultMaxTokens)
@@ -234,6 +231,6 @@ export async function planChild(input: PlanInput): Promise<ChildPlan> {
     route: target,
     ladder,
     effective,
-    summary: `${role}: ${target.provider}/${target.model}, effort ${effective ?? 'route default'} (${choice.reason}, ceiling ${cap}), max output ${options.maxTokens === undefined ? 'unchanged' : String(options.maxTokens)}`,
+    summary: `${target.provider}/${target.model}, effort ${effective ?? 'route default'} (${choice.reason}, ceiling ${cap}), max output ${options.maxTokens === undefined ? 'unchanged' : String(options.maxTokens)}`,
   }
 }

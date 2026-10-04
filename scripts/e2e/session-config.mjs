@@ -11,10 +11,8 @@
  *
  * One row per session of the run (the main agent and each subagent child):
  * the route and the reasoning effort / output-token ceiling of its model
- * requests, how long it ran, how many model requests and tool calls it made,
- * whether it carried DSH's `structured_output` tool, and, for a reviewer, how
- * its review packet presented the worker (report as claims, or withheld with
- * the measured workspace facts). Nothing secret is read.
+ * requests, how long it ran, and how many model requests and tool calls it
+ * made. Nothing secret is read.
  */
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
@@ -56,13 +54,10 @@ for (const id of readdirSync(dir).filter((entry) => !entry.startsWith('.'))) {
   if (mainId !== undefined && !id.startsWith(mainId) && !String(header.parentSession ?? '').startsWith(mainId)) continue
   const requests = events.filter((event) => event.type === 'request/header')
   const config = requests[0]?.data?.header?.config ?? {}
-  const tools = requests[0]?.data?.header?.tools?.map((tool) => tool.name) ?? []
   const times = events.map((event) => event.time).filter((time) => typeof time === 'number')
-  const packet = events.find((event) => event.type === 'agent/inbox/spliced' && JSON.stringify(event.data).includes('# Review request'))
-  const text = packet === undefined ? '' : JSON.stringify(packet.data)
   rows.push({
     id: id.slice(0, 16),
-    role: header.parentSession === undefined ? 'main' : tools.includes('structured_output') ? 'reviewer' : 'subagent',
+    role: header.parentSession === undefined ? 'main' : 'subagent',
     route: `${config.provider ?? '?'}/${config.model ?? '?'}`,
     effort: config.reasoningEffort ?? '(route default or none)',
     maxTokens: config.maxTokens ?? '(model window)',
@@ -70,18 +65,13 @@ for (const id of readdirSync(dir).filter((entry) => !entry.startsWith('.'))) {
     calls: events.filter((event) => event.type === 'tool/call').length,
     seconds: times.length === 0 ? 0 : Math.round((Math.max(...times) - Math.min(...times)) / 1000),
     startedAt: times.length === 0 ? 0 : Math.min(...times),
-    structured: tools.includes('structured_output'),
-    packet: packet === undefined ? '' : [
-      text.includes('<workspace_facts') ? 'workspace facts' : 'no facts',
-      text.includes('withheld on purpose') ? 'worker report withheld' : text.includes('<untrusted_worker_report') ? 'worker report as untrusted claims' : '?',
-    ].join(', '),
   })
 }
 rows.sort((a, b) => a.startedAt - b.startedAt)
 
 console.log(`## ${name}: what each session was asked\n`)
-console.log('| Session | Role | Route | Reasoning effort | Max output tokens | Requests | Tool calls | Seconds | structured_output | Review packet |')
-console.log('| --- | --- | --- | --- | --- | ---: | ---: | ---: | --- | --- |')
+console.log('| Session | Role | Route | Reasoning effort | Max output tokens | Requests | Tool calls | Seconds |')
+console.log('| --- | --- | --- | --- | --- | ---: | ---: | ---: |')
 for (const row of rows) {
-  console.log(`| \`${row.id}\` | ${row.role} | ${row.route} | ${row.effort} | ${String(row.maxTokens)} | ${String(row.requests)} | ${String(row.calls)} | ${String(row.seconds)} | ${row.structured ? 'yes' : 'no'} | ${row.packet === '' ? '-' : row.packet} |`)
+  console.log(`| \`${row.id}\` | ${row.role} | ${row.route} | ${row.effort} | ${String(row.maxTokens)} | ${String(row.requests)} | ${String(row.calls)} | ${String(row.seconds)} |`)
 }

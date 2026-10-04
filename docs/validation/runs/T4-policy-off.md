@@ -3,7 +3,7 @@
 `effort: false` and `limits: false`: what DSH does by itself. The before to T1's after.
 
 Models, and only these three: main agent GLM 5.3, subagent DeepSeek V4.1 Flash, reviewer MiMo-V2.6-Pro.
-Produced by [`scripts/e2e/run-trio.sh`](../../../scripts/e2e/run-trio.sh).
+Produced by `scripts/e2e/run-trio.sh` (removed in 0.5.0 with the reviewer).
 
 ### The task the main agent was given
 

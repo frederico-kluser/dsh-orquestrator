@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.5.0
+
+**The independent reviewer is removed. The plugin now does one thing, in code: the model you pick for
+subagents, a reasoning-effort ceiling and an output-token cap, on every child DSH starts.** The
+start guard of 0.4.0 stays and is now the plugin's only mechanism.
+
+Why ([D16](docs/estudos/decisoes.md)): a reviewer's `APPROVED` was an LLM judging an LLM, so the plugin could
+check the report's format and coherence but never its truth, while what the guard enforces is deterministic
+and cannot be talked around by the main agent. The reviewer also cost about twice as much and made every
+delegation wait for a second model, covered only the two `subagent` tools (never the agents of a workflow,
+`ralph`, jobs or teams), and needed a tool wrapper that the guard makes unnecessary: with the wrapper out of
+the way, `subagent` (foreground and background) and `subagent_fork` still ran on the picked model, run live.
+
+- **Removed.** The reviewer and everything that served it: `src/pipeline.ts`, `src/reviewer-protocol.ts`,
+  `src/workspace.ts` and `src/tool-wrapper.ts` (about 1 250 of the 3 430 lines of the host), the reviewer
+  section of the dialog (and its same-model, same-family and cost hints), the model family and lineage helpers
+  of `src/models.ts`, the retry after a token-limit stop, and the validation scenarios and runners that
+  existed for the reviewer. The `subagent` and `subagent_fork` tools now run entirely stock: the guard puts
+  their child on the pick, like any other child.
+- **Stays.** The start guard, the planner and its reasoning-effort ceilings, the dialog (one switch for the
+  subagent model and a collapsed effort block, shown once a model is chosen), `/orquestrar`, the route and the
+  persisted choices. Plugin `inject` is now `['subagents']` only.
+- **Nothing you wrote breaks.** A stored choice or a browser's memory with a `reviewer` block is read and the
+  block dropped (a choice that only had a reviewer becomes the inert configuration; a stale tab still running
+  the 0.4.0 dialog keeps posting without an error). The configuration fields of the reviewer and of the tool
+  wrapper (`tools`, `reviewerProvider`, `reviewerContext`, `structuredVerdict`, `workerHandoff`,
+  `maxWorkerReportChars`, `retryOnTokenLimit`, `workspaceChecks`, `sensitivePaths`, `defaults.reviewer`,
+  `effort.reviewer`, `limits.reviewerMaxTokens`) are ignored with one warning each, never a load error.
+- **Two behavior changes to know.** `children: false` now switches the enforcement off altogether (in 0.4.0 the
+  tool wrapper kept running); and `defaults.workerEffort` on its own (no model) is now a choice that applies the
+  level to children on the main agent's model (it only counted next to a reviewer before).
+- **The rest of the log, unchanged.** The model a script names itself is still overruled
+  (`children.explicitModel`), a confirmed model that no longer exists still rejects the start with a message
+  that says what to do, and the output-token cap is still not durable across DSH's cold resume of a finished
+  `continuable` child (N21).
+- **Tests.** 253 tests pass with a DSH checkout (228 without one, what CI runs); the suites of the removed code
+  went with it, the guard, planner, configuration, store, route and wiring suites were rewritten for the new
+  shape, and new ones pin the compatibility above.
+- **Validated live** on the three target models (GLM 5.3 main, DeepSeek V4.1 Flash subagents, MiMo-V2.6-Pro only
+  where a script names it): eight headless scenarios read back from the DSH session logs and 65 checks through
+  the dialog in a real browser, including a real delegation and a real workflow, and a `sessions.json` written
+  by 0.4.0 loaded and rewritten in the new shape ([validation](docs/validation/README.md)). Not covered:
+  a Sonnet 5.5 main agent and macOS on this build, long workflows, and the paths the README marks as not run
+  live.
+
 ## 0.4.0
 
 **The model, the effort ceiling and the token cap you confirm now reach every child DSH

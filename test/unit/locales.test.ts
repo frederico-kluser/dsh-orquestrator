@@ -19,7 +19,7 @@ describe('dictionaries', () => {
   })
 
   it('explain every note a model profile can raise', () => {
-    const raised = new Set(MODEL_PROFILES.flatMap(profile => [...profile.notes.worker ?? [], ...profile.notes.reviewer ?? []]))
+    const raised = new Set(MODEL_PROFILES.flatMap(profile => [...profile.notes]))
     assert.ok(raised.size >= 6)
     for (const note of raised) assert.ok(`note.${note}` in en, `note.${note} is missing from the dictionaries`)
   })

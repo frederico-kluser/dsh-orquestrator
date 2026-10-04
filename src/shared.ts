@@ -25,16 +25,6 @@ export interface ModelRoute {
   readonly reasoningEffort?: string
 }
 
-/** The reviewer half of a session configuration. */
-export interface ReviewerConfig {
-  /** Whether every subagent's work goes through the independent reviewer. */
-  readonly enabled: boolean
-  /** Reviewer route; null means "same route as the subagent that did the work". */
-  readonly model: ModelRoute | null
-  /** Reasoning effort the user picked for the reviewer; null means the recommended level for its model. */
-  readonly effort: string | null
-}
-
 /** What the user confirmed in the modal for one session. */
 export interface OrchestratorConfig {
   /** Schema version of this record (persisted to disk). */
@@ -43,8 +33,6 @@ export interface OrchestratorConfig {
   readonly subagentModel: ModelRoute | null
   /** Reasoning effort the user picked for subagents; null means the recommended level for their model. */
   readonly workerEffort: string | null
-  /** The independent reviewer that validates each subagent's work. */
-  readonly reviewer: ReviewerConfig
 }
 
 /** The inert configuration: exactly the stock DSH behavior. */
@@ -52,16 +40,15 @@ export const OFF_CONFIG: OrchestratorConfig = Object.freeze({
   version: 1,
   subagentModel: null,
   workerEffort: null,
-  reviewer: Object.freeze({ enabled: false, model: null, effort: null }),
 })
 
 /**
  * Whether a configuration changes anything relative to stock DSH.
  * @param config - a session configuration, or null/undefined for "none".
- * @returns true when a different subagent model or the reviewer is on.
+ * @returns true when a different subagent model or an explicit reasoning level is set.
  */
 export function isActive(config: OrchestratorConfig | null | undefined): config is OrchestratorConfig {
-  return config != null && (config.subagentModel !== null || config.reviewer.enabled)
+  return config != null && (config.subagentModel !== null || config.workerEffort !== null)
 }
 
 /** Payload of `GET ${CONFIG_ROUTE}?sessionId=<id>` and the answer to a successful `POST`. */
@@ -128,7 +115,9 @@ export function parseModelRoute(value: unknown): ModelRoute | undefined {
 }
 
 /**
- * Parse a session configuration from untrusted JSON (request body or disk).
+ * Parse a session configuration from untrusted JSON (request body, disk or the browser's memory).
+ * Records written by 0.4.0 and older carry a `reviewer` block (and 0.2.x a `remember` flag): the reviewer was removed
+ * in 0.5.0, so those fields are accepted and dropped, never a reason to lose the model the user picked.
  * @param value - candidate value.
  * @returns the normalized configuration, or undefined when malformed.
  */
@@ -139,20 +128,7 @@ export function parseConfig(value: unknown): OrchestratorConfig | undefined {
   if (subagentModel === undefined) return undefined
   const workerEffort = parseEffort(value['workerEffort'])
   if (workerEffort === undefined) return undefined
-  const reviewer = value['reviewer']
-  if (!isRecord(reviewer) || typeof reviewer['enabled'] !== 'boolean') return undefined
-  const rawReviewerModel = reviewer['model']
-  const reviewerModel = rawReviewerModel === null || rawReviewerModel === undefined ? null : parseModelRoute(rawReviewerModel)
-  if (reviewerModel === undefined) return undefined
-  const reviewerEffort = parseEffort(reviewer['effort'])
-  if (reviewerEffort === undefined) return undefined
-  // A legacy `remember` field is accepted and dropped: the modal always asks.
-  return {
-    version: 1,
-    subagentModel,
-    workerEffort: workerEffort.value,
-    reviewer: { enabled: reviewer['enabled'], model: reviewerModel, effort: reviewerEffort.value },
-  }
+  return { version: 1, subagentModel, workerEffort: workerEffort.value }
 }
 
 /**
@@ -162,23 +138,10 @@ export function parseConfig(value: unknown): OrchestratorConfig | undefined {
  */
 export function buildConfig(input: {
   readonly subagentModel: ModelRoute | null
-  readonly reviewerEnabled: boolean
-  readonly reviewerModel: ModelRoute | null
   /** Explicit subagent effort; omitted or null means the recommended level. */
   readonly workerEffort?: string | null
-  /** Explicit reviewer effort; omitted or null means the recommended level. */
-  readonly reviewerEffort?: string | null
 }): OrchestratorConfig {
-  return {
-    version: 1,
-    subagentModel: input.subagentModel,
-    workerEffort: input.workerEffort ?? null,
-    reviewer: {
-      enabled: input.reviewerEnabled,
-      model: input.reviewerEnabled ? input.reviewerModel : null,
-      effort: input.reviewerEnabled ? input.reviewerEffort ?? null : null,
-    },
-  }
+  return { version: 1, subagentModel: input.subagentModel, workerEffort: input.workerEffort ?? null }
 }
 
 /**

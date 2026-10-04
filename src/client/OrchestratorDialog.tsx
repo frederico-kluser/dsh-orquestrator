@@ -5,14 +5,12 @@
  * there is no "do not ask again", so no answer can hide it from a later task or
  * from another conversation.
  *
- * Two questions, answered with switches (progressive
- * disclosure: a model picker only appears when its switch is on):
- *  1. Should subagents run on a different model than the main agent?
- *  2. Should an independent reviewer validate each subagent's work, and on
- *     which model?
- * A third, collapsed block shows how hard each role may think (reasoning
- * effort). It defaults to the recommended level per model, so most people
- * never open it, and it says in one line why it exists.
+ * One question, answered with a switch (progressive disclosure: the model
+ * picker only appears when the switch is on): should subagents run on a
+ * different model than the main agent? A second, collapsed block, shown once
+ * a model is chosen, says how hard subagents may think (reasoning effort). It
+ * defaults to the recommended level for the model, so most people never open
+ * it, and it says in one line why it exists.
  *
  * "Cancel" (button, Escape, mask click) never blocks the task: in gate mode it
  * clears any stored choice and lets the task go out exactly as stock DSH.
@@ -21,9 +19,9 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type JSX } from 'react'
 import {
-  Button, IconAgentPresetOutline16, IconShieldOutline16, Modal, Switch,
+  Button, IconAgentPresetOutline16, Modal, Switch,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { notesFor, sameFamily, sameModel, type Role } from '../models.ts'
+import { notesFor } from '../models.ts'
 import { buildConfig, type ModelRoute } from '../shared.ts'
 import { adviseEffort, modelName, type CatalogState } from './catalog.ts'
 import type { DialogRequest } from './dialogs.ts'
@@ -60,11 +58,8 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
   const uid = useId()
   const [subagentsOn, setSubagentsOn] = useState(initial.subagentModel !== null)
   const [subagentRoute, setSubagentRoute] = useState<ModelRoute | null>(initial.subagentModel)
-  const [reviewerOn, setReviewerOn] = useState(initial.reviewer.enabled)
-  const [reviewerRoute, setReviewerRoute] = useState<ModelRoute | null>(initial.reviewer.model)
   const [workerEffort, setWorkerEffort] = useState<string | null>(initial.workerEffort)
-  const [reviewerEffort, setReviewerEffort] = useState<string | null>(initial.reviewer.effort)
-  const [effortOpen, setEffortOpen] = useState(initial.workerEffort !== null || initial.reviewer.effort !== null)
+  const [effortOpen, setEffortOpen] = useState(initial.workerEffort !== null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -84,30 +79,15 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
   const mainName = mainRoute === null ? undefined : modelName(catalog.groups, mainRoute)
   const needsModel = subagentsOn && subagentRoute === null
 
-  // Evidence-based nudges: errors of models are strongly correlated, and a
-  // reviewer on the very same model (or one the vendor serves from it) shares
-  // the worker's blind spots; one from the same vendor family shares many.
-  const workerEffective: ModelRoute | null = subagentsOn ? subagentRoute : mainRoute
-  const reviewerEffective = reviewerRoute ?? workerEffective
-  const sameModelReview = reviewerOn
-    && (reviewerRoute === null || (workerEffective !== null && sameModel(reviewerRoute, workerEffective)))
-  const sameFamilyReview = reviewerOn && !sameModelReview
-    && reviewerEffective !== null && workerEffective !== null && sameFamily(reviewerEffective, workerEffective)
-
-  // Reasoning effort: what "recommended" means for each role on its effective route.
-  const effortActive = subagentsOn || reviewerOn
-  const workerAdvice = workerEffective === null ? undefined : adviseEffort(catalog.groups, workerEffective, 'worker', subagentsOn ? undefined : mainRoute?.reasoningEffort)
-  const reviewerAdvice = reviewerOn && reviewerEffective !== null ? adviseEffort(catalog.groups, reviewerEffective, 'reviewer') : undefined
-  const knownEffort = (level: string | null, advice: typeof workerAdvice): string | null => (
-    level !== null && advice?.ladder?.efforts.some(effort => effort.id === level) === true ? level : null
-  )
-  const workerChosen = knownEffort(workerEffort, workerAdvice)
-  const reviewerChosen = knownEffort(reviewerEffort, reviewerAdvice)
-  const recommendedText = (advice: typeof workerAdvice): string => (
-    advice?.level === undefined ? t('effort.recommended.default') : t('effort.recommended', { level: advice.level.name })
-  )
-  const noteTexts = (route: ModelRoute | null, role: Role): string[] => (
-    route === null ? [] : notesFor(route, role).slice(0, 2).map(note => t(`note.${note}` as OrchestratorKey))
+  // Reasoning effort: what "recommended" means for the chosen model.
+  const effortActive = subagentsOn && subagentRoute !== null
+  const workerAdvice = effortActive ? adviseEffort(catalog.groups, subagentRoute) : undefined
+  const workerChosen = workerAdvice?.ladder?.efforts.some(effort => effort.id === workerEffort) === true ? workerEffort : null
+  const recommendedText = workerAdvice?.level === undefined
+    ? t('effort.recommended.default')
+    : t('effort.recommended', { level: workerAdvice.level.name })
+  const noteTexts = (route: ModelRoute | null): string[] => (
+    route === null ? [] : notesFor(route).slice(0, 2).map(note => t(`note.${note}` as OrchestratorKey))
   )
 
   const cancel = useCallback(async (): Promise<void> => {
@@ -133,10 +113,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
     if (busy || needsModel) return
     const config = buildConfig({
       subagentModel: subagentsOn ? subagentRoute : null,
-      reviewerEnabled: reviewerOn,
-      reviewerModel: reviewerRoute,
-      workerEffort: workerChosen,
-      reviewerEffort: reviewerChosen,
+      workerEffort: subagentsOn ? workerChosen : null,
     })
     setBusy(true)
     setError(null)
@@ -148,7 +125,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
       return
     }
     request.resolve({ kind: 'confirm', config })
-  }, [busy, needsModel, subagentsOn, subagentRoute, reviewerOn, reviewerRoute, workerChosen, reviewerChosen, request, t])
+  }, [busy, needsModel, subagentsOn, subagentRoute, workerChosen, request, t])
 
   const sameText = useMemo(
     () => (mainName === undefined ? t('subagents.same.unknown') : t('subagents.same', { model: mainName })),
@@ -221,54 +198,8 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
               )
             : undefined}
           {subagentsOn ? <p className="dsh-orq-hint">{t('subagents.scope')}</p> : undefined}
-          {subagentsOn ? noteTexts(subagentRoute, 'worker').map(text => <p key={text} className="dsh-orq-hint dsh-orq-note">{text}</p>) : undefined}
+          {subagentsOn ? noteTexts(subagentRoute).map(text => <p key={text} className="dsh-orq-hint dsh-orq-note">{text}</p>) : undefined}
           {needsModel && catalog.status === 'ready' ? <p className="dsh-orq-hint" role="status">{t('subagents.needModel')}</p> : undefined}
-        </section>
-
-        <section className="dsh-orq-section" aria-labelledby={`${uid}-reviewer`}>
-          <div className="dsh-orq-row">
-            <div className="dsh-orq-heading">
-              <h3 className="dsh-orq-title" id={`${uid}-reviewer`}>
-                <IconShieldOutline16 size={16} />
-                {t('reviewer.title')}
-              </h3>
-              <p className="dsh-orq-hint">{t('reviewer.description')}</p>
-            </div>
-            <Switch checked={reviewerOn} onChange={setReviewerOn} label={t('reviewer.switch')} disabled={busy} />
-          </div>
-          {reviewerOn
-            ? (
-                <>
-                  <ul className="dsh-orq-steps">
-                    <li>{t('reviewer.how.1')}</li>
-                    <li>{t('reviewer.how.2')}</li>
-                    <li>{t('reviewer.how.3')}</li>
-                    <li>{t('reviewer.how.4')}</li>
-                  </ul>
-                  <p className="dsh-orq-hint">{t('reviewer.scope')}</p>
-                  <ModelPicker
-                    id={`${uid}-reviewer-model`}
-                    label={t('reviewer.modelLabel')}
-                    groups={catalog.groups}
-                    value={reviewerRoute}
-                    onChange={setReviewerRoute}
-                    inheritLabel={t('reviewer.sameAsSubagent')}
-                    placeholder={t('picker.placeholder')}
-                    status={catalog.status}
-                    loadingLabel={t('picker.loading')}
-                    errorLabel={t('picker.error')}
-                    retryLabel={t('picker.retry')}
-                    onRetry={reloadCatalog}
-                    disabled={busy}
-                    onMenuOpenChange={onMenuOpenChange}
-                  />
-                  {sameModelReview ? <p className="dsh-orq-hint">{t('reviewer.tip.sameModel')}</p> : undefined}
-                  {sameFamilyReview ? <p className="dsh-orq-hint">{t('reviewer.tip.sameFamily')}</p> : undefined}
-                  {noteTexts(reviewerEffective, 'reviewer').map(text => <p key={text} className="dsh-orq-hint dsh-orq-note">{text}</p>)}
-                  <p className="dsh-orq-hint">{t('reviewer.cost')}</p>
-                </>
-              )
-            : undefined}
         </section>
 
         {effortActive
@@ -277,7 +208,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                 <div className="dsh-orq-row">
                   <div className="dsh-orq-heading">
                     <h3 className="dsh-orq-title" id={`${uid}-effort`}>{t('effort.title')}</h3>
-                    <p className="dsh-orq-hint">{workerChosen === null && reviewerChosen === null ? t('effort.summary.recommended') : t('effort.summary.custom')}</p>
+                    <p className="dsh-orq-hint">{workerChosen === null ? t('effort.summary.recommended') : t('effort.summary.custom')}</p>
                   </div>
                   <button
                     type="button"
@@ -302,30 +233,13 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                                 ladder={workerAdvice.ladder}
                                 value={workerChosen}
                                 onChange={setWorkerEffort}
-                                recommendedLabel={recommendedText(workerAdvice)}
+                                recommendedLabel={recommendedText}
                                 defaultSuffix={t('effort.defaultSuffix')}
                                 disabled={busy}
                                 onMenuOpenChange={onMenuOpenChange}
                               />
                             )
                           : <p className="dsh-orq-hint">{t('effort.subagent')}: {t('effort.none')}</p>}
-                        {reviewerOn
-                          ? (reviewerAdvice?.ladder !== undefined
-                              ? (
-                                  <EffortPicker
-                                    id={`${uid}-reviewer-effort`}
-                                    label={t('effort.reviewer')}
-                                    ladder={reviewerAdvice.ladder}
-                                    value={reviewerChosen}
-                                    onChange={setReviewerEffort}
-                                    recommendedLabel={recommendedText(reviewerAdvice)}
-                                    defaultSuffix={t('effort.defaultSuffix')}
-                                    disabled={busy}
-                                    onMenuOpenChange={onMenuOpenChange}
-                                  />
-                                )
-                              : <p className="dsh-orq-hint">{t('effort.reviewer')}: {t('effort.none')}</p>)
-                          : undefined}
                       </div>
                     )
                   : undefined}

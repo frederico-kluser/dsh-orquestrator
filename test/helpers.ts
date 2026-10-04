@@ -1,22 +1,24 @@
-import type { AgentLike, ContentBlockLike, SubagentResultLike, SubagentRunLike, SubagentStartRequestLike, SubagentsLike } from '../src/host-services.ts'
+import type { AgentLike, ContentBlockLike, SubagentRunLike, SubagentStartRequestLike, SubagentsLike } from '../src/host-services.ts'
 
 /** A minimal agent double. */
-export function fakeAgent(id = 'parent-1', parentSession?: string, cwd?: string): AgentLike {
+export function fakeAgent(id = 'parent-1', parentSession?: string): AgentLike {
   return {
     id,
-    session: { id, header: { ...parentSession === undefined ? {} : { parentSession }, ...cwd === undefined ? {} : { cwd } } },
+    session: { id, header: { ...parentSession === undefined ? {} : { parentSession } } },
     options: { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
   }
 }
 
-/** A text result. */
-export function textResult(text: string, stopReason = 'completed', diagnostic?: string): SubagentResultLike {
-  return { output: [{ type: 'text', text }], stopReason, ...diagnostic === undefined ? {} : { diagnostic } }
+/** What a scripted run settles with (the guard hands runs back untouched; the doubles keep the shape DSH uses). */
+export interface FakeResult {
+  readonly output: readonly ContentBlockLike[]
+  readonly stopReason: string
+  readonly diagnostic?: string
 }
 
-/** A result carrying the value the child reported through the structured-output tool. */
-export function structuredResult(structured: unknown, stopReason = 'completed', text = ''): SubagentResultLike {
-  return { output: text === '' ? [] : [{ type: 'text', text }], stopReason, structured }
+/** A text result. */
+export function textResult(text: string, stopReason = 'completed', diagnostic?: string): FakeResult {
+  return { output: [{ type: 'text', text }], stopReason, ...diagnostic === undefined ? {} : { diagnostic } }
 }
 
 /** One recorded one-shot start. */
@@ -30,9 +32,9 @@ export interface RecordedStart {
 export class FakeRun implements SubagentRunLike {
   disposed = 0
   readonly id: string
-  readonly result: Promise<SubagentResultLike>
+  readonly result: Promise<FakeResult>
 
-  constructor(id: string, result: SubagentResultLike | Error) {
+  constructor(id: string, result: FakeResult | Error) {
     this.id = id
     this.result = result instanceof Error ? Promise.reject(result) : Promise.resolve(result)
     this.result.catch(() => undefined)
@@ -47,12 +49,11 @@ export class FakeRun implements SubagentRunLike {
 /** Options of the subagents double. */
 export interface FakeSubagentsOptions {
   /** Scripted results, consumed in start order; each may inspect the request. */
-  readonly results: (SubagentResultLike | Error | ((request: SubagentStartRequestLike, provider: string) => SubagentResultLike | Error))[]
+  readonly results: (FakeResult | Error | ((request: SubagentStartRequestLike, provider: string) => FakeResult | Error))[]
   /** Provider capabilities; defaults to a spawn-like provider that supports everything. */
   readonly capabilities?: Record<string, { agentOptions: boolean; persona: boolean; outputSchema?: boolean } | undefined>
   /** Providers that run on a route of their own (the SDK provider), by name. */
   readonly routeDefaults?: Record<string, { provider: string; model: string }>
-  readonly maxDepth?: number | undefined
   /** Throw this on `start` number N (0-based) instead of returning a run. */
   readonly failStartAt?: { readonly index: number; readonly error: Error }
 }
@@ -84,10 +85,6 @@ export class FakeSubagents implements SubagentsLike {
     const childId = `child-${String(this.nextChild)}`
     this.nextChild += 1
     return Promise.resolve({ childId })
-  }
-
-  resolveMaxDepth(): number | undefined {
-    return this.options.maxDepth
   }
 
   getProvider(name: string): { capabilities: { agentOptions: boolean; persona: boolean; outputSchema?: boolean }; agentRouteDefaults?: { provider: string; model: string } } | undefined {

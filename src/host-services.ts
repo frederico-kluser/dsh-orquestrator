@@ -10,7 +10,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
-/** One content block of a model-visible message (text is all this plugin reads or writes). */
+/** One content block of a model-visible message (the guard only passes prompts through). */
 export interface ContentBlockLike {
   readonly type: string
   readonly text?: string
@@ -32,8 +32,6 @@ export interface SessionLike {
     readonly parentSession?: string
     /** Product origin marker (`subagent` for delegated children). */
     readonly origin?: string
-    /** The workspace directory of the session. */
-    readonly cwd?: string
   }
   /** Latest logged model request header, when one exists. */
   requestHeader?(): { readonly config?: AgentOptionsLike } | undefined
@@ -47,62 +45,11 @@ export interface AgentLike {
   readonly options: AgentOptionsLike
 }
 
-/** One dispatched tool call as seen by a `tools/execute` around-wrapper. */
-export interface ToolDispatchExecutionLike {
-  readonly callId: string
-  readonly name: string
-  /** Losslessly JSON-serializable parsed arguments (each tool validates its own schema). */
-  readonly arguments: unknown
-  /** The calling agent (absent for non-agent callers). */
-  readonly agent?: AgentLike
-  /** Cancellation signal: the caller's, fused with any wrapper replacement. */
-  signal: AbortSignal
-}
-
-/** The normalized outcome a `tools/execute` wrapper returns (the registry re-validates it). */
-export type ToolExecutionResultLike =
-  | {
-    readonly isError: false
-    readonly value: unknown
-    readonly content: readonly ContentBlockLike[]
-  }
-  | {
-    readonly isError: true
-    readonly error: { readonly message: string }
-    readonly content: readonly ContentBlockLike[]
-  }
-
-declare module '@deepseek-ai/cordis' {
-  interface Events {
-    /**
-     * Around-dispatch waterfall of the tool registry: `next()` runs the real
-     * tool body; returning without it substitutes the outcome.
-     * @param exec - the allowed call about to dispatch.
-     * @param next - the rest of the chain, ending in the tool body.
-     */
-    'tools/execute'(
-      exec: ToolDispatchExecutionLike,
-      next: () => Promise<ToolExecutionResultLike>,
-    ): Promise<ToolExecutionResultLike>
-  }
-}
-
-/** Terminal outcome of a subagent run. */
-export interface SubagentResultLike {
-  readonly output: readonly ContentBlockLike[]
-  /** `completed`, `aborted`, `error`, `max-tokens`, `refusal`, or a backend-added reason. */
-  readonly stopReason: string
-  /** Provider-authored, non-assistant failure detail. */
-  readonly diagnostic?: string
-  /** The value the child reported through the structured-output tool, when the request carried an `outputSchema`. */
-  readonly structured?: unknown
-}
-
-/** A published one-shot child run. */
+/** A published one-shot child run (the guard hands it back to the caller untouched). */
 export interface SubagentRunLike {
   /** The child session id. */
   readonly id: string
-  readonly result: Promise<SubagentResultLike>
+  readonly result: Promise<unknown>
   /** Cancel remaining work, reach quiescence, release resources (idempotent). */
   dispose(): Promise<void>
 }
@@ -114,10 +61,6 @@ export interface SubagentStartRequestLike {
   readonly parent: AgentLike
   readonly signal: AbortSignal
   readonly agentOptions?: AgentOptionsLike
-  readonly maxDepth?: number
-  readonly persona?: string
-  /** Object-rooted JSON Schema the child must answer through the structured-output tool (DSH `SubagentStartRequest.outputSchema`). */
-  readonly outputSchema?: Readonly<Record<string, unknown>>
 }
 
 /** Identities returned once a continuable child accepted its first prompt. */
@@ -150,12 +93,6 @@ export interface SubagentsLike {
    * @returns the child id once the child's inbox accepted the prompt.
    */
   startContinuable(spec: ContinuableStartSpecLike): Promise<ContinuableStartLike>
-  /**
-   * Resolve a delegation tool's depth policy against the current user setting.
-   * @param configured - explicit tool limit, or provider-managed.
-   * @returns the numeric cap, or undefined when the provider owns depth.
-   */
-  resolveMaxDepth(configured?: number | 'provider-managed'): number | undefined
   /**
    * Look up a provider by name.
    * @param name - provider name.

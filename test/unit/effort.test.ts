@@ -24,7 +24,7 @@ function source(catalog: Record<string, ModelInfoLike | Error>): ModelInfoSource
 const logs: string[] = []
 const logger = { info: (message: string) => logs.push(`info:${message}`), warn: (message: string) => logs.push(`warn:${message}`) }
 const signal = new AbortController().signal
-const policy: ChildPolicy = { enabled: true, caps: {}, maxTokens: { worker: 64_000, reviewer: 32_000 } }
+const policy: ChildPolicy = { enabled: true, maxTokens: 64_000 }
 
 const DEEPSEEK = { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash' }
 const SONNET = { provider: 'azure-opencode-claude', model: 'claude-sonnet-5-5' }
@@ -48,7 +48,7 @@ describe('planChild with a picked route that is the parent\'s own route', () => 
   it('sees the effort the child will inherit (DSH clears it only when the route changes), so the ceiling still holds', async () => {
     // The route's own default (low) is within the worker ceiling; the parent runs at high, which the child would inherit.
     const plan = await planChild({
-      source: source(catalog), parent: parent({ ...gemini, reasoningEffort: 'high' }), route: gemini, role: 'worker', explicitEffort: undefined, policy, signal, logger,
+      source: source(catalog), parent: parent({ ...gemini, reasoningEffort: 'high' }), route: gemini, explicitEffort: undefined, policy, signal, logger,
     })
     assert.equal(plan.options?.reasoningEffort, 'medium')
     assert.equal(plan.effective, 'medium')
@@ -56,35 +56,35 @@ describe('planChild with a picked route that is the parent\'s own route', () => 
 
   it('leaves it alone when the parent already runs within the ceiling', async () => {
     const plan = await planChild({
-      source: source(catalog), parent: parent({ ...gemini, reasoningEffort: 'low' }), route: gemini, role: 'worker', explicitEffort: undefined, policy, signal, logger,
+      source: source(catalog), parent: parent({ ...gemini, reasoningEffort: 'low' }), route: gemini, explicitEffort: undefined, policy, signal, logger,
     })
     assert.equal(plan.options?.reasoningEffort, undefined)
   })
 
   it('caps the token limit the child will inherit from the parent, on the same route and on a changed one (DSH hands the limit down either way)', async () => {
     const roomy = source({ 'openrouter/google/gemini-3.8-flash': { ...catalog['openrouter/google/gemini-3.8-flash'], defaultMaxTokens: 400_000 } })
-    const same = await planChild({ source: roomy, parent: parent({ ...gemini, reasoningEffort: 'low', maxTokens: 200_000 }), route: gemini, role: 'worker', explicitEffort: undefined, policy, signal, logger })
+    const same = await planChild({ source: roomy, parent: parent({ ...gemini, reasoningEffort: 'low', maxTokens: 200_000 }), route: gemini, explicitEffort: undefined, policy, signal, logger })
     assert.equal(same.options?.maxTokens, 64_000, 'the parent\'s own 200 000 is what the child would run with')
-    const changed = await planChild({ source: roomy, parent: parent({ ...SONNET, maxTokens: 200_000 }), route: gemini, role: 'worker', explicitEffort: undefined, policy, signal, logger })
+    const changed = await planChild({ source: roomy, parent: parent({ ...SONNET, maxTokens: 200_000 }), route: gemini, explicitEffort: undefined, policy, signal, logger })
     assert.equal(changed.options?.maxTokens, 64_000, 'and so it is on a changed route: only the effort is cleared there')
-    const none = await planChild({ source: roomy, parent: withoutLimit({ ...SONNET }), route: gemini, role: 'worker', explicitEffort: undefined, policy, signal, logger })
+    const none = await planChild({ source: roomy, parent: withoutLimit({ ...SONNET }), route: gemini, explicitEffort: undefined, policy, signal, logger })
     assert.equal(none.options?.maxTokens, 64_000, 'with no limit of its own the child gets the route\'s declared 400 000, capped the same')
   })
 
   it('still treats a different route as a change: the parent\'s level is cleared and the route default is what counts', async () => {
     const plan = await planChild({
-      source: source(catalog), parent: parent({ ...SONNET, reasoningEffort: 'max' }), route: gemini, role: 'worker', explicitEffort: undefined, policy, signal, logger,
+      source: source(catalog), parent: parent({ ...SONNET, reasoningEffort: 'max' }), route: gemini, explicitEffort: undefined, policy, signal, logger,
     })
     assert.equal(plan.options?.reasoningEffort, undefined, 'the Gemini default (low) is within the ceiling')
   })
 
   it('treats a route as unchanged only when provider AND model are both the parent\'s: a sibling model, or the same model id on another provider, resolves its own default', async () => {
     const sibling = await planChild({
-      source: source(catalog), parent: parent({ ...GLM, reasoningEffort: 'max' }), route: gemini, role: 'worker', explicitEffort: undefined, policy, signal, logger,
+      source: source(catalog), parent: parent({ ...GLM, reasoningEffort: 'max' }), route: gemini, explicitEffort: undefined, policy, signal, logger,
     })
     assert.equal(sibling.options?.reasoningEffort, undefined, 'same provider, another model: the parent\'s max is cleared and the Gemini default (low) counts')
     const elsewhere = await planChild({
-      source: source(catalog), parent: parent({ provider: 'azure-opencode', model: gemini.model, reasoningEffort: 'max' }), route: gemini, role: 'worker', explicitEffort: undefined, policy, signal, logger,
+      source: source(catalog), parent: parent({ provider: 'azure-opencode', model: gemini.model, reasoningEffort: 'max' }), route: gemini, explicitEffort: undefined, policy, signal, logger,
     })
     assert.equal(elsewhere.options?.reasoningEffort, undefined, 'same model id, another provider')
   })
@@ -96,38 +96,32 @@ const withoutLimit = (overrides: Partial<AgentLike['options']> = {}): AgentLike 
 describe('planChild with a picked route', () => {
   it('caps a worker that would think at max, and its output ceiling', async () => {
     const llm = source(catalog)
-    const plan = await planChild({ source: llm, parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: undefined, policy, signal, logger })
+    const plan = await planChild({ source: llm, parent: parent(), route: DEEPSEEK, explicitEffort: undefined, policy, signal, logger })
     assert.deepEqual(plan.options, { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash', reasoningEffort: 'medium', maxTokens: 64_000 })
     assert.equal(plan.effective, 'medium')
     assert.deepEqual(plan.ladder, ['off', 'low', 'medium', 'high', 'xhigh', 'max'])
     assert.match(plan.summary, /effort medium \(capped, ceiling medium\)/)
   })
 
-  it('gives a DeepSeek Flash reviewer a lower ceiling than the worker, from the model profile', async () => {
-    const plan = await planChild({ source: source(catalog), parent: parent(), route: DEEPSEEK, role: 'reviewer', explicitEffort: undefined, policy, signal, logger })
-    assert.equal(plan.options?.reasoningEffort, 'low')
-    assert.equal(plan.options?.maxTokens, 32_000)
-  })
-
-  it('lets a Sonnet reviewer think at high but not at max', async () => {
-    const plan = await planChild({ source: source(catalog), parent: parent(), route: SONNET, role: 'reviewer', explicitEffort: undefined, policy, signal, logger })
+  it('gives a Sonnet subagent the profile ceiling of high, not the route default of max', async () => {
+    const plan = await planChild({ source: source(catalog), parent: parent(), route: SONNET, explicitEffort: undefined, policy, signal, logger })
     assert.equal(plan.options?.reasoningEffort, 'high')
   })
 
   it('keeps an explicit level, above the ceiling or not', async () => {
-    const plan = await planChild({ source: source(catalog), parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: 'xhigh', policy, signal, logger })
+    const plan = await planChild({ source: source(catalog), parent: parent(), route: DEEPSEEK, explicitEffort: 'xhigh', policy, signal, logger })
     assert.equal(plan.options?.reasoningEffort, 'xhigh')
     assert.match(plan.summary, /explicit/)
   })
 
   it('honors the operator ceiling over the model profile', async () => {
-    const plan = await planChild({ source: source(catalog), parent: parent(), route: DEEPSEEK, role: 'reviewer', explicitEffort: undefined, policy: { ...policy, caps: { reviewer: 'high' } }, signal, logger })
+    const plan = await planChild({ source: source(catalog), parent: parent(), route: DEEPSEEK, explicitEffort: undefined, policy: { ...policy, cap: 'high' }, signal, logger })
     assert.equal(plan.options?.reasoningEffort, 'high')
   })
 
   it('leaves a route alone when its default is already within the ceiling and its ceiling is already low', async () => {
     const plan = await planChild({
-      source: source(catalog), parent: withoutLimit(), route: { provider: 'openrouter', model: 'google/gemini-3.8-flash' }, role: 'worker', explicitEffort: undefined, policy, signal, logger,
+      source: source(catalog), parent: withoutLimit(), route: { provider: 'openrouter', model: 'google/gemini-3.8-flash' }, explicitEffort: undefined, policy, signal, logger,
     })
     assert.deepEqual(plan.options, { provider: 'openrouter', model: 'google/gemini-3.8-flash' })
     assert.equal(plan.effective, 'low')
@@ -136,22 +130,20 @@ describe('planChild with a picked route', () => {
   it('gives a route the limit it can honor when the parent\'s own token limit would be handed down to it (DSH inherits it on every route)', async () => {
     // The parent has a 128K creation limit; Gemini allows 32K, so the child would be refused at 128K.
     const plan = await planChild({
-      source: source(catalog), parent: parent(), route: { provider: 'openrouter', model: 'google/gemini-3.8-flash' }, role: 'worker', explicitEffort: undefined, policy, signal, logger,
+      source: source(catalog), parent: parent(), route: { provider: 'openrouter', model: 'google/gemini-3.8-flash' }, explicitEffort: undefined, policy, signal, logger,
     })
     assert.deepEqual(plan.options, { provider: 'openrouter', model: 'google/gemini-3.8-flash', maxTokens: 32_000 })
   })
 
   it('walks a ladder that skips rungs (GLM offers low, high, max)', async () => {
-    const plan = await planChild({ source: source(catalog), parent: parent(), route: GLM, role: 'worker', explicitEffort: undefined, policy, signal, logger })
-    assert.equal(plan.options?.reasoningEffort, 'high') // the GLM profile allows the worker up to high
-    const reviewer = await planChild({ source: source(catalog), parent: parent(), route: GLM, role: 'reviewer', explicitEffort: undefined, policy, signal, logger })
-    assert.equal(reviewer.options?.reasoningEffort, 'low')
+    const plan = await planChild({ source: source(catalog), parent: parent(), route: GLM, explicitEffort: undefined, policy, signal, logger })
+    assert.equal(plan.options?.reasoningEffort, 'high') // the GLM profile allows a subagent up to high
   })
 
   it('sends no effort to a model without reasoning levels, and drops an explicit one with a warning', async () => {
     logs.length = 0
     const plan = await planChild({
-      source: source(catalog), parent: withoutLimit(), route: { provider: 'openrouter', model: 'plain-model' }, role: 'worker', explicitEffort: 'high', policy, signal, logger,
+      source: source(catalog), parent: withoutLimit(), route: { provider: 'openrouter', model: 'plain-model' }, explicitEffort: 'high', policy, signal, logger,
     })
     assert.deepEqual(plan.options, { provider: 'openrouter', model: 'plain-model' })
     assert.deepEqual(plan.ladder, [])
@@ -160,10 +152,10 @@ describe('planChild with a picked route', () => {
 
   it('does not lower an output ceiling that is already below the cap', async () => {
     const small = source({ 'a/b': { reasoning: { ...ladder('low'), defaultEffort: 'low' }, defaultMaxTokens: 8000 } })
-    const plan = await planChild({ source: small, parent: withoutLimit(), route: { provider: 'a', model: 'b' }, role: 'worker', explicitEffort: undefined, policy, signal, logger })
+    const plan = await planChild({ source: small, parent: withoutLimit(), route: { provider: 'a', model: 'b' }, explicitEffort: undefined, policy, signal, logger })
     assert.equal(plan.options?.maxTokens, undefined, 'the route\'s own 8000 is what the child gets')
     // A parent with a limit of its own hands it down on every route: the child would run at 128K on an 8K model.
-    const inherited = await planChild({ source: small, parent: parent(), route: { provider: 'a', model: 'b' }, role: 'worker', explicitEffort: undefined, policy, signal, logger })
+    const inherited = await planChild({ source: small, parent: parent(), route: { provider: 'a', model: 'b' }, explicitEffort: undefined, policy, signal, logger })
     assert.equal(inherited.options?.maxTokens, 8000, 'never above what the model itself allows')
   })
 })
@@ -172,7 +164,7 @@ describe('planChild when the model cannot be described or the call is cancelled'
   it('says why in `unresolved` and degrades to the user\'s pick (a model the catalog no longer knows)', async () => {
     logs.length = 0
     const plan = await planChild({
-      source: source({}), parent: withoutLimit(), route: { provider: 'azure-opencode', model: 'Retired-Model' }, role: 'worker', explicitEffort: 'high', policy, signal, logger,
+      source: source({}), parent: withoutLimit(), route: { provider: 'azure-opencode', model: 'Retired-Model' }, explicitEffort: 'high', policy, signal, logger,
     })
     assert.deepEqual(plan.options, { provider: 'azure-opencode', model: 'Retired-Model', reasoningEffort: 'high' })
     assert.match(plan.unresolved ?? '', /no azure-opencode\/Retired-Model/)
@@ -180,18 +172,18 @@ describe('planChild when the model cannot be described or the call is cancelled'
   })
 
   it('has no `unresolved` when nothing went wrong, when the policy is off or when there is no LLM runtime', async () => {
-    const ok = await planChild({ source: source(catalog), parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: undefined, policy, signal, logger })
+    const ok = await planChild({ source: source(catalog), parent: parent(), route: DEEPSEEK, explicitEffort: undefined, policy, signal, logger })
     assert.equal(ok.unresolved, undefined)
-    const off = await planChild({ source: source({}), parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: undefined, policy: { ...policy, enabled: false }, signal, logger })
+    const off = await planChild({ source: source({}), parent: parent(), route: DEEPSEEK, explicitEffort: undefined, policy: { ...policy, enabled: false }, signal, logger })
     assert.equal(off.unresolved, undefined)
-    const none = await planChild({ source: undefined, parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: undefined, policy, signal, logger })
+    const none = await planChild({ source: undefined, parent: parent(), route: DEEPSEEK, explicitEffort: undefined, policy, signal, logger })
     assert.equal(none.unresolved, undefined)
   })
 
   it('does not wait for a lookup that ignores the signal once the caller cancelled, and rejects with an Error whatever the reason was', async () => {
     const controller = new AbortController()
     const stuck: ModelInfoSourceLike = { resolveModelInfo: () => new Promise(() => undefined) }
-    const pending = planChild({ source: stuck, parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: undefined, policy, signal: controller.signal, logger })
+    const pending = planChild({ source: stuck, parent: parent(), route: DEEPSEEK, explicitEffort: undefined, policy, signal: controller.signal, logger })
     controller.abort('the workflow was cancelled') // a string reason, as the workflow engine aborts with
     await assert.rejects(pending, (error: unknown) => error instanceof Error && error.message === 'the workflow was cancelled')
   })
@@ -200,15 +192,15 @@ describe('planChild when the model cannot be described or the call is cancelled'
     const controller = new AbortController()
     controller.abort(new Error('already cancelled'))
     const llm = source(catalog)
-    await assert.rejects(planChild({ source: llm, parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: undefined, policy, signal: controller.signal, logger }), /already cancelled/)
+    await assert.rejects(planChild({ source: llm, parent: parent(), route: DEEPSEEK, explicitEffort: undefined, policy, signal: controller.signal, logger }), /already cancelled/)
     assert.deepEqual(llm.asked, [])
   })
 
   it('leaves no listener on the caller\'s signal, whether the lookup worked or failed: a workflow shares one signal across all its agents', async () => {
     const controller = new AbortController()
     for (let child = 0; child < 12; child += 1) {
-      await planChild({ source: source(catalog), parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: undefined, policy, signal: controller.signal, logger })
-      await planChild({ source: source({}), parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: undefined, policy, signal: controller.signal, logger })
+      await planChild({ source: source(catalog), parent: parent(), route: DEEPSEEK, explicitEffort: undefined, policy, signal: controller.signal, logger })
+      await planChild({ source: source({}), parent: parent(), route: DEEPSEEK, explicitEffort: undefined, policy, signal: controller.signal, logger })
     }
     assert.equal(getEventListeners(controller.signal, 'abort').length, 0)
   })
@@ -217,7 +209,7 @@ describe('planChild when the model cannot be described or the call is cancelled'
     const aborted = (reason: unknown): Promise<unknown> => {
       const controller = new AbortController()
       controller.abort(reason)
-      return planChild({ source: source(catalog), parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: undefined, policy, signal: controller.signal, logger })
+      return planChild({ source: source(catalog), parent: parent(), route: DEEPSEEK, explicitEffort: undefined, policy, signal: controller.signal, logger })
     }
     const original = new Error('the user cancelled')
     await assert.rejects(aborted(original), (error: unknown) => error === original)
@@ -271,14 +263,14 @@ describe('assertChoiceUsable: refusing a confirmed route the runtime can no long
 
 describe('planChild inheriting the parent route', () => {
   it('lowers the parent\'s level only when it is above the ceiling, and keeps provider and model out of the options', async () => {
-    const plan = await planChild({ source: source(catalog), parent: parent(), route: null, role: 'worker', explicitEffort: undefined, policy, signal, logger })
+    const plan = await planChild({ source: source(catalog), parent: parent(), route: null, explicitEffort: undefined, policy, signal, logger })
     assert.deepEqual(plan.options, { reasoningEffort: 'high', maxTokens: 64_000 }) // Sonnet's profile ceiling for a worker is high
     assert.deepEqual(plan.route, SONNET)
   })
 
   it('inherits untouched when the parent already runs within the ceiling', async () => {
     const plan = await planChild({
-      source: source(catalog), parent: parent({ reasoningEffort: 'medium', maxTokens: 16_000 }), route: null, role: 'worker', explicitEffort: undefined, policy, signal, logger,
+      source: source(catalog), parent: parent({ reasoningEffort: 'medium', maxTokens: 16_000 }), route: null, explicitEffort: undefined, policy, signal, logger,
     })
     assert.equal(plan.options, undefined)
     assert.equal(plan.effective, 'medium')
@@ -290,13 +282,13 @@ describe('planChild inheriting the parent route', () => {
       session: { ...fakeAgent().session, requestHeader: () => ({ config: { provider: DEEPSEEK.provider, model: DEEPSEEK.model, reasoningEffort: 'max' } }) },
     }
     const llm = source(catalog)
-    const plan = await planChild({ source: llm, parent: live, route: null, role: 'reviewer', explicitEffort: undefined, policy, signal, logger })
+    const plan = await planChild({ source: llm, parent: live, route: null, explicitEffort: undefined, policy, signal, logger })
     assert.deepEqual(llm.asked, ['azure-opencode/DeepSeek-V4.1-Flash'])
-    assert.equal(plan.options?.reasoningEffort, 'low')
+    assert.equal(plan.options?.reasoningEffort, 'medium')
   })
 
   it('uses the explicit level for an inherited route too', async () => {
-    const plan = await planChild({ source: source(catalog), parent: parent(), route: null, role: 'worker', explicitEffort: 'low', policy, signal, logger })
+    const plan = await planChild({ source: source(catalog), parent: parent(), route: null, explicitEffort: 'low', policy, signal, logger })
     assert.equal(plan.options?.reasoningEffort, 'low')
   })
 
@@ -305,7 +297,7 @@ describe('planChild inheriting the parent route', () => {
       ...parent(),
       session: { ...fakeAgent().session, requestHeader: () => ({ config: { provider: SONNET.provider, model: SONNET.model, reasoningEffort: 'low' } }) },
     }
-    const plan = await planChild({ source: source(catalog), parent: live, route: null, role: 'worker', explicitEffort: undefined, policy, signal, logger })
+    const plan = await planChild({ source: source(catalog), parent: live, route: null, explicitEffort: undefined, policy, signal, logger })
     assert.equal(plan.effective, 'low')
     assert.equal(plan.options?.reasoningEffort, undefined, 'already within the ceiling: nothing to override')
   })
@@ -314,21 +306,21 @@ describe('planChild inheriting the parent route', () => {
 describe('planChild degrades to what the user picked', () => {
   it('with the policy off', async () => {
     const llm = source(catalog)
-    const plan = await planChild({ source: llm, parent: parent(), route: { ...DEEPSEEK, reasoningEffort: 'max' }, role: 'worker', explicitEffort: 'max', policy: { ...policy, enabled: false }, signal, logger })
+    const plan = await planChild({ source: llm, parent: parent(), route: { ...DEEPSEEK, reasoningEffort: 'max' }, explicitEffort: 'max', policy: { ...policy, enabled: false }, signal, logger })
     assert.deepEqual(plan.options, { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash', reasoningEffort: 'max' })
     assert.deepEqual(llm.asked, [])
     assert.equal(plan.ladder, undefined)
   })
 
   it('without an LLM runtime, with nothing to say', async () => {
-    assert.equal((await planChild({ source: undefined, parent: parent(), route: null, role: 'worker', explicitEffort: undefined, policy, signal, logger })).options, undefined)
-    const picked = await planChild({ source: undefined, parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: undefined, policy, signal, logger })
+    assert.equal((await planChild({ source: undefined, parent: parent(), route: null, explicitEffort: undefined, policy, signal, logger })).options, undefined)
+    const picked = await planChild({ source: undefined, parent: parent(), route: DEEPSEEK, explicitEffort: undefined, policy, signal, logger })
     assert.deepEqual(picked.options, { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash' })
   })
 
   it('when the model cannot be described', async () => {
     logs.length = 0
-    const plan = await planChild({ source: source({}), parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: 'low', policy, signal, logger })
+    const plan = await planChild({ source: source({}), parent: parent(), route: DEEPSEEK, explicitEffort: 'low', policy, signal, logger })
     assert.deepEqual(plan.options, { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash', reasoningEffort: 'low' })
     assert.ok(logs.some(line => /cannot describe azure-opencode\/DeepSeek-V4\.1-Flash/.test(line)))
   })
@@ -336,7 +328,7 @@ describe('planChild degrades to what the user picked', () => {
   it('propagates a cancellation that surfaces while the model is being described', async () => {
     const controller = new AbortController()
     const aborting: ModelInfoSourceLike = { resolveModelInfo: () => { controller.abort(new Error('user stop')); return Promise.reject(new Error('aborted')) } }
-    await assert.rejects(planChild({ source: aborting, parent: parent(), route: DEEPSEEK, role: 'worker', explicitEffort: undefined, policy, signal: controller.signal, logger }), /user stop/)
+    await assert.rejects(planChild({ source: aborting, parent: parent(), route: DEEPSEEK, explicitEffort: undefined, policy, signal: controller.signal, logger }), /user stop/)
   })
 })
 

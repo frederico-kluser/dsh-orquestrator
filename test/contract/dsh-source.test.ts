@@ -35,44 +35,14 @@ describe('DSH source contract', { skip: skip ? 'set DSH_CHECKOUT to a DeepSeek H
     assert.match(version, /^0\.1\.6/, `tested on 0.1.6-alpha.x, found ${version}`)
   })
 
-  it('tools/execute is an around-dispatch waterfall whose substituted value is re-validated against the tool schema', () => {
-    const tools = read('packages/core/tools/src/index.ts')
-    assert.match(tools, /'tools\/execute'\(this: Scoped<ToolRuntime>, exec: ToolDispatchExecution, next: \(\) => Promise<ToolExecutionResult>\): Promise<ToolExecutionResult>/)
-    assert.match(tools, /private normalizeDispatchResult\(exec: ToolExecution, result: ToolExecutionResult\)/)
-    assert.match(tools, /const normalized = this\.createSuccessResult\(exec, tool, result\.value\)/)
-    assert.match(tools, /Input rewriting is excluded/) // why the wrapper substitutes the result instead of rewriting args
-  })
-
-  it('the subagent tool output schema still has the foreground and continuable shapes', () => {
-    const tool = read('packages/subagent/tool-subagent/src/index.ts')
-    assert.match(tool, /kind: 'foreground'/)
-    assert.match(tool, /runId/)
-    assert.match(tool, /kind: 'continuable'/)
-    assert.match(tool, /subagentId/)
-    assert.match(tool, /backgroundMode\?: 'one-shot' \| 'continuable'/)
-    assert.match(tool, /toolName\?: string/)
-  })
-
-  it('the standard preset still delegates through subagent (spawn) and subagent_fork (fork), both continuable', () => {
-    const preset = read('packages/preset/agent-presets/presets/standard/agent.cordis.yml')
-    assert.match(preset, /provider: spawn\s+toolName: subagent\s+modelSelectionSettings: true\s+backgroundMode: continuable/)
-    assert.match(preset, /provider: fork\s+toolName: subagent_fork\s+backgroundMode: continuable/)
-  })
-
-  it('SubagentRuntime keeps start/startContinuable/resolveMaxDepth/getProvider and the request fields', () => {
+  it('SubagentRuntime keeps start/startContinuable/getProvider and the request fields the guard reads', () => {
     const runtime = read('packages/subagent/subagent/src/index.ts')
     assert.match(runtime, /async startContinuable\(spec: ContinuableStartSpec\): Promise<ContinuableStart>/)
-    assert.match(runtime, /resolveMaxDepth\(configured\?: number \| 'provider-managed'\): number \| undefined/)
+    assert.match(runtime, /getProvider\(/)
     const types = read('packages/subagent/subagent/src/types.ts')
-    for (const field of ['agentOptions', 'persona', 'maxDepth', 'toolFilter', 'outputSchema']) assert.match(types, new RegExp(`\\b${field}\\b`))
+    for (const field of ['agentOptions', 'parent', 'signal', 'prompt']) assert.match(types, new RegExp(`\\b${field}\\b`))
     const spawn = read('packages/subagent/subagent-spawn-in-process/src/index.ts')
-    assert.match(spawn, /agentOptions: true,\s+outputSchema: true,\s+depthLimit: true,\s+toolFilter: true,\s+persona: true/)
-  })
-
-  it('the delivery paths the reviewer replaces still exist (settlement notice + child send_message guidance)', () => {
-    const messages = read('packages/subagent/subagent/src/continuation-messages.ts')
-    assert.match(messages, /kind: 'subagent-settled'/)
-    assert.match(messages, /send_message/)
+    assert.match(spawn, /agentOptions: true/)
   })
 
   it('SessionFace.prompt keeps its shape and beginSubmission still precedes it', () => {
@@ -101,7 +71,7 @@ describe('DSH source contract', { skip: skip ? 'set DSH_CHECKOUT to a DeepSeek H
 
   it('the primitives this plugin renders are still exported, with the props it passes', () => {
     const index = read('packages/client/ui-primitives/src/index.ts')
-    for (const name of ['Modal', 'Button', 'Switch', 'Checkbox', 'Menu', 'IconAgentPresetOutline16', 'IconShieldOutline16']) {
+    for (const name of ['Modal', 'Button', 'Switch', 'Checkbox', 'Menu', 'IconAgentPresetOutline16']) {
       assert.match(index + read('packages/client/ui-primitives/src/icons/index.tsx'), new RegExp(`\\b${name}\\b`))
     }
     const modal = read('packages/client/ui-primitives/src/Modal.tsx')
@@ -144,24 +114,6 @@ describe('DSH source contract', { skip: skip ? 'set DSH_CHECKOUT to a DeepSeek H
     assert.match(types, /export interface ModelReasoning \{\s+readonly efforts: readonly ModelReasoningEffort\[\]\s+readonly defaultEffort\?: string/)
     assert.match(types, /readonly reasoning\?: ModelReasoning/)
     assert.match(read('packages/api/session-controller/src/catalog.ts'), /efforts: resolved\.reasoning\.efforts\.map/)
-  })
-
-  it('the spawn provider answers a structured request through the cooperative structured_output tool, and settles a plain-text finish as an error', () => {
-    const structured = read('packages/subagent/subagent-in-process-driver/src/structured.ts')
-    assert.match(structured, /export const STRUCTURED_OUTPUT_TOOL = 'structured_output'/)
-    assert.match(structured, /exec\.concludeTurn\(\)/)
-    assert.match(structured, /validateJsonSchemaValue\(schema, args\)/)
-    assert.match(structured, /Do not finish with a plain text answer/)
-    const driver = read('packages/subagent/subagent-in-process-driver/src/index.ts')
-    assert.match(driver, /return \{ output, structured: structured\.captured\.value, stopReason \}/)
-    assert.match(driver, /if \(stopReason === 'completed'\) return \{ output, stopReason: cancelled \? 'aborted' : 'error' \}/)
-    const schema = read('packages/core/tools/src/json-schema.ts')
-    for (const keyword of ["'type'", "'oneOf'", "'properties'", "'required'", "'additionalProperties'", "'items'", "'enum'", "'const'"]) assert.ok(schema.includes(keyword), keyword)
-    assert.equal(/minItems|maxLength|pattern/.test(schema.slice(schema.indexOf('CONSTRAINT_KEYWORDS'), schema.indexOf('ANNOTATION_KEYWORDS'))), false)
-  })
-
-  it('a per-child tool restriction still names unknown tools loudly, which is why the reviewer gets no static deny-list', () => {
-    assert.match(read('packages/core/tools/src/index.ts'), /tools\.restrict\(\) names unknown global tool/)
   })
 
   it('DeepSeek\'s own route is deepseek-official and still lists deepseek-v4-pro next to deepseek-flash', () => {

@@ -16,7 +16,7 @@ import { pathToFileURL } from 'node:url'
 import { parsePluginConfig } from '../../src/config.ts'
 import { childPolicyOf, planChild } from '../../src/effort.ts'
 import { capFor, rankOf } from '../../src/models.ts'
-import { installGuard, startPlanned, type GuardDeps } from '../../src/guard.ts'
+import { installGuard, isGoverned, type GuardDeps } from '../../src/guard.ts'
 import type { AgentLike, AgentOptionsLike, ContinuableStartSpecLike, ModelInfoLike, ModelInfoSourceLike, SubagentStartRequestLike, SubagentsLike } from '../../src/host-services.ts'
 import { buildConfig } from '../../src/shared.ts'
 import { ConfigStore } from '../../src/store.ts'
@@ -74,7 +74,7 @@ async function runtime(): Promise<{ ctx: CordisLike; received: { agentOptions?: 
 
 function deps(subagents: SubagentsLike, overrides: Partial<GuardDeps> = {}): GuardDeps {
   const store = new ConfigStore({ maxSessions: 4 })
-  store.set('main', buildConfig({ subagentModel: DEEPSEEK, reviewerEnabled: false, reviewerModel: null }))
+  store.set('main', buildConfig({ subagentModel: DEEPSEEK }))
   return {
     subagents, store, defaults: null, parentOf: () => undefined, config: parsePluginConfig(undefined),
     models: () => models, logger: { info: () => undefined, warn: () => undefined }, ...overrides,
@@ -133,18 +133,14 @@ describe('the start guard on the real SubagentRuntime', { skip: skip ? 'set DSH_
     assert.equal(seen[0]?.label, 'a task')
   })
 
-  it('keeps the plugin\'s own starts out of the guard through the real proxies (the marker is the request object itself)', async () => {
+  it('plans a child once even when two guards stand in the real doors (the mark is on the copy the guard hands down), the newer configuration winning', async () => {
     const { ctx, received } = await runtime()
-    await ctx.plugin(function orquestrator(pluginCtx: CordisLike) { installGuard(deps(pluginCtx.get('subagents') as SubagentsLike)) })
-    // The pipeline reaches the service through its own proxy, not the guard's.
-    let pipeline: SubagentsLike | undefined
-    await ctx.plugin(function pipelinePlugin(pipelineCtx: CordisLike) { pipeline = pipelineCtx.get('subagents') as SubagentsLike })
-    assert.ok(pipeline)
-    const ownOptions = { provider: 'openrouter-extra', model: 'xiaomi/mimo-v2.6-pro', reasoningEffort: 'medium' }
-    await startPlanned(pipeline, 'spawn', { ...startRequest(), agentOptions: ownOptions })
-    assert.deepEqual(received[0]?.agentOptions, ownOptions, 'a planned request reaches the provider untouched')
-    await pipeline.start('spawn', { ...startRequest(), agentOptions: ownOptions })
-    assert.deepEqual(received[1]?.agentOptions, { ...DEEPSEEK, reasoningEffort: 'medium', maxTokens: 64_000 }, 'the same request, unmarked, is governed')
+    await ctx.plugin(function older(pluginCtx: CordisLike) { installGuard(deps(pluginCtx.get('subagents') as SubagentsLike, { config: parsePluginConfig({ effort: { worker: 'high' } }) })) })
+    await ctx.plugin(function newer(pluginCtx: CordisLike) { installGuard(deps(pluginCtx.get('subagents') as SubagentsLike, { config: parsePluginConfig({ effort: { worker: 'low' } }) })) })
+    const req = startRequest()
+    await ctx.subagents.start('spawn', req)
+    assert.deepEqual(received[0]?.agentOptions, { ...DEEPSEEK, reasoningEffort: 'low', maxTokens: 64_000 })
+    assert.equal(isGoverned(req), false, 'the caller\'s own request is never marked')
   })
 
   it('still lets DSH reject what DSH rejects (an unknown provider is the real start\'s error)', async () => {
@@ -178,15 +174,13 @@ describe('the start guard on the real SubagentRuntime', { skip: skip ? 'set DSH_
     const logger = { info: () => undefined, warn: () => undefined }
     for (const who of [on(SONNET, 'max', 128_000), on(SONNET, 'max'), on(DEEPSEEK, 'high', 128_000), on(GEMINI, 'high', 200_000), on(GEMINI, 'low', 8_000), on(GLM, 'max')]) {
       for (const route of [null, DEEPSEEK, GEMINI]) {
-        for (const role of ['worker', 'reviewer'] as const) {
-          const plan = await planChild({ source, parent: who, route, role, explicitEffort: undefined, policy, signal: new AbortController().signal, logger })
-          const child = resolveChildAgentOptions(who, plan.options, 1) // what DSH would really create
-          const found = described[`${child.provider}/${child.model}`] as ModelInfoLike
-          const where = `${who.options.model} at ${who.options.reasoningEffort}, ${who.options.maxTokens ?? 'no'} limit -> ${route?.model ?? 'its own route'} (${role})`
-          const effort = child.reasoningEffort ?? found.reasoning?.defaultEffort
-          assert.ok(rankOf(effort ?? 'off') <= rankOf(capFor(child as { provider: string; model: string }, role)), `${where}: the child thinks at ${String(effort)}`)
-          assert.ok((child.maxTokens ?? found.defaultMaxTokens ?? 0) <= (policy.maxTokens[role] ?? Infinity), `${where}: the child may write ${String(child.maxTokens)} tokens`)
-        }
+        const plan = await planChild({ source, parent: who, route, explicitEffort: undefined, policy, signal: new AbortController().signal, logger })
+        const child = resolveChildAgentOptions(who, plan.options, 1) // what DSH would really create
+        const found = described[`${child.provider}/${child.model}`] as ModelInfoLike
+        const where = `${who.options.model} at ${who.options.reasoningEffort}, ${who.options.maxTokens ?? 'no'} limit -> ${route?.model ?? 'its own route'}`
+        const effort = child.reasoningEffort ?? found.reasoning?.defaultEffort
+        assert.ok(rankOf(effort ?? 'off') <= rankOf(capFor(child as { provider: string; model: string })), `${where}: the child thinks at ${String(effort)}`)
+        assert.ok((child.maxTokens ?? found.defaultMaxTokens ?? 0) <= (policy.maxTokens ?? Infinity), `${where}: the child may write ${String(child.maxTokens)} tokens`)
       }
     }
   })

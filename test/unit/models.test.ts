@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import {
-  DEFAULT_CAPS, EFFORT_ORDER, MODEL_PROFILES, capFor, chooseEffort, familyOf, isEffortLevel, lineageOf, lowerEffort, notesFor,
-  profileOf, rankOf, sameFamily, sameModel,
-} from '../../src/models.ts'
+import { DEFAULT_CAP, EFFORT_ORDER, MODEL_PROFILES, capFor, chooseEffort, isEffortLevel, notesFor, profileOf, rankOf } from '../../src/models.ts'
 
 const route = (provider: string, model: string) => ({ provider, model })
 
@@ -28,66 +25,6 @@ const ROUTES = {
   mystery: route('acme', 'acme-ultra-1'),
 }
 
-describe('familyOf', () => {
-  it('reads the vendor from the model id, whatever the provider is called', () => {
-    assert.equal(familyOf(ROUTES.azureFlash), 'deepseek')
-    assert.equal(familyOf(ROUTES.orFlash), 'deepseek')
-    assert.equal(familyOf(ROUTES.azureSonnet), 'anthropic')
-    assert.equal(familyOf(ROUTES.orSonnet), 'anthropic')
-    assert.equal(familyOf(ROUTES.gemini), 'google')
-    assert.equal(familyOf(ROUTES.mimo), 'xiaomi')
-    assert.equal(familyOf(ROUTES.glmFlash), 'zai')
-    assert.equal(familyOf(ROUTES.kimi), 'moonshot')
-    assert.equal(familyOf(route('azure-opencode-claude', 'gpt-6-astra')), 'openai')
-    assert.equal(familyOf(route('x', 'o3-mini')), 'openai')
-    assert.equal(familyOf(route('x', 'qwen3.6-plus')), 'qwen')
-    assert.equal(familyOf(ROUTES.mystery), 'unknown')
-  })
-
-  it('does not take a provider name for a lineage', () => {
-    // `azure-opencode-claude` is only the name of a route; the model decides.
-    assert.equal(familyOf(route('azure-opencode-claude', 'DeepSeek-V4.1-Flash')), 'deepseek')
-  })
-})
-
-describe('lineageOf and sameModel', () => {
-  it('treats every spelling of the V4.1 Flash line as one model', () => {
-    const flash = [ROUTES.azureFlash, ROUTES.orFlash, ROUTES.officialFlash, ROUTES.betaFlash]
-    for (const a of flash) for (const b of flash) assert.equal(sameModel(a, b), true, `${a.model} vs ${b.model}`)
-  })
-
-  it('knows the official API serves deepseek-v4-pro and v4-flash from V4.1 Flash since 2026-09-14', () => {
-    assert.equal(sameModel(ROUTES.officialPro, ROUTES.officialFlash), true)
-    assert.equal(sameModel(ROUTES.officialOldFlash, ROUTES.officialFlash), true)
-    // On OpenRouter the Pro listing is its own endpoint: no alias is claimed there.
-    assert.equal(sameModel(ROUTES.orPro, ROUTES.orFlash), false)
-  })
-
-  it('matches one Claude model across Azure and OpenRouter spellings', () => {
-    assert.equal(sameModel(ROUTES.azureSonnet, ROUTES.orSonnet), true)
-    assert.equal(sameModel(ROUTES.azureSonnet, ROUTES.azureHaiku), false)
-  })
-
-  it('never merges different models', () => {
-    assert.equal(sameModel(ROUTES.glm, ROUTES.glmFlash), false)
-    assert.equal(sameModel(ROUTES.mimo, ROUTES.mimoFast), false)
-    assert.notEqual(lineageOf(ROUTES.mystery), lineageOf(route('acme', 'acme-ultra-2')))
-  })
-})
-
-describe('sameFamily', () => {
-  it('is true inside a vendor and false across vendors', () => {
-    assert.equal(sameFamily(ROUTES.officialPro, ROUTES.azureFlash), true)
-    assert.equal(sameFamily(ROUTES.azureSonnet, ROUTES.azureHaiku), true)
-    assert.equal(sameFamily(ROUTES.azureFlash, ROUTES.azureSonnet), false)
-    assert.equal(sameFamily(ROUTES.glm, ROUTES.mimo), false)
-  })
-
-  it('never says two unknown models share a family', () => {
-    assert.equal(sameFamily(ROUTES.mystery, route('acme', 'acme-ultra-1')), false)
-  })
-})
-
 describe('profiles', () => {
   it('matches the most specific row first', () => {
     assert.equal(profileOf(ROUTES.officialPro)?.id, 'deepseek-v4-pro-official')
@@ -105,34 +42,34 @@ describe('profiles', () => {
 
   it('applies the V4-Pro redirect advice only on the official route', () => {
     assert.equal(profileOf(ROUTES.orPro), undefined)
-    assert.deepEqual(notesFor(ROUTES.officialPro, 'worker'), ['redirected', 'overthinks'])
+    assert.deepEqual(notesFor(ROUTES.officialPro), ['redirected', 'overthinks'])
   })
 
   it('dates every row and names its sources', () => {
     for (const profile of MODEL_PROFILES) {
       assert.match(profile.verifiedAt, /^\d{4}-\d{2}-\d{2}$/, profile.id)
       assert.ok(profile.sources.length > 0, profile.id)
-      for (const cap of Object.values(profile.caps)) assert.ok(isEffortLevel(cap), `${profile.id} cap ${cap}`)
+      if (profile.cap !== undefined) assert.ok(isEffortLevel(profile.cap), `${profile.id} cap ${profile.cap}`)
     }
     assert.equal(new Set(MODEL_PROFILES.map(profile => profile.id)).size, MODEL_PROFILES.length)
   })
 
-  it('never advises `max` or `xhigh` for either role (no study supports it)', () => {
+  it('never advises `max` or `xhigh` for a subagent (no study supports it)', () => {
     for (const profile of MODEL_PROFILES) {
-      for (const cap of Object.values(profile.caps)) assert.ok(rankOf(cap) <= rankOf('high'), `${profile.id} caps at ${cap}`)
+      if (profile.cap !== undefined) assert.ok(rankOf(profile.cap) <= rankOf('high'), `${profile.id} caps at ${profile.cap}`)
     }
   })
 })
 
 describe('capFor', () => {
   it('prefers the operator, then the profile, then the generic cap', () => {
-    assert.equal(capFor(ROUTES.azureFlash, 'worker'), 'medium')
-    assert.equal(capFor(ROUTES.azureFlash, 'reviewer'), 'low')
-    assert.equal(capFor(ROUTES.azureFlash, 'reviewer', 'high'), 'high')
-    assert.equal(capFor(ROUTES.azureSonnet, 'reviewer'), 'high')
-    assert.equal(capFor(ROUTES.mystery, 'worker'), DEFAULT_CAPS.worker)
-    assert.equal(capFor(undefined, 'reviewer'), DEFAULT_CAPS.reviewer)
-    assert.equal(capFor(ROUTES.azureFlash, 'worker', 'turbo'), 'medium') // a typo in the override is ignored
+    assert.equal(capFor(ROUTES.azureFlash), 'medium')
+    assert.equal(capFor(ROUTES.azureFlash, 'high'), 'high')
+    assert.equal(capFor(ROUTES.mimo), 'low')
+    assert.equal(capFor(ROUTES.azureSonnet), 'high')
+    assert.equal(capFor(ROUTES.mystery), DEFAULT_CAP)
+    assert.equal(capFor(undefined), DEFAULT_CAP)
+    assert.equal(capFor(ROUTES.azureFlash, 'turbo'), 'medium') // a typo in the override is ignored
   })
 })
 
@@ -185,17 +122,6 @@ describe('chooseEffort', () => {
 
   it('ignores ladder ids DSH does not define', () => {
     assert.deepEqual(chooseEffort({ ladder: ['turbo', 'low', 'high'], current: 'high', explicit: undefined, cap: 'medium' }), { effort: 'low', reason: 'capped' })
-  })
-})
-
-describe('lowerEffort', () => {
-  it('steps down the model\'s own ladder and never to off', () => {
-    assert.equal(lowerEffort(['off', 'low', 'medium', 'high', 'max'], 'max'), 'high')
-    assert.equal(lowerEffort(['off', 'low', 'medium', 'high', 'max'], 'medium'), 'low')
-    assert.equal(lowerEffort(['low', 'high', 'max'], 'high'), 'low')
-    assert.equal(lowerEffort(['off', 'low', 'medium'], 'low'), undefined)
-    assert.equal(lowerEffort(['low', 'high'], undefined), undefined)
-    assert.equal(lowerEffort(['low', 'high'], 'turbo'), undefined)
   })
 })
 

@@ -8,7 +8,7 @@ import { ConfigStore } from '../../src/store.ts'
 import type { ConnectionLike, LlmLike, WebServerLike } from '../../src/host-services.ts'
 
 const route = { provider: 'openrouter', model: 'google/gemini-3.8-flash' }
-const valid = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: null })
+const valid = buildConfig({ subagentModel: route, workerEffort: 'high' })
 
 let server: Server
 let base: string
@@ -84,10 +84,17 @@ describe('config route', () => {
     assert.equal((await post({ config: valid })).status, 400)
     assert.equal((await post({ sessionId: 's' })).status, 400)
     assert.equal((await post({ sessionId: 's'.repeat(300), config: valid })).status, 400)
-    const bad = await post({ sessionId: 's-bad', config: { version: 1, reviewer: { enabled: 'x' } } })
+    const bad = await post({ sessionId: 's-bad', config: { version: 1, subagentModel: { provider: 'p' } } })
     assert.equal(bad.status, 422)
     assert.equal(((await bad.json()) as { code: string }).code, 'invalid-config')
     assert.equal(store.get('s-bad'), undefined)
+  })
+
+  it('accepts what a stale tab running the 0.4.0 dialog posts (a reviewer block) and stores only the model and the effort', async () => {
+    const stale = { version: 1, subagentModel: route, workerEffort: 'low', reviewer: { enabled: true, model: { provider: 'p', model: 'm' }, effort: 'high' } }
+    const response = await post({ sessionId: 's-stale', config: stale })
+    assert.equal(response.status, 200)
+    assert.deepEqual(store.get('s-stale'), { version: 1, subagentModel: route, workerEffort: 'low' })
   })
 
   it('rejects an oversized body with 413 and stays usable', async () => {
@@ -102,21 +109,18 @@ describe('config route', () => {
     assert.equal(response.headers.get('allow'), 'GET, POST')
   })
 
-  it('validates every named route against the live LLM runtime before storing', async () => {
+  it('validates the named route against the live LLM runtime before storing', async () => {
     llm = {
       resolveCallConfig: (config) => {
         llmCalls.push(config)
         return config.model === 'ghost' ? Promise.reject(new Error('unknown model')) : Promise.resolve({})
       },
     }
-    const both = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: { provider: 'p', model: 'other', reasoningEffort: 'high' } })
-    assert.equal((await post({ sessionId: 's-llm', config: both })).status, 200)
-    assert.deepEqual(llmCalls, [
-      { provider: 'openrouter', model: 'google/gemini-3.8-flash' },
-      { provider: 'p', model: 'other', reasoningEffort: 'high' },
-    ])
+    const named = buildConfig({ subagentModel: { provider: 'p', model: 'other', reasoningEffort: 'high' } })
+    assert.equal((await post({ sessionId: 's-llm', config: named })).status, 200)
+    assert.deepEqual(llmCalls, [{ provider: 'p', model: 'other', reasoningEffort: 'high' }])
 
-    const ghost = buildConfig({ subagentModel: { provider: 'p', model: 'ghost' }, reviewerEnabled: false, reviewerModel: null })
+    const ghost = buildConfig({ subagentModel: { provider: 'p', model: 'ghost' } })
     const refused = await post({ sessionId: 's-ghost', config: ghost })
     assert.equal(refused.status, 422)
     const payload = (await refused.json()) as { code: string; message: string }

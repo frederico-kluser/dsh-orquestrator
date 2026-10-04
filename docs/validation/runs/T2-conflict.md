@@ -3,7 +3,7 @@
 The task asks for `add(a, b)` to return `a + b + 1` and for tests asserting `add(1, 1) === 2` and `add(2, 3) === 5`.
 
 Models, and only these three: main agent GLM 5.3, subagent DeepSeek V4.1 Flash, reviewer MiMo-V2.6-Pro.
-Produced by [`scripts/e2e/run-trio.sh`](../../../scripts/e2e/run-trio.sh).
+Produced by `scripts/e2e/run-trio.sh` (removed in 0.5.0 with the reviewer).
 
 ### The task the main agent was given
 

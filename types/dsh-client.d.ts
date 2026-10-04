@@ -26,7 +26,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export const IconAgentPresetOutline16: IconComponent
   export const IconCheckOutline16: IconComponent
   export const IconDataOutline16: IconComponent
-  export const IconShieldOutline16: IconComponent
   export const IconChevronDownOutline14: IconComponent
   export const IconLoadingOutline16: IconComponent
   export const IconWarningOutline16: IconComponent

@@ -1,29 +1,25 @@
 /**
- * The start guard: the one place every child of every delegation passes through.
+ * The start guard: the one place every child of every delegation passes through,
+ * and the plugin's only mechanism.
  *
- * Why it exists. Version 0.3 governed delegation by wrapping the model-facing
- * `subagent` and `subagent_fork` tools (`tool-wrapper.ts`). DSH has more ways to
- * start a child than those two tools: the `workflow` tool (and `ralph`, which
- * runs on the same engine) starts its agents through `ctx.subagents.start()`
- * itself, and so do a one-shot background `subagent` job and the experimental
- * agent team. None of them is a `subagent` tool call, so none reached the
- * plugin: a user who had confirmed "subagents run on DeepSeek V4.1 Flash" got
- * every workflow agent on the main agent's model at the main agent's effort
- * (34 Sonnet 5.5 agents at `max` in the session that exposed it).
+ * Why it exists. DSH has several ways to start a child: the `subagent` and
+ * `subagent_fork` tools, the `workflow` tool (and `ralph`, which runs on the same
+ * engine), a one-shot background `subagent` job and the experimental agent team.
+ * Only the first two are tools a plugin can wrap, and wrapping tools is the wrong
+ * place to enforce anything: the workflow engine starts its agents through
+ * `ctx.subagents.start()` itself, so a user who had confirmed "subagents run on
+ * DeepSeek V4.1 Flash" got every workflow agent on the main agent's model at the
+ * main agent's effort (34 Sonnet 5.5 agents at `max` in the session that exposed it).
  *
  * `SubagentRuntime.start` (one-shot) and `SubagentRuntime.startContinuable` are
  * the only doors: providers are called from `start` alone, and a child agent is
  * created from those two paths alone (`test/contract/dsh-source.test.ts` pins
  * both facts). The guard stands in them. For a session with a confirmed choice
- * it plans the child exactly as the pipeline plans a worker (the picked route,
- * the effort the user asked for or the ceiling, the output-token cap) and hands
- * the plan to DSH as the child's `agentOptions`.
- *
- * What the guard does not do: review. A reviewed delegation replaces the
- * worker's result with the reviewer's report; a workflow script consumes its
- * agents' results itself (often as schema-checked data), so substituting them
- * would break the script. Workflow agents get the model and the ceilings, not
- * the reviewer, and the dialog says so.
+ * it plans the child (the picked route, the effort the user asked for or the
+ * model's ceiling, the output-token cap) and hands the plan to DSH as the child's
+ * `agentOptions`. It is code acting on the harness, not a request to the model:
+ * the main agent cannot talk its way around it, and a workflow script that names
+ * another model is overruled (`children.explicitModel`).
  *
  * The seam. DSH offers no hook around a child start (`subagent/start` is a
  * notification that fires after the child exists), so the guard installs an own
@@ -56,75 +52,32 @@ import type {
 import { isActive, type ModelRoute, type OrchestratorConfig } from './shared.ts'
 import type { ConfigStore } from './store.ts'
 
+export { ChoiceUnusableError }
+
 /** Cordis' registered symbol under which a service proxy yields the instance behind it. */
 const CORDIS_ORIGINAL = Symbol.for('cordis.original')
 
 /**
- * Registered key of the process-wide set of requests the plugin planned itself.
- * Registered (not module-local) so a reloaded copy of the plugin and the copy it
- * replaces agree on what is already planned.
+ * Registered key of the own, enumerable property that marks a request the guard already planned. Object spread copies
+ * enumerable own symbols, so a wrapper stacked above the guard that normalizes the request with `{ ...request }` cannot
+ * strip the mark. It is put on the copy the guard hands to DSH, never on the caller's own object, so a second live guard
+ * (another copy of the plugin) plans each child once and the newer configuration wins.
  */
-const PLANNED_REGISTRY = Symbol.for('dsh-orquestrator.planned-requests')
+const GOVERNED_KEY = Symbol.for('dsh-orquestrator.governed')
 
 /**
- * Registered key of the own, enumerable property that carries the mark across a copy of the request: object spread
- * copies enumerable own symbols, so a wrapper stacked above the guard that normalizes the request with `{ ...request }`
- * cannot strip the mark and make the guard plan the pipeline's reviewer as a worker.
- */
-const PLANNED_KEY = Symbol.for('dsh-orquestrator.planned')
-
-function plannedRequests(): WeakSet<object> {
-  const holder = globalThis as unknown as Record<symbol, WeakSet<object> | undefined>
-  const existing = holder[PLANNED_REGISTRY]
-  if (existing !== undefined) return existing
-  const created = new WeakSet<object>()
-  holder[PLANNED_REGISTRY] = created
-  return created
-}
-
-/**
- * Record that the plugin planned a start request itself, so the guard leaves it alone.
- * @param request - the request (or continuable spec) about to be handed to DSH.
- * @returns the same object.
- */
-export function markPlanned<T extends object>(request: T): T {
-  plannedRequests().add(request)
-  // The WeakSet alone covers an object that cannot take a property (a frozen request).
-  if (Object.isExtensible(request)) Object.defineProperty(request, PLANNED_KEY, { value: true, enumerable: true, configurable: true })
-  return request
-}
-
-/**
- * Whether the plugin planned a start request itself, or a copy of one.
+ * Whether the guard already planned a start request, or the one it was copied from.
  * @param request - a request or continuable spec.
- * @returns true when {@link markPlanned} saw this very object or the object this one was copied from.
+ * @returns true for a request the guard produced.
  */
-export function isPlanned(request: object): boolean {
-  return plannedRequests().has(request) || (request as Record<symbol, unknown>)[PLANNED_KEY] === true
+export function isGoverned(request: object): boolean {
+  return (request as Record<symbol, unknown>)[GOVERNED_KEY] === true
 }
 
-export { ChoiceUnusableError }
-
-/**
- * Start a one-shot child the pipeline planned, bypassing the guard's own planning.
- * @param subagents - the delegation service.
- * @param provider - registered provider name.
- * @param request - the planned request.
- * @returns the holder-owned run.
- */
-export function startPlanned(subagents: SubagentsLike, provider: string, request: SubagentStartRequestLike): Promise<SubagentRunLike> {
-  return subagents.start(provider, markPlanned(request))
-}
-
-/**
- * Start a continuable child the pipeline planned, bypassing the guard's own planning.
- * @param subagents - the delegation service.
- * @param spec - the planned continuable start.
- * @returns the child id once the child accepted its first prompt.
- */
-export function startContinuablePlanned(subagents: SubagentsLike, spec: ContinuableStartSpecLike): Promise<ContinuableStartLike> {
-  markPlanned(spec.request)
-  return subagents.startContinuable(markPlanned(spec))
+/** Mark the guard's own copy as planned (the copy is always extensible). */
+function markGoverned<T extends object>(request: T): T {
+  Object.defineProperty(request, GOVERNED_KEY, { value: true, enumerable: true, configurable: true })
+  return request
 }
 
 /** What the guard reads from the host and the plugin. */
@@ -183,7 +136,7 @@ function mergeCaller(requested: AgentOptionsLike | undefined, planned: AgentOpti
 }
 
 /**
- * Decide the `agentOptions` of a child the plugin did not start itself.
+ * Decide the `agentOptions` of a child.
  *
  * Three cases, by who named the route:
  * - the user picked a subagent model and the caller named none (or `explicitModel` is `override`): the child gets the
@@ -191,7 +144,8 @@ function mergeCaller(requested: AgentOptionsLike | undefined, planned: AgentOpti
  *   must not travel to this one);
  * - the caller named a model and the user picked none (or `explicitModel` is `keep`): the caller's model stands and
  *   gets the same effort ceiling and token cap;
- * - nobody named a route (reviewer-only choice): the child stays on the parent's route, under the ceilings.
+ * - nobody named a route (an effort-only choice, such as `defaults.workerEffort` alone): the child stays on the
+ *   parent's route, under the ceilings.
  * @param deps - host services and configuration.
  * @param providerName - the provider the child will run on.
  * @param input - parent, the caller's `agentOptions` and cancellation.
@@ -223,15 +177,15 @@ export async function governedOptions(deps: GuardDeps, providerName: string, inp
   // With no route to plan against, the baseline is the parent's route; a provider that runs its own default route
   // (the SDK provider) has none the plugin can know, so its children are left to the provider.
   if (route === null && provider.agentRouteDefaults !== undefined) return undefined
-  // An effort the user chose belongs to the route the user chose; the one exception is a user who chose none (the
-  // dialog's effort picker then shows the main agent's ladder), whose level reaches a caller's model if it offers it.
+  // An effort the user chose belongs to the route the user chose; the one exception is an effort-only choice (no model
+  // picked, such as `defaults.workerEffort` alone), whose level reaches a caller's model if it offers it.
   const explicitEffort = keepNamed
     ? named.reasoningEffort ?? (choice.subagentModel === null ? choice.workerEffort ?? undefined : undefined)
     : route === null ? choice.workerEffort ?? agentOptions?.reasoningEffort : choice.workerEffort ?? route.reasoningEffort
 
   const source = deps.models()
   const plan = await planChild({
-    source, parent, route, role: 'worker', policy: childPolicyOf(deps.config), signal, logger: deps.logger, explicitEffort,
+    source, parent, route, policy: childPolicyOf(deps.config), signal, logger: deps.logger, explicitEffort,
   })
   // A confirmed model the LLM runtime no longer knows (renamed, removed) would fail every child at its first request,
   // and a workflow turns that into a null per agent: say so now, once, to the caller, instead.
@@ -268,8 +222,8 @@ async function governRequest<T extends { readonly parent?: AgentLike; readonly a
     const options = await governedOptions(deps, providerName, {
       parent: request.parent, agentOptions: request.agentOptions, signal: signal ?? new AbortController().signal,
     })
-    // Marked as well: a second live guard (another copy of the plugin) must not plan the same child again.
-    return options === undefined ? undefined : markPlanned({ ...request, agentOptions: options })
+    // Marked: a second live guard (another copy of the plugin) must not plan the same child again.
+    return options === undefined ? undefined : markGoverned({ ...request, agentOptions: options })
   } catch (error: unknown) {
     if (error instanceof ChoiceUnusableError) throw error
     if (signal?.aborted === true) throw error instanceof Error ? error : new Error(String(error))
@@ -334,12 +288,12 @@ export function installGuard(given: GuardDeps): () => void {
   }
   try {
     restorers.push(wrapMethod(target, 'start', (original, live) => async function start(this: unknown, providerName: string, request: SubagentStartRequestLike) {
-      if (!live() || !isRequestLike(request) || isPlanned(request)) return Reflect.apply(original, this, [providerName, request]) as Promise<SubagentRunLike>
+      if (!live() || !isRequestLike(request) || isGoverned(request)) return Reflect.apply(original, this, [providerName, request]) as Promise<SubagentRunLike>
       const governed = await governRequest(deps, providerName, request, request.signal)
       return Reflect.apply(original, this, [providerName, governed ?? request]) as Promise<SubagentRunLike>
     } as Method))
     restorers.push(wrapMethod(target, 'startContinuable', (original, live) => async function startContinuable(this: unknown, spec: ContinuableStartSpecLike) {
-      if (!live() || !isRequestLike(spec) || !isRequestLike(spec.request) || isPlanned(spec) || isPlanned(spec.request)) {
+      if (!live() || !isRequestLike(spec) || !isRequestLike(spec.request) || isGoverned(spec) || isGoverned(spec.request)) {
         return Reflect.apply(original, this, [spec]) as Promise<ContinuableStartLike>
       }
       const governed = await governRequest(deps, spec.provider, spec.request, spec.signal)

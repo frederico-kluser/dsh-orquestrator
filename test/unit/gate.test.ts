@@ -7,8 +7,8 @@ import type { PromptPartLike, SessionFaceLike, SessionSnapshotLike } from '../..
 import { OFF_CONFIG, buildConfig, type OrchestratorConfig } from '../../src/shared.ts'
 
 const route = { provider: 'openrouter', model: 'google/gemini-3.8-flash' }
-const active = buildConfig({ subagentModel: route, reviewerEnabled: true, reviewerModel: null })
-const chosen = buildConfig({ subagentModel: route, reviewerEnabled: false, reviewerModel: null })
+const active = buildConfig({ subagentModel: route, workerEffort: 'low' })
+const chosen = buildConfig({ subagentModel: route })
 
 /** A session class like the real one: `prompt` lives on the prototype. */
 class FakeSession implements SessionFaceLike {
@@ -174,13 +174,13 @@ describe('beforePrompt', () => {
     h.memory.last = active
     answerNext(h.dialogs, cancel)
     await session.prompt(text('two'), 'queue')
-    h.stored = buildConfig({ subagentModel: null, reviewerEnabled: true, reviewerModel: null })
+    h.stored = buildConfig({ subagentModel: null, workerEffort: 'high' })
     answerNext(h.dialogs, cancel)
     await session.prompt(text('three'), 'queue')
 
     assert.deepEqual(initials[0], OFF_CONFIG)
     assert.deepEqual(initials[1], active)
-    assert.equal(initials[2]?.reviewer.enabled, true)
+    assert.equal(initials[2]?.workerEffort, 'high')
     assert.equal(h.memory.last, active) // cancelling never overwrites the memory
     detach()
   })

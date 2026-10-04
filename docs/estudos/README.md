@@ -1,5 +1,11 @@
 # Estudos de 2026-10-03: o que o plugin aprendeu e por quê mudou
 
+> **Nota da 0.5.0.** O revisor independente foi removido (decisão D16 em [`decisoes.md`](decisoes.md)).
+> Os estudos e as decisões que tratam do revisor (protocolo, veredicto, contexto limpo, segurança do
+> revisor) ficam aqui como história das versões 0.2.0 a 0.4.0. O que continua valendo para o plugin atual:
+> os tetos de esforço e de tokens (D01, D02), o conhecimento de modelos no diálogo (D11, D13) e o guarda de
+> início (D15).
+
 Este diretório guarda os 16 estudos técnicos que orientaram a versão 0.2.0 do
 `dsh-orquestrator`, o que foi **verificado** contra o código do DSH e contra dados
 públicos, e o **porquê** de cada mudança (e de cada recomendação que não foi adotada).

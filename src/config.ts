@@ -1,34 +1,17 @@
 /**
  * Deployment configuration of the host half. Every tunable is a validated
  * `Config` field overridable from `cordis.patch.yml`; a malformed value fails
- * loud at load (never a silent permissive fallback).
+ * loud at load (never a silent permissive fallback). Fields that belonged to
+ * the independent reviewer, removed in 0.5.0, are ignored with a warning
+ * instead of failing the load, so an existing patch file keeps working.
  * @module dsh-orquestrator/config
  */
 
 import { isEffortLevel, type EffortLevel } from './models.ts'
 import { parseModelRoute, type ModelRoute, type OrchestratorConfig } from './shared.ts'
-import { globToRegExp } from './workspace.ts'
-
-/** One delegation tool whose calls the plugin may orchestrate. */
-export interface DelegationTool {
-  /** Model-facing tool name (`subagent`, `subagent_fork`, ...). */
-  readonly name: string
-  /** `ctx.subagents` provider that tool delegates to (`spawn`, `fork`, ...). */
-  readonly provider: string
-  /**
-   * How the tool's own configuration runs children in the background:
-   * `continuable` (the shipped presets) returns an id at once; `one-shot`
-   * waits for the result. Mirrors the tool row's `backgroundMode`.
-   */
-  readonly mode: 'continuable' | 'one-shot'
-}
 
 /** Raw plugin configuration, as written in `cordis.patch.yml`. */
 export interface Config {
-  /** Delegation tools to orchestrate; defaults to the shipped presets' two rows. */
-  readonly tools?: readonly Partial<DelegationTool>[]
-  /** Provider that runs the reviewer child (a fresh context); default `spawn`. */
-  readonly reviewerProvider?: string
   /**
    * Defaults for sessions with no stored choice, mainly for headless runs
    * where no modal can be answered. Absent or empty means stock behavior.
@@ -37,88 +20,67 @@ export interface Config {
     readonly subagentModel?: ModelRoute
     /** Reasoning effort for subagents; absent means the recommended level for their model. */
     readonly workerEffort?: string
-    readonly reviewer?: { readonly enabled?: boolean; readonly model?: ModelRoute; readonly effort?: string }
   }
   /** State directory; default `<DSH_HOME>/dsh-orquestrator`. */
   readonly stateDir?: string
   /** Persist per-session choices across restarts (default true). */
   readonly persist?: boolean
-  /** Ask the worker to end with a structured handoff report for the reviewer (default true). */
-  readonly workerHandoff?: boolean
-  /** Longest worker report (characters) embedded in the reviewer's packet (default 60000). */
-  readonly maxWorkerReportChars?: number
   /** Most sessions kept in the persisted state; the least recently updated are pruned (default 500). */
   readonly maxSessions?: number
   /**
-   * What the reviewer sees of the worker: `auto` (default) withholds the worker's report whenever the working
-   * tree changed, so the reviewer judges the diff, not the story; `isolated` always withholds it; `claims`
-   * always hands it over, delimited as untrusted.
+   * Ceiling on the reasoning effort of every subagent. The default comes from the model's own profile
+   * (`src/models.ts`), else `medium`. `false` turns the ceiling off.
    */
-  readonly reviewerContext?: 'auto' | 'isolated' | 'claims'
-  /** Ask the reviewer to report through DSH's structured-output tool and render the report from it (default true). */
-  readonly structuredVerdict?: boolean
+  readonly effort?: false | { readonly worker?: string }
+  /** Ceiling on output tokens per model request (reasoning included). `false` turns the ceiling off. */
+  readonly limits?: false | { readonly workerMaxTokens?: number | false }
   /**
-   * Ceiling on the reasoning effort of every child the plugin starts, per role. Defaults come from the
-   * model's own profile (`src/models.ts`), else `medium`. `false` turns the ceiling off.
-   */
-  readonly effort?: false | { readonly worker?: string; readonly reviewer?: string }
-  /** Ceiling on output tokens per model request (reasoning included), per role. `false` turns a ceiling off. */
-  readonly limits?: false | { readonly workerMaxTokens?: number | false; readonly reviewerMaxTokens?: number | false }
-  /** Retry a worker once, one reasoning level lower, when it stopped at its token limit (default true). */
-  readonly retryOnTokenLimit?: boolean
-  /** Fingerprint the working tree with git around each reviewed delegation (default true). */
-  readonly workspaceChecks?: boolean
-  /** Extra globs for files the reviewer must scrutinize when the worker changed them (`*` and `**`). */
-  readonly sensitivePaths?: readonly string[]
-  /**
-   * The start guard: every child DSH starts for a session with a confirmed choice, whichever tool started it
-   * (the `workflow` tool, `ralph`, a one-shot background `subagent` job, ...), runs on the subagent model with the
-   * effort ceiling and token cap. `false` governs only the delegation tools listed in `tools`. `explicitModel`
-   * says what to do with a model the caller named itself (an `agent({ model })` call in a workflow script):
-   * `override` (default) runs it on the user's pick, `keep` lets the caller's model stand (with the ceilings).
+   * The start guard, the plugin's one mechanism: every child DSH starts for a session with a confirmed choice,
+   * whichever tool started it (`subagent`, `subagent_fork`, the `workflow` tool, `ralph`, a one-shot background job, ...),
+   * runs on the subagent model with the effort ceiling and the token cap. `false` switches the enforcement off (the
+   * dialog still stores choices). `explicitModel` says what to do with a model the caller named itself (an
+   * `agent({ model })` call in a workflow script): `override` (default) runs it on the user's pick, `keep` lets the
+   * caller's model stand (with the ceilings).
    */
   readonly children?: false | { readonly explicitModel?: 'override' | 'keep' }
 }
 
 /** Validated configuration with every default resolved. */
 export interface PluginConfig {
-  readonly tools: readonly DelegationTool[]
-  readonly reviewerProvider: string
   readonly defaults: OrchestratorConfig | null
   readonly stateDir: string | undefined
   readonly persist: boolean
-  readonly workerHandoff: boolean
-  readonly maxWorkerReportChars: number
   readonly maxSessions: number
-  readonly reviewerContext: 'auto' | 'isolated' | 'claims'
-  readonly structuredVerdict: boolean
   /** Effort ceiling policy: `enabled` false leaves children exactly as the user picked them. */
-  readonly effort: { readonly enabled: boolean; readonly caps: { readonly worker?: EffortLevel; readonly reviewer?: EffortLevel } }
-  /** Output-token ceilings per role; undefined means no ceiling. */
-  readonly limits: { readonly worker: number | undefined; readonly reviewer: number | undefined }
-  readonly retryOnTokenLimit: boolean
-  readonly workspaceChecks: boolean
-  readonly sensitivePaths: readonly RegExp[]
-  /** The start guard (`children`): `enabled` false governs only the configured delegation tools. */
+  readonly effort: { readonly enabled: boolean; readonly cap?: EffortLevel }
+  /** Output-token ceiling per request; undefined means no ceiling. */
+  readonly limits: { readonly worker: number | undefined }
+  /** The start guard (`children`): `enabled` false switches the enforcement off. */
   readonly guard: { readonly enabled: boolean; readonly explicitModel: 'override' | 'keep' }
 }
 
 /** Every top-level field of the configuration. */
-const KNOWN_FIELDS: ReadonlySet<string> = new Set([
-  'tools', 'reviewerProvider', 'defaults', 'stateDir', 'persist', 'workerHandoff', 'maxWorkerReportChars', 'maxSessions',
-  'reviewerContext', 'structuredVerdict', 'effort', 'limits', 'retryOnTokenLimit', 'workspaceChecks', 'sensitivePaths', 'children',
+const KNOWN_FIELDS: ReadonlySet<string> = new Set(['defaults', 'stateDir', 'persist', 'maxSessions', 'effort', 'limits', 'children'])
+
+/** Top-level fields that existed until 0.4.0 for the reviewer and the tool wrapper, and do nothing now. */
+const REMOVED_FIELDS: ReadonlySet<string> = new Set([
+  'tools', 'reviewerProvider', 'reviewerContext', 'structuredVerdict', 'workerHandoff', 'maxWorkerReportChars',
+  'retryOnTokenLimit', 'workspaceChecks', 'sensitivePaths',
 ])
 
 /** Where a field that belongs inside a block most often ends up when it is mis-indented to the top level. */
 const MISPLACED: Readonly<Record<string, string>> = Object.freeze({
   explicitModel: 'children.explicitModel',
   worker: 'effort.worker',
-  reviewer: 'effort.reviewer or defaults.reviewer',
   workerMaxTokens: 'limits.workerMaxTokens',
-  reviewerMaxTokens: 'limits.reviewerMaxTokens',
   subagentModel: 'defaults.subagentModel',
   workerEffort: 'defaults.workerEffort',
 })
+
+/** A plain object check that also excludes arrays. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 /**
  * The top-level fields the plugin does not know, with a hint where the field most likely belongs. A typo or a
@@ -128,20 +90,30 @@ const MISPLACED: Readonly<Record<string, string>> = Object.freeze({
  * @returns one message per unknown field, empty when there is none.
  */
 export function unknownConfigFields(raw: unknown): string[] {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return []
+  if (!isRecord(raw)) return []
   return Object.keys(raw)
-    .filter(key => !KNOWN_FIELDS.has(key))
+    .filter(key => !KNOWN_FIELDS.has(key) && !REMOVED_FIELDS.has(key))
     .map(key => `unknown config field "${key}" is ignored${MISPLACED[key] === undefined ? '' : ` (did you mean ${MISPLACED[key]}?)`}`)
 }
 
-/** Default output-token ceilings: far below the 384K-943K some routes allow, far above any legitimate single step. */
-export const DEFAULT_LIMITS = Object.freeze({ worker: 64_000, reviewer: 32_000 })
+/**
+ * The fields of a configuration written for 0.4.0 or older that belonged to the independent reviewer (and to the
+ * delegation-tool wrapper it needed). They are ignored; saying so beats a silent no-op.
+ * @param raw - the plugin's `config` from the loader.
+ * @returns one message per ignored field, empty when there is none.
+ */
+export function removedConfigFields(raw: unknown): string[] {
+  if (!isRecord(raw)) return []
+  const found: string[] = []
+  for (const key of Object.keys(raw)) if (REMOVED_FIELDS.has(key)) found.push(key)
+  if (isRecord(raw['defaults']) && raw['defaults']['reviewer'] !== undefined) found.push('defaults.reviewer')
+  if (isRecord(raw['effort']) && raw['effort']['reviewer'] !== undefined) found.push('effort.reviewer')
+  if (isRecord(raw['limits']) && raw['limits']['reviewerMaxTokens'] !== undefined) found.push('limits.reviewerMaxTokens')
+  return found.map(field => `config field "${field}" belonged to the independent reviewer, removed in 0.5.0, and is ignored`)
+}
 
-/** The shipped `standard` preset delegates through these two rows. */
-const DEFAULT_TOOLS: readonly DelegationTool[] = [
-  { name: 'subagent', provider: 'spawn', mode: 'continuable' },
-  { name: 'subagent_fork', provider: 'fork', mode: 'continuable' },
-]
+/** Default output-token ceiling: far below the 384K-943K some routes allow, far above any legitimate single step. */
+export const DEFAULT_LIMITS = Object.freeze({ worker: 64_000 })
 
 /** Fail-loud helper: a configuration error names the field and the plugin. */
 function invalid(field: string, detail: string): Error {
@@ -159,13 +131,6 @@ function positiveInt(field: string, value: unknown, fallback: number): number {
 function bool(field: string, value: unknown, fallback: boolean): boolean {
   if (value === undefined) return fallback
   if (typeof value !== 'boolean') throw invalid(field, 'must be a boolean')
-  return value
-}
-
-/** A non-empty string, or the default when absent. */
-function text(field: string, value: unknown, fallback: string): string {
-  if (value === undefined) return fallback
-  if (typeof value !== 'string' || value.trim() === '') throw invalid(field, 'must be a non-empty string')
   return value
 }
 
@@ -191,111 +156,56 @@ function ceiling(field: string, value: unknown, fallback: number): number | unde
  */
 export function parsePluginConfig(raw: Config | undefined): PluginConfig {
   const config = raw ?? {}
-  let tools: readonly DelegationTool[] = DEFAULT_TOOLS
-  if (config.tools !== undefined) {
-    if (!Array.isArray(config.tools) || config.tools.length === 0) throw invalid('tools', 'must be a non-empty array')
-    const seen = new Set<string>()
-    tools = config.tools.map((entry, index): DelegationTool => {
-      const where = `tools[${String(index)}]`
-      const name = text(`${where}.name`, entry.name, '')
-      if (name === '') throw invalid(`${where}.name`, 'is required')
-      if (seen.has(name)) throw invalid(`${where}.name`, `repeats "${name}"`)
-      seen.add(name)
-      const provider = text(`${where}.provider`, entry.provider, '')
-      if (provider === '') throw invalid(`${where}.provider`, 'is required')
-      const mode = entry.mode ?? 'continuable'
-      if (mode !== 'continuable' && mode !== 'one-shot') throw invalid(`${where}.mode`, 'must be "continuable" or "one-shot"')
-      return { name, provider, mode }
-    })
-  }
 
   let defaults: OrchestratorConfig | null = null
   if (config.defaults !== undefined) {
     const subagentModel = config.defaults.subagentModel === undefined ? null : parseModelRoute(config.defaults.subagentModel)
     if (subagentModel === undefined) throw invalid('defaults.subagentModel', 'needs non-empty "provider" and "model"')
-    const reviewerRaw = config.defaults.reviewer
-    const reviewerModel = reviewerRaw?.model === undefined ? null : parseModelRoute(reviewerRaw.model)
-    if (reviewerModel === undefined) throw invalid('defaults.reviewer.model', 'needs non-empty "provider" and "model"')
-    const enabled = bool('defaults.reviewer.enabled', reviewerRaw?.enabled, false)
     const workerEffort = level('defaults.workerEffort', config.defaults.workerEffort) ?? null
-    const reviewerEffort = level('defaults.reviewer.effort', reviewerRaw?.effort) ?? null
-    if (subagentModel !== null || enabled) {
-      defaults = {
-        version: 1,
-        subagentModel,
-        workerEffort,
-        reviewer: { enabled, model: enabled ? reviewerModel : null, effort: enabled ? reviewerEffort : null },
-      }
-    }
+    if (subagentModel !== null || workerEffort !== null) defaults = { version: 1, subagentModel, workerEffort }
   }
 
   if (config.stateDir !== undefined && (typeof config.stateDir !== 'string' || config.stateDir.trim() === '')) {
     throw invalid('stateDir', 'must be a non-empty string')
   }
-  const reviewerContext = config.reviewerContext ?? 'auto'
-  if (reviewerContext !== 'auto' && reviewerContext !== 'isolated' && reviewerContext !== 'claims') {
-    throw invalid('reviewerContext', 'must be "auto", "isolated" or "claims"')
-  }
 
   return {
-    tools,
-    reviewerProvider: text('reviewerProvider', config.reviewerProvider, 'spawn'),
     defaults,
     stateDir: config.stateDir,
     persist: bool('persist', config.persist, true),
-    workerHandoff: bool('workerHandoff', config.workerHandoff, true),
-    maxWorkerReportChars: positiveInt('maxWorkerReportChars', config.maxWorkerReportChars, 60_000),
     maxSessions: positiveInt('maxSessions', config.maxSessions, 500),
-    reviewerContext,
-    structuredVerdict: bool('structuredVerdict', config.structuredVerdict, true),
     effort: parseEffortPolicy(config.effort),
     limits: parseLimits(config.limits),
-    retryOnTokenLimit: bool('retryOnTokenLimit', config.retryOnTokenLimit, true),
-    workspaceChecks: bool('workspaceChecks', config.workspaceChecks, true),
-    sensitivePaths: parseSensitivePaths(config.sensitivePaths),
     guard: parseGuard(config.children),
   }
 }
 
 /** Resolve the `effort` block. */
 function parseEffortPolicy(raw: Config['effort']): PluginConfig['effort'] {
-  if (raw === undefined) return { enabled: true, caps: {} }
-  if (raw === false) return { enabled: false, caps: {} }
-  if (typeof raw !== 'object' || raw === null) throw invalid('effort', 'must be false or an object with worker and/or reviewer')
-  const worker = level('effort.worker', raw.worker)
-  const reviewer = level('effort.reviewer', raw.reviewer)
-  return { enabled: true, caps: { ...worker === undefined ? {} : { worker }, ...reviewer === undefined ? {} : { reviewer } } }
+  if (raw === undefined) return { enabled: true }
+  if (raw === false) return { enabled: false }
+  if (!isRecord(raw)) throw invalid('effort', 'must be false or an object with worker')
+  const worker = level('effort.worker', raw['worker'])
+  return { enabled: true, ...worker === undefined ? {} : { cap: worker } }
 }
 
 /** Resolve the `limits` block. */
 function parseLimits(raw: Config['limits']): PluginConfig['limits'] {
-  if (raw === undefined) return { worker: DEFAULT_LIMITS.worker, reviewer: DEFAULT_LIMITS.reviewer }
-  if (raw === false) return { worker: undefined, reviewer: undefined }
-  if (typeof raw !== 'object' || raw === null) throw invalid('limits', 'must be false or an object')
-  return {
-    worker: ceiling('limits.workerMaxTokens', raw.workerMaxTokens, DEFAULT_LIMITS.worker),
-    reviewer: ceiling('limits.reviewerMaxTokens', raw.reviewerMaxTokens, DEFAULT_LIMITS.reviewer),
-  }
+  if (raw === undefined) return { worker: DEFAULT_LIMITS.worker }
+  if (raw === false) return { worker: undefined }
+  if (!isRecord(raw)) throw invalid('limits', 'must be false or an object')
+  return { worker: ceiling('limits.workerMaxTokens', raw['workerMaxTokens'], DEFAULT_LIMITS.worker) }
 }
 
 /** Resolve the `children` block (the start guard). Unknown keys fail loud: a typo must not silently keep the default. */
 function parseGuard(raw: Config['children']): PluginConfig['guard'] {
   if (raw === undefined) return { enabled: true, explicitModel: 'override' }
   if (raw === false) return { enabled: false, explicitModel: 'override' }
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw invalid('children', 'must be false or an object')
+  if (!isRecord(raw)) throw invalid('children', 'must be false or an object')
   for (const key of Object.keys(raw)) {
     if (key !== 'explicitModel') throw invalid(`children.${key}`, 'is not a known field (explicitModel)')
   }
-  const explicitModel = raw.explicitModel ?? 'override'
+  const explicitModel = raw['explicitModel'] ?? 'override'
   if (explicitModel !== 'override' && explicitModel !== 'keep') throw invalid('children.explicitModel', 'must be "override" or "keep"')
   return { enabled: true, explicitModel }
-}
-
-/** Compile the extra sensitive-path globs. */
-function parseSensitivePaths(raw: Config['sensitivePaths']): readonly RegExp[] {
-  if (raw === undefined) return []
-  if (!Array.isArray(raw) || raw.some(entry => typeof entry !== 'string' || entry.trim() === '')) {
-    throw invalid('sensitivePaths', 'must be an array of non-empty glob strings')
-  }
-  return raw.map(entry => globToRegExp(entry.trim()))
 }

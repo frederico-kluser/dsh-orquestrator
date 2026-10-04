@@ -204,7 +204,7 @@ if (phase === 'workflow') {
   await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('modal closes after confirm', true), () => check('modal closes after confirm', false))
   const posts = wire.filter((item) => item.method === 'POST')
   const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
-  check('POST stored the subagent model (a stored choice, not a `defaults` config) and nothing about a reviewer', saved?.subagentModel?.model === TRIO.workerId && !('reviewer' in saved), JSON.stringify(saved))
+  check('POST stored the subagent model (a stored choice, not a `defaults` config), the legacy reviewer block disabled', saved?.subagentModel?.model === TRIO.workerId && saved?.reviewer?.enabled === false, JSON.stringify(saved))
 
   // The main agent now calls the workflow tool; its two agents appear as child sessions in the DSH logs.
   let rows = []
@@ -250,7 +250,7 @@ if (phase === 'confirm') {
   await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('modal closes after confirm', true), () => check('modal closes after confirm', false))
   const posts = wire.filter((item) => item.method === 'POST')
   const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
-  check('POST stored the chosen route and nothing else', saved !== null && saved.subagentModel?.model === TRIO.workerId && saved.workerEffort === null && Object.keys(saved).sort().join() === 'subagentModel,version,workerEffort', JSON.stringify(saved))
+  check('POST carried the chosen route, and only the disabled legacy reviewer block besides', saved !== null && saved.subagentModel?.model === TRIO.workerId && saved.workerEffort === null && saved.reviewer?.enabled === false && Object.keys(saved).sort().join() === 'reviewer,subagentModel,version,workerEffort', JSON.stringify(saved))
   check('host accepted the config (200)', posts.at(-1)?.status === 200, posts.at(-1)?.status)
   await shot('02-running')
 
@@ -382,7 +382,7 @@ if (phase === 'effort') {
   await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('modal closes after confirm', true), () => check('modal closes after confirm', false))
   const posts = wire.filter((item) => item.method === 'POST')
   const saved = posts.length > 0 ? JSON.parse(posts.at(-1).body ?? '{}').config : null
-  check('the wire carries the model and the explicit effort, and nothing about a reviewer', saved?.workerEffort === 'high' && saved?.subagentModel?.model === TRIO.workerId && !('reviewer' in saved), JSON.stringify(saved))
+  check('the wire carries the model and the explicit effort, the legacy reviewer block disabled', saved?.workerEffort === 'high' && saved?.subagentModel?.model === TRIO.workerId && saved?.reviewer?.enabled === false, JSON.stringify(saved))
   check('host accepted the config (200)', posts.at(-1)?.status === 200, posts.at(-1)?.status)
 
   // The dialog opens with the last confirmed choice, effort included.

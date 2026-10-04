@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { OFF_CONFIG, buildConfig, isActive, parseConfig, parseModelRoute, routeKey } from '../../src/shared.ts'
+import { LEGACY_REVIEWER, OFF_CONFIG, buildConfig, isActive, parseConfig, parseModelRoute, routeKey, toWireConfig } from '../../src/shared.ts'
+import { legacyParseConfig } from '../legacy-wire.ts'
 
 const route = { provider: 'openrouter', model: 'google/gemini-3.8-flash' }
 
@@ -79,6 +80,43 @@ describe('buildConfig', () => {
   it('carries the model and the effort, and defaults the effort to the recommended level', () => {
     assert.deepEqual(buildConfig({ subagentModel: route }), { version: 1, subagentModel: route, workerEffort: null })
     assert.deepEqual(buildConfig({ subagentModel: route, workerEffort: 'low' }), { version: 1, subagentModel: route, workerEffort: 'low' })
+  })
+})
+
+describe('the wire shape every version accepts', () => {
+  const samples = [
+    ['a model and an effort', buildConfig({ subagentModel: route, workerEffort: 'high' })],
+    ['a model only', buildConfig({ subagentModel: route })],
+    ['an effort only', buildConfig({ subagentModel: null, workerEffort: 'low' })],
+    ['a route that carries its own effort', buildConfig({ subagentModel: { ...route, reasoningEffort: 'xhigh' } })],
+    ['the inert configuration', OFF_CONFIG],
+  ] as const
+
+  it('adds the disabled legacy reviewer block and leaves the input alone', () => {
+    const config = buildConfig({ subagentModel: route, workerEffort: 'low' })
+    const wire = toWireConfig(config)
+    assert.deepEqual(wire, { version: 1, subagentModel: route, workerEffort: 'low', reviewer: { enabled: false, model: null, effort: null } })
+    assert.equal(wire.reviewer, LEGACY_REVIEWER)
+    assert.equal('reviewer' in config, false, 'the configuration itself never carries it')
+    assert.throws(() => { (LEGACY_REVIEWER as { enabled: boolean }).enabled = true }, TypeError, 'frozen: nobody can switch the legacy reviewer on')
+  })
+
+  it('is what 0.2 to 0.4 accept, so a half that is one version behind can still save and read', () => {
+    for (const [name, config] of samples) {
+      const old = legacyParseConfig(toWireConfig(config))
+      assert.notEqual(old, undefined, `0.4 refuses ${name}`)
+      assert.equal(old?.reviewer.enabled, false, name)
+      assert.deepEqual(old?.subagentModel, config.subagentModel, name)
+      assert.equal(old?.workerEffort, config.workerEffort, name)
+    }
+  })
+
+  it('is exactly the shape the old halves refuse without the block (why it is there)', () => {
+    for (const [name, config] of samples) assert.equal(legacyParseConfig(config), undefined, `0.4 would have accepted ${name} without the block`)
+  })
+
+  it('reads back as the same configuration here (the block is dropped, nothing else changes)', () => {
+    for (const [name, config] of samples) assert.deepEqual(parseConfig(toWireConfig(config)), config, name)
   })
 })
 

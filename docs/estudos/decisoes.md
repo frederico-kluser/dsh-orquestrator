@@ -5,7 +5,7 @@ checagem contra o código do DSH e contra dados públicos; veja [`sintese.md`](s
 cruzamento e [`README.md`](README.md) para o método. Aqui está o **porquê** de cada uma, e das
 recomendações que **não** foram adotadas, para que ninguém as reabra sem o contexto.
 
-* **D01 a D16**: adotadas (código, interface ou documentação mudaram). D15 é da 0.4.0 e não vem
+* **D01 a D17**: adotadas (código, interface ou documentação mudaram). D15 é da 0.4.0 e não vem
   dos estudos: vem de uma sessão real em que o plugin deixou de valer. **D16 é da 0.5.0 e removeu o
   revisor independente**: D03 a D10, D12 e D14 descrevem o revisor e ficam como história da 0.2.0 a
   0.4.0 (a 0.4.0 é a última versão que o tem); D01, D02, D11, D13 e D15 continuam valendo, agora só
@@ -32,6 +32,7 @@ Resumo:
 | D13 | Bloco de esforço recolhido, "Recomendado" por padrão, escolha explícita até o host | `src/client/`, `src/shared.ts` |
 | D14 | Modelo de segurança e limites documentados | `README.md`, `docs/DESIGN.md` |
 | D15 | Guarda de início: a escolha vale para todo filho que o DSH inicia, não só para as ferramentas `subagent` | `src/guard.ts`, `src/pipeline.ts`, `src/index.ts`, `src/config.ts` |
+| D17 | Manter o bloco `reviewer` desligado na rede entre as metades (0.5.1): atualizar sem reiniciar não pode quebrar o salvamento | `src/shared.ts`, `src/routes.ts`, `src/client/config-client.ts` |
 | D16 | Remover o revisor independente (0.5.0): o guarda vira o único mecanismo | `src/pipeline.ts`, `src/reviewer-protocol.ts`, `src/workspace.ts` e `src/tool-wrapper.ts` (removidos), `src/guard.ts`, `src/shared.ts`, `src/config.ts`, `src/client/` |
 
 ---
@@ -526,6 +527,31 @@ projeto por código, dentro do sandbox do DSH, e recusar a aprovação se falhar
 **Verificação.** 253 testes (com `DSH_CHECKOUT`), entre eles a leitura tolerante e a compatibilidade com uma
 aba antiga (`shared.test.ts`, `routes.test.ts`, `host-wiring.test.ts`). Ao vivo, nos três modelos: W1 a W8
 (sem revisor, sem embrulho) e 65 verificações de navegador ([validação](../validation/README.md)).
+
+---
+
+### D17 — Manter o bloco `reviewer` desligado na rede entre as metades (0.5.1)
+**Decisão.** O navegador envia, e o host responde, a configuração com um bloco `reviewer` desligado
+(`{ enabled: false, model: null, effort: null }`, a constante congelada `LEGACY_REVIEWER`). A 0.5 o lê e ignora e
+nunca o grava no estado. Sai quando ninguém mais rodar a 0.4.
+
+**Por quê.** Um plugin tem duas metades que carregam em momentos diferentes: o host quando o `dsh` inicia, o navegador
+quando a página carrega. Depois de uma atualização elas diferem pelo tempo que leva o reinício: uma página recarregada
+contra o host antigo, ou uma aba aberta antes de reiniciar contra o host novo. A 0.2 a 0.4 recusam uma configuração sem o bloco
+("config does not match the expected shape", `422`) e o navegador antigo recusa uma resposta sem ele ("the host answered a
+malformed configuration"): nada salvava. Aconteceu na máquina do próprio dono minutos depois de publicar a 0.5.0 (servidor
+iniciado às 06:35, plugin atualizado em disco às 18:39, página recarregada), e o caso inverso foi achado ao reproduzir.
+Remover um campo da rede sem pensar no fio entre versões foi o erro da 0.5.0.
+
+**Alternativas.** (a) Só mandar reiniciar e melhorar a mensagem: o erro continuaria quebrando quem atualiza com o servidor
+ligado, e a aba antiga continuaria morrendo depois de cada reinício. (b) Negociar a versão por cabeçalho: mais código nos dois
+lados para um problema que se resolve com uma constante, e o cliente antigo não manda cabeçalho nenhum. (c) Versionar a rota
+(`/config/v2`): o host antigo não a teria e o navegador novo não conseguiria salvar nada nele; é pior.
+
+**Onde.** `src/shared.ts` (`LEGACY_REVIEWER`, `toWireConfig`), `src/routes.ts` (respostas), `src/client/config-client.ts`
+(corpo do POST), `test/legacy-wire.ts` (o parser estrito da 0.4 como fixture).
+
+**Verificação.** Reproduzido num navegador real, nos dois sentidos, antes e depois ([validação](../validation/README.md)).
 
 ---
 

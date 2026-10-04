@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { ConfigClient, ConfigHttpError, hostBase, type Fetch } from '../../src/client/config-client.ts'
 import { buildConfig } from '../../src/shared.ts'
+import { legacyParseConfig } from '../legacy-wire.ts'
 
 const route = { provider: 'openrouter', model: 'google/gemini-3.8-flash' }
 const config = buildConfig({ subagentModel: route })
@@ -34,9 +35,31 @@ describe('ConfigClient', () => {
     const { client: c, calls } = client((_url, init) => json({ sessionId: 's', config: JSON.parse(String(init?.body)).config }))
     assert.deepEqual(await c.save('s', config), config)
     assert.equal(calls[0]?.init?.method, 'POST')
-    assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { sessionId: 's', config })
+    assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { sessionId: 's', config: { ...config, reviewer: { enabled: false, model: null, effort: null } } })
     assert.deepEqual((calls[0]?.init?.headers as Record<string, string>)['content-type'], 'application/json')
     assert.equal(await client(() => json({ sessionId: 's', config: null })).client.save('s', null), null)
+  })
+
+  it('posts what a host that has not been restarted since the update still accepts (0.2 to 0.4 refuse a configuration without the reviewer block)', async () => {
+    const { client: c, calls } = client((_url, init) => json({ sessionId: 's', config: JSON.parse(String(init?.body)).config }))
+    await c.save('s', config)
+    await c.save('s', buildConfig({ subagentModel: null, workerEffort: 'low' }))
+    await c.save('s', buildConfig({ subagentModel: null }))
+    for (const call of calls) {
+      const posted = (JSON.parse(String(call.init?.body)) as { config: unknown }).config
+      assert.notEqual(legacyParseConfig(posted), undefined, 'the old host would answer 422 "config does not match the expected shape"')
+    }
+    // Clearing sends null, which every version understands.
+    const clearing = client(() => json({ sessionId: 's', config: null }))
+    await clearing.client.save('s', null)
+    assert.equal((JSON.parse(String(clearing.calls[0]?.init?.body)) as { config: unknown }).config, null)
+  })
+
+  it('reads what an old host answers: a reviewer block that is on, with a model, is dropped and the choice kept', async () => {
+    const old = { version: 1, subagentModel: route, workerEffort: 'high', reviewer: { enabled: true, model: { provider: 'p', model: 'm' }, effort: 'low' } }
+    const { client: c } = client(() => json({ sessionId: 's', config: old }))
+    assert.deepEqual(await c.load('s'), { version: 1, subagentModel: route, workerEffort: 'high' })
+    assert.deepEqual(await c.save('s', config), { version: 1, subagentModel: route, workerEffort: 'high' })
   })
 
   it('maps a refusal to a ConfigHttpError carrying status, code and message', async () => {

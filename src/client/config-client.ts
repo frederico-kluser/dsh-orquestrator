@@ -6,8 +6,8 @@
  */
 
 import {
-  CONFIG_ROUTE, parseConfig,
-  type ConfigStatePayload, type ErrorPayload, type OrchestratorConfig,
+  CONFIG_ROUTE, parseConfig, toWireConfig,
+  type ConfigStatePayload, type ConfigWritePayload, type ErrorPayload, type OrchestratorConfig,
 } from '../shared.ts'
 
 /** The fetch surface the client needs (injectable for tests). */
@@ -77,10 +77,13 @@ export class ConfigClient {
    * @throws {ConfigHttpError} when the route is unreachable or refuses.
    */
   async save(sessionId: string, config: OrchestratorConfig | null): Promise<OrchestratorConfig | null> {
+    // The wire shape every version accepts: a host that was started before this page's plugin update still runs the old
+    // half and refuses a configuration without the legacy reviewer block (see `LEGACY_REVIEWER`).
+    const body: ConfigWritePayload = { sessionId, config: config === null ? null : toWireConfig(config) }
     const payload = await this.call(new URL(CONFIG_ROUTE, this.base()), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, config }),
+      body: JSON.stringify(body),
     })
     return payload.config
   }

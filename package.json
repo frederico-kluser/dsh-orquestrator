@@ -1,6 +1,6 @@
 {
   "name": "dsh-orquestrator",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "DeepSeek Harness plugin: a native-looking modal on task send lets you pick the model subagents run on. The pick, a reasoning-effort ceiling and an output-token cap are enforced in code on every child DSH starts, whichever tool starts it: the subagent tools, a workflow, ralph or a one-shot background job.",
   "type": "module",
   "main": "./lib/index.js",

@@ -91,6 +91,7 @@ nested `ctx.inject`, so the guard also works in headless, TUI and SDK profiles, 
 | Prompt wrapping on the prototype, not the instance | A reconnect can re-create the session face; a prototype patch survives it. |
 | Dialog advice is dated data that annotates and never blocks | The catalog belongs to the user. The dialog shows per-model cautions, each row dated and sourced in `src/models.ts` ([D11](estudos/decisoes.md)). |
 | The plugin ships inert | No stored choice and no `defaults` means stock behavior. |
+| Both ends keep a disabled `reviewer` block on the wire (0.5.1) | The host half loads when `dsh` starts, the browser half when the page loads, so after an update the two can differ for as long as it takes to restart (a refreshed page against the old host, a tab opened before a restart against the new host). 0.2 to 0.4 refused a configuration without the block, and the browser refused an answer without it: every save failed ("config does not match the expected shape"). The browser posts it and the host answers with it, as a frozen constant; 0.5 ignores it and never stores it. A fixture with the old strict parser pins that what goes on the wire still passes it. Drop it once nobody runs 0.4. |
 | Records and patch files written for 0.4 keep working | The parser reads a stored choice that still carries a reviewer block and drops it (a reviewer-only choice becomes the inert configuration); the removed configuration fields are ignored with one warning each. |
 
 ## Security

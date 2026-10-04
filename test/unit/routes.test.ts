@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { after, before, describe, it } from 'node:test'
 import { registerRoutes } from '../../src/routes.ts'
 import { CONFIG_ROUTE, buildConfig } from '../../src/shared.ts'
+import { legacyParseConfig } from '../legacy-wire.ts'
 import { ConfigStore } from '../../src/store.ts'
 import type { ConnectionLike, LlmLike, WebServerLike } from '../../src/host-services.ts'
 
@@ -61,7 +62,7 @@ describe('config route', () => {
     assert.deepEqual(await empty.json(), { sessionId: 's-read', config: null })
     assert.equal((await post({ sessionId: 's-read', config: valid })).status, 200)
     const filled = await fetch(`${base}${CONFIG_ROUTE}?sessionId=s-read`)
-    assert.deepEqual(await filled.json(), { sessionId: 's-read', config: valid })
+    assert.deepEqual(await filled.json(), { sessionId: 's-read', config: { ...valid, reviewer: { enabled: false, model: null, effort: null } } }, 'the stored choice plus the disabled legacy block old browsers insist on')
     assert.equal(filled.headers.get('cache-control'), 'no-store')
   })
 
@@ -95,6 +96,29 @@ describe('config route', () => {
     const response = await post({ sessionId: 's-stale', config: stale })
     assert.equal(response.status, 200)
     assert.deepEqual(store.get('s-stale'), { version: 1, subagentModel: route, workerEffort: 'low' })
+  })
+
+  it('answers in the shape every version accepts, so a tab opened before a restart (0.2 to 0.4) can still read and save', async () => {
+    const saved = await post({ sessionId: 's-wire', config: valid })
+    assert.equal(saved.status, 200)
+    const postAnswer = (await saved.json()) as { config: unknown }
+    assert.deepEqual(postAnswer.config, { ...valid, reviewer: { enabled: false, model: null, effort: null } })
+    assert.notEqual(legacyParseConfig(postAnswer.config), undefined, 'the old browser would throw "the host answered a malformed configuration"')
+    const read = (await (await fetch(`${base}${CONFIG_ROUTE}?sessionId=s-wire`)).json()) as { config: unknown }
+    assert.notEqual(legacyParseConfig(read.config), undefined)
+    assert.deepEqual(store.get('s-wire'), valid, 'what is stored never carries the block')
+    const cleared = (await (await post({ sessionId: 's-wire', config: null })).json()) as { config: unknown }
+    assert.equal(cleared.config, null)
+  })
+
+  it('accepts what a new browser posts to a host of any age and what an old browser posts to this one', async () => {
+    // The new browser's POST body (with the legacy block) and the old browser's (the block switched on) both parse here.
+    const fromNew = await post({ sessionId: 's-new', config: { ...valid, reviewer: { enabled: false, model: null, effort: null } } })
+    assert.equal(fromNew.status, 200)
+    const fromOld = await post({ sessionId: 's-old', config: { ...valid, reviewer: { enabled: true, model: { provider: 'p', model: 'm' }, effort: null } } })
+    assert.equal(fromOld.status, 200)
+    assert.deepEqual(store.get('s-new'), valid)
+    assert.deepEqual(store.get('s-old'), valid)
   })
 
   it('rejects an oversized body with 413 and stays usable', async () => {

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.1
+
+**Fixed: "Could not save the options: config does not match the expected shape".** The dialog could not save
+anything when the two halves of the plugin were not the same version. A plugin's host half loads when `dsh` starts and
+its browser half when the page loads, so a user who updated to 0.5.0 and refreshed the page without restarting
+`dsh web` ran the new dialog against the host still in memory, and that host (0.2 to 0.4) refuses a configuration
+without the `reviewer` block 0.5.0 stopped sending: every save came back `422`. The reverse mix failed the same way
+(a tab opened before a restart, running the old dialog against a 0.5.0 host, died on the host's answer with "the host
+answered a malformed configuration" after the choice had been stored).
+
+- **Both ends keep sending the disabled `reviewer` block** on the wire (`{ enabled: false, model: null, effort: null }`):
+  the browser in what it posts, the host in what it answers. 0.5 reads and ignores it and never stores it; 0.2 to 0.4
+  accept it. It is one constant and one helper (`LEGACY_REVIEWER`, `toWireConfig` in `src/shared.ts`) and can go once
+  nobody runs 0.4.
+- **Reproduced before it was fixed, in a real browser, in both directions** (isolated DSH, nothing of yours touched):
+  a 0.4.0 host with the 0.5.0 page failed with the exact message above and a `422`; with the 0.5.1 page it saved.
+  A 0.5.0 host with a 0.4.0 page failed; a 0.5.1 host with the 0.4.0 page saved.
+- **A test fixture holds the 0.4 strict parser** (`test/legacy-wire.ts`) and the unit tests assert that everything the
+  current halves put on the wire still passes it, so the compatibility cannot be dropped by accident.
+- **The README now says what to do after an update:** restart `dsh web`. Refreshing the page alone updates only the
+  browser half.
+
 ## 0.5.0
 
 **The independent reviewer is removed. The plugin now does one thing, in code: the model you pick for

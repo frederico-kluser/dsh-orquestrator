@@ -51,7 +51,31 @@ export function isActive(config: OrchestratorConfig | null | undefined): config 
   return config != null && (config.subagentModel !== null || config.workerEffort !== null)
 }
 
-/** Payload of `GET ${CONFIG_ROUTE}?sessionId=<id>` and the answer to a successful `POST`. */
+/**
+ * The reviewer block 0.2 to 0.4 sent and validated strictly, kept on the wire as a disabled no-op.
+ *
+ * The two halves of this plugin load at different moments: the host half when `dsh` starts, the browser half when
+ * the page loads. A user who updates the plugin and refreshes the page without restarting runs a new browser against
+ * an old host, and a tab opened before a restart runs an old browser against a new host. 0.2 to 0.4 refused a
+ * configuration without this block ("config does not match the expected shape") and, in the browser, an answer
+ * without it, so either mix could not save anything. Both ends therefore keep sending it. 0.5 reads and ignores it;
+ * it is never stored. Drop it once nobody runs 0.4 any more.
+ */
+export const LEGACY_REVIEWER = Object.freeze({ enabled: false, model: null, effort: null } as const)
+
+/** A configuration as it travels on the wire: the plugin's own fields plus the disabled legacy reviewer block. */
+export type WireConfig = OrchestratorConfig & { readonly reviewer: typeof LEGACY_REVIEWER }
+
+/**
+ * Put a configuration in the shape every version of the plugin accepts.
+ * @param config - a validated configuration.
+ * @returns the same fields plus {@link LEGACY_REVIEWER}; the input is not modified.
+ */
+export function toWireConfig(config: OrchestratorConfig): WireConfig {
+  return { ...config, reviewer: LEGACY_REVIEWER }
+}
+
+/** Payload of `GET ${CONFIG_ROUTE}?sessionId=<id>` and the answer to a successful `POST`, as the browser reads it. */
 export interface ConfigStatePayload {
   /** The session the configuration belongs to. */
   readonly sessionId: string
@@ -59,10 +83,16 @@ export interface ConfigStatePayload {
   readonly config: OrchestratorConfig | null
 }
 
+/** The same payload as the host writes it: the configuration carries {@link LEGACY_REVIEWER}. */
+export interface ConfigWirePayload {
+  readonly sessionId: string
+  readonly config: WireConfig | null
+}
+
 /** Body of `POST ${CONFIG_ROUTE}`; `config: null` clears the session's configuration. */
 export interface ConfigWritePayload {
   readonly sessionId: string
-  readonly config: OrchestratorConfig | null
+  readonly config: WireConfig | null
 }
 
 /** Structured wire failure codes. */

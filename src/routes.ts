@@ -14,8 +14,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ConnectionLike, LlmLike, WebServerLike } from './host-services.ts'
 import type { ConfigStore } from './store.ts'
 import {
-  CONFIG_ROUTE, parseConfig,
-  type ConfigStatePayload, type ErrorPayload, type ModelRoute, type OrchestratorConfig,
+  CONFIG_ROUTE, parseConfig, toWireConfig,
+  type ConfigWirePayload, type ErrorPayload, type ModelRoute, type OrchestratorConfig,
 } from './shared.ts'
 
 /** POST bodies are tiny JSON objects; anything larger is hostile. */
@@ -106,7 +106,8 @@ export function registerRoutes(webServer: WebServerLike, deps: RouteDeps): () =>
           sendError(res, 400, { code: 'bad-request', message: 'sessionId query parameter is required' })
           return
         }
-        const payload: ConfigStatePayload = { sessionId, config: deps.store.get(sessionId) ?? null }
+        const stored = deps.store.get(sessionId)
+        const payload: ConfigWirePayload = { sessionId, config: stored === undefined ? null : toWireConfig(stored) }
         sendJson(res, 200, payload)
         return
       }
@@ -156,7 +157,7 @@ export function registerRoutes(webServer: WebServerLike, deps: RouteDeps): () =>
 
       if (record['config'] === null) {
         deps.store.clear(sessionId)
-        const payload: ConfigStatePayload = { sessionId, config: null }
+        const payload: ConfigWirePayload = { sessionId, config: null }
         sendJson(res, 200, payload)
         return
       }
@@ -186,7 +187,7 @@ export function registerRoutes(webServer: WebServerLike, deps: RouteDeps): () =>
       }
 
       deps.store.set(sessionId, config)
-      const payload: ConfigStatePayload = { sessionId, config }
+      const payload: ConfigWirePayload = { sessionId, config: toWireConfig(config) }
       sendJson(res, 200, payload)
     },
   })

@@ -2,11 +2,47 @@
 
 Everything in this plugin was validated against a real DeepSeek Harness, not only against
 mocks. This page states what was run, what it proved, what it found and what it did not
-cover: first the **0.5.0** validation (the reviewer removed, the start guard on its own), then the
+cover: first the **0.5.1** fix (the dialog could not save when the host and the page were different versions), then the
+**0.5.0** validation (the reviewer removed, the start guard on its own), then the
 **0.4.0** validation of the start guard on the three target models, then the **0.2.0** validation
 on the same three models, then the **0.1.0** validation on a Mac mini. The 0.4.0 and older sections
 describe versions that still had the independent reviewer, which 0.5.0 removed
 ([D16](../estudos/decisoes.md)); they are kept as the record of what was run.
+
+## 0.5.1: the dialog saves when the two halves are different versions (2026-10-04)
+
+**What was reported.** Minutes after 0.5.0 was published, on the maintainer's own machine, "Send with these options"
+failed with `Could not save the options: config does not match the expected shape`. The live `dsh web` had been started
+at 06:35, so its host half (an older plugin version) was in memory; the plugin was updated on disk at 18:39 and the page
+refreshed, so the browser loaded the 0.5.0 dialog. 0.2 to 0.4 refuse a configuration without the `reviewer` block that 0.5.0
+stopped sending (checked by running the `parseConfig` of 0.3.0 and of 0.4.0, from git, on the 0.5.0 payload: refused with that
+exact message, accepted with the block).
+
+**Reproduced in a real browser before it was fixed, in both directions** (isolated DSH home, a profile per mix, the host and
+the browser bundle taken from different versions; nothing of the maintainer's session or profile was touched). The check opens
+`/orquestrar`, turns the switch on (in the 0.4 dialog: the reviewer switch) and presses Save:
+
+| Mix | Before the fix | After the fix |
+| --- | --- | --- |
+| 0.4.0 host, 0.5.x page (an update, then a refresh without a restart) | **failed**: `Could not save the options: config does not match the expected shape`, the host answered `422` (0.5.0 page) | **saved**, `200` (0.5.1 page) |
+| 0.5.0 host, 0.4.0 page (a tab opened before a restart) | **failed**: `Could not save the options: the host answered a malformed configuration`, although the host had stored the choice (`200`) | **saved**, `200` (0.5.1 host) |
+
+The second row is a defect of the same kind that nobody had reported yet: the old browser refuses an answer without the block.
+
+**The fix.** Both ends keep sending the disabled `reviewer` block (`LEGACY_REVIEWER` and `toWireConfig` in
+[`src/shared.ts`](../../src/shared.ts)): the browser in what it posts, the host in what it answers. 0.5 ignores it and never stores it
+([D17](../estudos/decisoes.md)). [`test/legacy-wire.ts`](../../test/legacy-wire.ts) is the 0.4 strict parser as a fixture, and the
+tests assert that everything the current halves put on the wire still passes it (and that the plain 0.5 shape does not, which is why
+the block is there).
+
+**Same-version regression.** On the 0.5.1 build (host and page the same version) the seven browser phases of the 0.5.0 section pass
+again, 65 of 65. Tests: 261 of 261 pass with a DSH checkout and 236 of 236 without one (what CI runs). Build: `lib/index.js` sha256
+`89cba27edb4f18a2...`, `lib/client.cjs` `40253023ccef8a45...`.
+
+**Not covered.** The maintainer's running `dsh web` was not restarted or modified from here (it hosts the agent session); the fix
+reaches it after the plugin is updated and, ideally, `dsh web` is restarted. Halves older than 0.3 were not tried (the 0.5.x wire shape
+is the 0.4 one, so they are expected to behave like 0.3 and 0.4, but that was not run). The compatibility has no expiry built in; it can be
+removed once nobody runs 0.4.
 
 ## 0.5.0: the reviewer removed, the start guard on its own (2026-10-04)
 

@@ -41,8 +41,14 @@ Com um modelo escolhido na lista do próprio compositor:
 
 ```sh
 dsh plugin --profile web add github:frederico-kluser/dsh-orquestrator
-dsh --profile web            # reinicie para servir o bundle do navegador
+dsh --profile web            # (re)inicie: veja a nota abaixo
 ```
+
+**Reinicie o `dsh` depois de instalar ou atualizar, não só a página.** A metade do host de um plugin é carregada
+quando o `dsh` inicia e a metade do navegador quando a página carrega, então atualizar só a página deixa a metade
+antiga do host rodando (e o guarda antigo junto). A partir da 0.5.1 as duas metades também continuam conversando com
+metades da 0.2 a 0.4 enquanto você reinicia (um bloco `reviewer` desligado continua na rede para isso), então um estado
+misturado ainda salva; antes disso, falhava com "config does not match the expected shape".
 
 A partir de um clone local: `dsh plugin --profile web add /caminho/para/dsh-orquestrator`.
 

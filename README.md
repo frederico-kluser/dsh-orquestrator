@@ -41,8 +41,14 @@ With a model picked from the composer's own list:
 
 ```sh
 dsh plugin --profile web add github:frederico-kluser/dsh-orquestrator
-dsh --profile web            # restart so the browser bundle is served
+dsh --profile web            # (re)start it: see the note below
 ```
+
+**Restart `dsh` after installing or updating, not only the page.** A plugin's host half is loaded when `dsh`
+starts and its browser half when the page loads, so refreshing the page alone leaves the old host half running
+(and the old guard with it). From 0.5.1 the two halves also keep talking to 0.2 to 0.4 halves while you do
+(a disabled `reviewer` block stays on the wire for that), so a mixed state still saves; before that, it failed with
+"config does not match the expected shape".
 
 From a local clone: `dsh plugin --profile web add /path/to/dsh-orquestrator`.
 

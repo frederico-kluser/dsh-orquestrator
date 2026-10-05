@@ -45,6 +45,11 @@ export const CSS = `
 .dsh-orq-spin { display: inline-flex; animation: dsh-orq-spin 900ms linear infinite; }
 @keyframes dsh-orq-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .dsh-orq-spin { animation: none; } }
+.dsh-orq-chip { display: inline-flex; align-items: center; gap: 6px; box-sizing: border-box; max-width: min(420px, 100%); height: 24px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 999px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font: inherit; font-size: 11px; line-height: 16px; cursor: pointer; }
+.dsh-orq-chip:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.dsh-orq-chip:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+.dsh-orq-chip-on { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-label-primary); }
+.dsh-orq-chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `
 
 /**

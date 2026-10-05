@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.0
+
+**New: a status chip under the composer says how subagents are configured in the current
+conversation — whether they run on a model of their own, which model, and which reasoning
+effort — and opens the dialog on click.** It mounts in the composer's dock
+(`conversation.composer.dock`), in the same row as the host's own ambient pills.
+
+- **Off:** `Subagents: same as the main agent`. **Own model:** `Subagents: <model> · <effort>`,
+  with the level name from the catalog and `recommended` when no level is stored. An
+  effort-only choice shows the main model plus that level.
+- **Names come from the composer's own catalog** (the same list the dialog offers); a model
+  or level the catalog lacks stands as its raw id.
+- **Clicking it opens the same dialog** as `/orquestrar` (configure mode). The chip re-reads
+  the stored choice whenever any dialog settles (the gate's or the command's), so it never
+  shows a stale answer.
+- The dock seam is pinned in the contract tests: when DSH moves `conversation.composer.dock`,
+  that test fails first.
+
+Tests: 269.
+
 ## 0.6.0
 
 **Fixed: "the modal does not appear for some models or conversations" — the dialog now appears

@@ -64,8 +64,11 @@ describe('DSH source contract', { skip: skip ? 'set DSH_CHECKOUT to a DeepSeek H
     assert.match(read('packages/api/session-controller/src/list.ts'), /state\.blank && event\.type !== 'turn\/start'/) // blank ends at the first turn
   })
 
-  it('the composer still declares the overlay slot and looks the conversation service up per send', () => {
-    assert.match(read('packages/client/ui-conversation/src/client/contract/slots.ts'), /conversation\.input\.overlay/)
+  it('the composer still declares the overlay slot and the dock slot, and looks the conversation service up per send', () => {
+    const slots = read('packages/client/ui-conversation/src/client/contract/slots.ts')
+    assert.match(slots, /conversation\.input\.overlay/)
+    assert.match(slots, /'conversation\.composer\.dock': \{ kind: 'list'; scope: 'session' \}/) // where the status chip mounts
+    assert.match(read('packages/client/ui-conversation/src/client/skeleton/InputBar.tsx'), /renderSlot\('conversation\.composer\.dock', \{\}\)/)
     assert.match(read('packages/client/ui-conversation/src/client/input/hub.ts'), /this\.conversation\(\)\.sendSession\(/)
   })
 

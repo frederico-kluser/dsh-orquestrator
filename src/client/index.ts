@@ -1,11 +1,14 @@
 /**
  * dsh-orquestrator, browser half.
  *
- * Wires four things into the stock DSH web client:
+ * Wires five things into the stock DSH web client:
  * - the dialog stylesheet (DSH tokens only);
  * - the `orquestrator` dictionaries (English, Portuguese, Chinese);
  * - a composer overlay occupant that hosts the dialog and attaches the prompt
  *   gate, so a task send raises the modal before the prompt is admitted;
+ * - a dock chip under the composer that always shows how subagents are
+ *   configured in this conversation (own model? which? which effort?) and
+ *   opens the dialog on click;
  * - a `/orquestrar` slash command that opens the same dialog on demand (the
  *   manual path, and the way to change or clear the stored choice).
  *
@@ -26,6 +29,7 @@ import type {
   CommandUiLike, LocaleLike, ModelDirectoriesLike, RemoteSessionLike, SessionsLike, SlotsLike,
 } from './host-types.ts'
 import { NS, en, pt, zh } from './locales.ts'
+import { ConfigChip, type ConfigChipHost } from './ConfigChip.tsx'
 import { OrchestratorOverlay, type OverlayHost } from './OrchestratorOverlay.tsx'
 import { installStyles } from './styles.ts'
 
@@ -68,7 +72,7 @@ export function apply(ctx: ClientContext): void {
     warn: (message, error) => { console.warn(`dsh-orquestrator: ${message}`, error) },
   })
 
-  const host: OverlayHost = {
+  const host: OverlayHost & ConfigChipHost = {
     dialogs,
     locale,
     attachGate(sessionId) {
@@ -78,6 +82,9 @@ export function apply(ctx: ClientContext): void {
         (message, error) => { console.warn(`dsh-orquestrator: ${message}`, error) },
       )
     },
+    loadStored(sessionId) {
+      return client.load(sessionId)
+    },
     loadCatalog(sessionId): Promise<CatalogState> {
       return loadCatalog({
         modelDirectories: () => ctx.get('modelDirectories') as unknown as ModelDirectoriesLike | undefined,
@@ -85,6 +92,7 @@ export function apply(ctx: ClientContext): void {
         remoteSession: () => (ctx.get('remote') as unknown as { session?: RemoteSessionLike } | undefined)?.session,
       }, sessionId)
     },
+    openConfigure: (sessionId) => openConfigure(sessionId),
   }
 
   ctx.effect(
@@ -95,6 +103,19 @@ export function apply(ctx: ClientContext): void {
       inject: () => ({ host }),
     }, OrchestratorOverlay as unknown as ComponentType<never>)),
     'dsh-orquestrator: composer overlay',
+  )
+
+  // The status chip under the composer: what subagents run on in this
+  // conversation, clickable to change it. Ambient entries share the row with
+  // the host's own pills (`StatsPills`), so it stays one quiet line.
+  ctx.effect(
+    () => slots.inject('conversation.composer.dock', () => slots.register({
+      name: 'conversation.composer.dock',
+      id: 'dsh-orquestrator',
+      order: 10,
+      inject: () => ({ host }),
+    }, ConfigChip as unknown as ComponentType<never>)),
+    'dsh-orquestrator: config chip',
   )
 
   // The `/orquestrar` command exists only while the command UI is mounted.

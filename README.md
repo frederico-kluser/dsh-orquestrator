@@ -75,6 +75,10 @@ a turn is running:
 
 `/orquestrar` opens the same dialog on demand (to change or clear the stored choice).
 
+A small chip under the composer (the `conversation.composer.dock` row) always shows this
+conversation's orchestration — `Subagents: <model> · <effort>` when a model is chosen,
+`Subagents: same as the main agent` when not — and clicking it opens the same dialog.
+
 Nothing skips the dialog: only an empty send passes straight through. Earlier releases skipped
 `/` lines, messages sent while a turn was running and sub-agent conversations, so every task
 that began with a skill invocation (`/skill ...`) went out with no dialog at all; from 0.6.0

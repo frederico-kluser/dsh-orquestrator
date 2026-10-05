@@ -75,6 +75,10 @@ mesmo com um turno a correr:
 
 `/orquestrar` abre o mesmo diálogo sob demanda (para mudar ou limpar a escolha guardada).
 
+Um chip pequeno debaixo do compositor (a linha `conversation.composer.dock`) mostra sempre a
+orquestração desta conversa — `Subagentes: <modelo> · <esforço>` com modelo escolhido,
+`Subagentes: mesmo modelo do agente principal` sem ele — e um clique abre o mesmo diálogo.
+
 Nada pula o diálogo: só um envio vazio segue direto. Versões antigas pulavam linhas com `/`,
 mensagens enviadas com um turno a correr e conversas de subagentes — então toda tarefa que
 começava com uma invocação de skill (`/skill ...`) saía sem diálogo nenhum; a partir da 0.6.0 a

@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.6.0
+
+**Fixed: "the modal does not appear for some models or conversations" — the dialog now appears
+before every message the user sends, and nothing can skip it.** The gate used to pass some sends
+straight through: `/` lines (as "command lines"), messages sent while a turn was running
+(queue or steer) and sub-agent conversations. That classification was wrong where it hurt most:
+a skill invocation (`/skill ...`) is a **task** that DSH sends verbatim as the prompt — a real
+slash command never reaches `prompt` at all — so every task that began with a skill call went
+out with no dialog. On the maintainer's own machine 14 of 14 conversations that started with
+`/skill` never raised the modal, while 8 of 8 that started with plain text did; because skill
+workflows cluster around particular models, it looked like "some models I select" were broken.
+
+- **No send is classified out of the question.** Plain text, `@file` references and `/skill`
+  invocations all ask; so do messages typed while a turn runs (queue and steer) and messages
+  sent in sub-agent conversations. Only an empty send passes straight through. The message
+  waits for the answer, exactly as before.
+- **A host route that cannot answer still asks.** `client.load` failing (an unreachable or
+  malformed `/dsh-orquestrator/config` — what a host/page version mix produced) used to silence
+  the dialog for every task. The dialog now opens pre-filled from the last choice, and a confirm
+  says out loud that the choice could not be stored. Only "no composer can render the dialog"
+  stays fail-open.
+- **The gate attaches as soon as a session exists.** Attaching used to give up after 20 attempts
+  over 5 seconds, so a session whose binding materialized later (cold session, heavy workspace,
+  reconnect) silently sent every task as stock DSH for the whole conversation. It now keeps
+  looking for as long as the composer lives.
+- **`/orquestrar` is available in every conversation** too (it used to hide in sub-agent ones).
+
+Tests: 238. The wire contract is unchanged, so a 0.6.0 page works against a 0.5.x host and the
+other way round; still restart `dsh` after updating so both halves match.
+
 ## 0.5.1
 
 **Fixed: "Could not save the options: config does not match the expected shape".** The dialog could not save

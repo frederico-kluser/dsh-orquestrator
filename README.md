@@ -57,7 +57,9 @@ build output, so no build step is needed to install.
 
 ## Use
 
-Type a task in the composer and send it. The dialog appears once per new task:
+Type anything in the composer and send it. The dialog appears before **every** message you
+send — plain text, `@file` references or `/skill` invocations, in any conversation, even while
+a turn is running:
 
 - **Subagent model**: turn it on and pick a model from the same provider-grouped
   list the composer's model seat uses. It applies to every subagent, including the agents a
@@ -66,15 +68,17 @@ Type a task in the composer and send it. The dialog appears once per new task:
   turn at high effort; GLM 5.3 is text only).
 - **Reasoning effort** (collapsed, shown once a model is picked): how hard the model may
   think. It defaults to the recommended level for the model; open it to see or change it.
-- **There is no "do not ask again"**: the modal is raised for every new task and
-  nothing can silence it. One answer never hides it from a later task or from
+- **There is no "do not ask again"**: the modal is raised for every message you send and
+  nothing can silence it. One answer never hides it from a later message or from
   another conversation. The last confirmed choice only pre-fills the dialog.
-- **Cancel / Esc / ✕**: send the task with stock behavior and forget any stored choice.
+- **Cancel / Esc / ✕**: send the message with stock behavior and forget any stored choice.
 
 `/orquestrar` opens the same dialog on demand (to change or clear the stored choice).
 
-The dialog is skipped for anything that is not a new task: steering a running turn,
-sub-agent conversations and `/` command lines.
+Nothing skips the dialog: only an empty send passes straight through. Earlier releases skipped
+`/` lines, messages sent while a turn was running and sub-agent conversations, so every task
+that began with a skill invocation (`/skill ...`) went out with no dialog at all; from 0.6.0
+the question is asked no matter what the message looks like.
 
 ## Which delegations are covered
 

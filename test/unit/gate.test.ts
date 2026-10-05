@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { ConfigClient } from '../../src/client/config-client.ts'
 import { DialogHost, type DialogRequest } from '../../src/client/dialogs.ts'
-import { PromptGate, createLastChoiceMemory, patchTargetOf, previewOf, textOf, type LastChoiceMemory } from '../../src/client/gate.ts'
+import { PromptGate, attachWhenAvailable, createLastChoiceMemory, patchTargetOf, previewOf, textOf, type LastChoiceMemory } from '../../src/client/gate.ts'
 import type { PromptPartLike, SessionFaceLike, SessionSnapshotLike } from '../../src/client/host-types.ts'
 import { OFF_CONFIG, buildConfig, type OrchestratorConfig } from '../../src/shared.ts'
 
@@ -120,22 +120,41 @@ describe('attach', () => {
 })
 
 describe('beforePrompt', () => {
-  it('sends straight through for anything that is not a new task', async () => {
+  it('asks before every message the user sends, whatever it looks like', async () => {
     const h = harness()
     const session = new FakeSession('s')
+    h.dialogs.registerPresenter('s', Symbol())
     const detach = h.gate.attach(session)
+    const asked: string[] = []
     const cases: [string, () => Promise<unknown>][] = [
-      ['running', () => { session.snapshot = { running: true, subagent: null }; return session.prompt(text('go'), 'queue') }],
-      ['steer', () => { session.snapshot = { running: false, subagent: null }; return session.prompt(text('go'), 'steer') }],
-      ['subagent conversation', () => { session.snapshot = { running: false, subagent: { address: 'x' } }; return session.prompt(text('go'), 'queue') }],
-      ['slash line', () => { session.snapshot = { running: false, subagent: null }; return session.prompt(text('/goal x'), 'queue') }],
-      ['empty', () => session.prompt([], 'queue')],
+      ['plain task', () => { session.snapshot = { running: false, subagent: null }; return session.prompt(text('go'), 'queue') }],
+      ['skill invocation', () => session.prompt(text('/anchor-animation-agent-skill do the thing'), 'queue')],
+      ['file reference', () => session.prompt(text('@README.md summarize this'), 'queue')],
+      ['message while a turn runs', () => { session.snapshot = { running: true, subagent: null }; return session.prompt(text('keep going'), 'queue') }],
+      ['steer', () => { session.snapshot = { running: true, subagent: null }; return session.prompt(text('stop'), 'steer') }],
+      ['subagent conversation', () => { session.snapshot = { running: false, subagent: { address: 'x' } }; return session.prompt(text('next'), 'queue') }],
     ]
     for (const [label, run] of cases) {
-      const before = session.prompts.length
+      answerNext(h.dialogs, (request) => {
+        asked.push(request.preview)
+        // The prompt must wait for the answer, whichever kind of message it is.
+        assert.equal(session.prompts.length, asked.length - 1, label)
+        request.resolve({ kind: 'cancel' })
+      })
       await run()
-      assert.equal(session.prompts.length, before + 1, label)
     }
+    assert.deepEqual(asked, ['go', '/anchor-animation-agent-skill do the thing', '@README.md summarize this', 'keep going', 'stop', 'next'])
+    assert.equal(session.prompts.length, cases.length) // every send still goes out, after its answer
+    detach()
+  })
+
+  it('lets only an empty send straight through', async () => {
+    const h = harness()
+    const session = new FakeSession('s')
+    h.dialogs.registerPresenter('s', Symbol())
+    const detach = h.gate.attach(session)
+    await session.prompt([], 'queue')
+    assert.equal(session.prompts.length, 1)
     assert.equal(h.dialogs.current.getSnapshot(), null)
     assert.equal(h.saved.length, 0)
     detach()
@@ -208,15 +227,20 @@ describe('beforePrompt', () => {
     detach()
   })
 
-  it('fails open when the host route is unavailable', async () => {
+  it('still asks when the host route is unavailable, pre-filled from the last choice', async () => {
+    // A dialog whose save fails out loud beats a modal that never appears:
+    // the route being down must not silence the question.
     const h = harness()
     const session = new FakeSession('s')
     h.dialogs.registerPresenter('s', Symbol())
     const detach = h.gate.attach(session)
     h.loadFails = true
+    h.memory.last = active
+    const initials: OrchestratorConfig[] = []
+    answerNext(h.dialogs, (request) => { initials.push(request.initial); request.resolve({ kind: 'cancel' }) })
     await session.prompt(text('go'), 'queue')
-    assert.equal(session.prompts.length, 1)
-    assert.equal(h.dialogs.current.getSnapshot(), null)
+    assert.equal(session.prompts.length, 1) // asked first, sent after the answer
+    assert.deepEqual(initials, [active])
     assert.ok(h.warnings.some(message => /route unavailable/.test(message)))
     detach()
   })
@@ -253,11 +277,42 @@ describe('beforePrompt', () => {
     const session = new FakeSession('s')
     h.dialogs.registerPresenter('s', Symbol())
     const detach = h.gate.attach(session)
-    session.snapshot = null as unknown as SessionSnapshotLike // makes beforePrompt throw
-    await session.prompt(text('go'), 'queue')
+    const broken = [{ type: 'text', get text(): string { throw new Error('boom') } }] as unknown as PromptPartLike[]
+    await session.prompt(broken, 'queue') // makes beforePrompt throw
     assert.equal(session.prompts.length, 1)
     assert.ok(h.warnings.some(message => /gate failed/.test(message)))
     detach()
+  })
+})
+
+describe('attachWhenAvailable', () => {
+  it('keeps looking until a session face exists, then attaches and stops', async () => {
+    const h = harness()
+    let face: FakeSession | undefined
+    const pending: (() => void)[] = []
+    const detach = attachWhenAvailable(
+      () => face,
+      h.gate,
+      () => {},
+      (callback) => { pending.push(callback); return callback },
+      () => {},
+    )
+    assert.equal(pending.length, 1) // no face yet: it schedules another look
+    pending.shift()?.()
+    assert.equal(pending.length, 1) // still nothing: it never gives up
+    face = new FakeSession('late')
+    pending.shift()?.()
+    assert.equal(pending.length, 0) // attached: the polling stops
+
+    h.dialogs.registerPresenter('late', Symbol())
+    const asked: string[] = []
+    answerNext(h.dialogs, (request) => { asked.push(request.preview); request.resolve({ kind: 'cancel' }) })
+    await face.prompt(text('go'), 'queue')
+    assert.deepEqual(asked, ['go']) // a late binding still gets the modal
+
+    detach()
+    await face.prompt(text('more'), 'queue')
+    assert.deepEqual(asked, ['go']) // detached: sends are stock again
   })
 })
 

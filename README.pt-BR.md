@@ -57,7 +57,9 @@ build, então a instalação não precisa compilar nada.
 
 ## Uso
 
-Digite uma tarefa no compositor e envie. O diálogo aparece uma vez por tarefa nova:
+Digite o que for no compositor e envie. O diálogo aparece antes de **todas** as mensagens que
+você envia — texto simples, referências `@arquivo` ou invocações `/skill`, em qualquer conversa,
+mesmo com um turno a correr:
 
 - **Modelo dos subagentes**: ligue e escolha um modelo na mesma lista agrupada por
   provedor que o seletor de modelo do compositor usa. Vale para todo subagente, inclusive os
@@ -66,15 +68,17 @@ Digite uma tarefa no compositor e envie. O diálogo aparece uma vez por tarefa n
   MiMo-V2.6-Pro pode levar minutos por turno em esforço alto; o GLM 5.3 é só texto).
 - **Esforço de raciocínio** (recolhido, aparece depois de escolher um modelo): quanto o modelo pode
   pensar. O padrão é o nível recomendado para o modelo; abra para ver ou mudar.
-- **Não existe "não perguntar de novo"**: o modal aparece em toda tarefa nova e nada o silencia.
-  Uma resposta nunca o esconde de uma tarefa seguinte nem de outra conversa. A última escolha
-  confirmada só pré-preenche o diálogo.
-- **Cancelar / Esc / ✕**: envia a tarefa com o comportamento padrão e esquece qualquer escolha guardada.
+- **Não existe "não perguntar de novo"**: o modal aparece em toda mensagem que você envia e nada
+  o silencia. Uma resposta nunca o esconde de uma mensagem seguinte nem de outra conversa. A
+  última escolha confirmada só pré-preenche o diálogo.
+- **Cancelar / Esc / ✕**: envia a mensagem com o comportamento padrão e esquece qualquer escolha guardada.
 
 `/orquestrar` abre o mesmo diálogo sob demanda (para mudar ou limpar a escolha guardada).
 
-O diálogo não aparece para o que não é tarefa nova: conduzir um turno em andamento, conversas
-de subagentes e linhas de comando com `/`.
+Nada pula o diálogo: só um envio vazio segue direto. Versões antigas pulavam linhas com `/`,
+mensagens enviadas com um turno a correr e conversas de subagentes — então toda tarefa que
+começava com uma invocação de skill (`/skill ...`) saía sem diálogo nenhum; a partir da 0.6.0 a
+pergunta é feita não importa como a mensagem seja.
 
 ## Quais delegações são cobertas
 

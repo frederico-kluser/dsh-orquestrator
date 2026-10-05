@@ -2,12 +2,19 @@
  * The prompt gate: the seam between "the user pressed send" and "the prompt
  * reaches the host". Every browser-authored message goes through
  * `SessionFace.prompt`, so the gate wraps that one method on the mounted
- * session face. Before a NEW task (an idle top-level session) it raises the
- * modal and waits for the answer; anything else passes straight through.
+ * session face. Before EVERY message the user sends from the composer it
+ * raises the modal and waits for the answer — plain text, `@file` references
+ * or `/skill` invocations, in any conversation, however the send is labelled
+ * (queue or steer). The operator's rule (0.6.0): the modal always asks, and
+ * only an empty send passes straight through. Early builds skipped `/` lines,
+ * running turns and subagent conversations, so every task that began with a
+ * skill invocation never saw the dialog.
  *
- * The gate is fail-open by construction: any problem (host route missing, no
- * composer mounted to show the dialog, an exception here) sends the prompt
- * exactly as stock DSH would. It can delay a send, never lose one.
+ * The gate is fail-open by construction: any problem (no composer mounted to
+ * show the dialog, an exception here) sends the prompt exactly as stock DSH
+ * would. It can delay a send, never lose one. A missing or unreadable host
+ * route still asks: a dialog whose save fails out loud beats a modal that
+ * never appears.
  * @module dsh-orquestrator/client/gate
  */
 
@@ -18,6 +25,9 @@ import type { PromptPartLike, SessionFaceLike } from './host-types.ts'
 
 /** Longest task preview shown in the dialog. */
 const PREVIEW_CHARS = 240
+
+/** How often {@link attachWhenAvailable} looks for a session face that is not there yet. */
+const ATTACH_POLL_MS = 500
 
 /** Persistence of the most recent confirmed choice (a convenience for the next dialog, in any conversation). */
 export interface LastChoiceMemory {
@@ -137,37 +147,37 @@ export class PromptGate {
   }
 
   /**
-   * Decide whether this prompt is a new task worth asking about, and ask.
+   * Ask before this message goes out. Every message the user sends from the
+   * composer is worth asking about: a task that begins with a `/skill`
+   * invocation is a task, and so is a follow-up typed while a turn runs. The
+   * only thing that passes straight through is a send with no content at all.
    * @param face - the session face sending the prompt.
    * @param content - the prompt parts.
-   * @param mode - the delivery mode the composer chose.
+   * @param _mode - the delivery mode the composer chose (no longer a reason to stay silent).
    * @param signal - cancellation of the surrounding send.
    * @returns when the prompt may proceed.
    */
   async beforePrompt(
     face: SessionFaceLike,
     content: readonly PromptPartLike[],
-    mode: 'queue' | 'steer',
+    _mode: 'queue' | 'steer',
     signal?: AbortSignal,
   ): Promise<void> {
-    const snapshot = face.getSnapshot()
-    // An addressed subagent conversation, or a message queued/steered into a
-    // turn that is already running, is not a new task.
-    if (snapshot.subagent !== null || snapshot.running || mode !== 'queue') return
     const text = textOf(content).trim()
-    // Slash lines that reach `prompt` are not tasks either.
-    if (text.startsWith('/')) return
     if (text === '' && content.length === 0) return
 
     const sessionId = face.sessionId
     const { client, dialogs, memory } = this.deps
-    let stored: OrchestratorConfig | null
+    let stored: OrchestratorConfig | null = null
     try {
       stored = await client.load(sessionId)
     } catch (error: unknown) {
-      // The host half is absent or unreachable: a dialog would configure nothing.
-      this.deps.warn('configuration route unavailable; not asking', error)
-      return
+      // The host half is absent or unreachable. The modal still asks — the
+      // operator's rule is that it always appears — pre-filled from the last
+      // choice; a confirm then says out loud that the choice could not be
+      // stored. Silently sending the task without asking is what hid the
+      // dialog in the first place.
+      this.deps.warn('configuration route unavailable; asking with defaults', error)
     }
     // The modal always asks. There is no "do not ask again": one answer may not
     // silence the next task, this conversation, or the next one the DSH web
@@ -192,6 +202,57 @@ export class PromptGate {
       save: async (config) => { await client.save(sessionId, config) },
     }, signal)
     if (result.kind === 'confirm') memory.write(result.config)
+  }
+}
+
+/**
+ * Attach the gate to a session face as soon as one exists, and keep looking
+ * for as long as the composer lives. A session's binding can materialize
+ * seconds after the composer mounts (a cold session, a heavy workspace, a
+ * reconnect), and an attach that gave up quietly sent every task of that
+ * conversation as stock DSH — the modal simply never appeared there. The poll
+ * is cheap and stops the moment the gate is attached or the composer unmounts.
+ * @param resolveFace - resolves the mounted session face, or undefined while it is not there yet.
+ * @param gate - the gate to attach.
+ * @param warn - diagnostics sink (never user-visible).
+ * @param schedule - timer scheduler (injectable for tests).
+ * @param cancel - timer cancellation (injectable for tests).
+ * @returns the detach function.
+ */
+export function attachWhenAvailable(
+  resolveFace: () => SessionFaceLike | undefined,
+  gate: PromptGate,
+  warn: (message: string, error?: unknown) => void,
+  schedule: (callback: () => void, ms: number) => unknown = (callback, ms) => setTimeout(callback, ms),
+  cancel: (handle: unknown) => void = (handle) => { clearTimeout(handle as ReturnType<typeof setTimeout>) },
+): () => void {
+  let detach: (() => void) | undefined
+  let handle: unknown
+  let disposed = false
+  const tryAttach = (): void => {
+    handle = undefined
+    if (disposed || detach !== undefined) return
+    let face: SessionFaceLike | undefined
+    try {
+      face = resolveFace()
+    } catch (error: unknown) {
+      warn('could not look up the session face; will keep trying', error)
+    }
+    if (face !== undefined) {
+      try {
+        detach = gate.attach(face)
+      } catch (error: unknown) {
+        warn('could not attach the prompt gate; will keep trying', error)
+      }
+      if (detach !== undefined) return
+    }
+    handle = schedule(tryAttach, ATTACH_POLL_MS)
+  }
+  tryAttach()
+  return () => {
+    disposed = true
+    if (handle !== undefined) cancel(handle)
+    detach?.()
   }
 }
 

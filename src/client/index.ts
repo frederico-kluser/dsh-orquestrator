@@ -21,7 +21,7 @@ import { OFF_CONFIG } from '../shared.ts'
 import { loadCatalog, type CatalogState } from './catalog.ts'
 import { ConfigClient } from './config-client.ts'
 import { DialogHost } from './dialogs.ts'
-import { createLastChoiceMemory, PromptGate } from './gate.ts'
+import { createLastChoiceMemory, PromptGate, attachWhenAvailable } from './gate.ts'
 import type {
   CommandUiLike, LocaleLike, ModelDirectoriesLike, RemoteSessionLike, SessionsLike, SlotsLike,
 } from './host-types.ts'
@@ -31,12 +31,6 @@ import { installStyles } from './styles.ts'
 
 /** Required services: the session registry, the slot registry and the locale runtime. */
 export const inject = ['sessions', 'slots', 'locale']
-
-/** How many times the gate retries attaching to a session binding that is not there yet. */
-const ATTACH_ATTEMPTS = 20
-
-/** Delay between attach retries. */
-const ATTACH_DELAY_MS = 250
 
 /** The page's `localStorage`, or undefined when the browser blocks it. */
 function safeStorage(): Storage | undefined {
@@ -78,28 +72,11 @@ export function apply(ctx: ClientContext): void {
     dialogs,
     locale,
     attachGate(sessionId) {
-      let detach: (() => void) | undefined
-      let timer: ReturnType<typeof setTimeout> | undefined
-      let attempts = 0
-      const tryAttach = (): void => {
-        timer = undefined
-        const face = sessions.binding(sessionId)?.session
-        if (face !== undefined) {
-          try {
-            detach = gate.attach(face)
-          } catch (error: unknown) {
-            console.warn('dsh-orquestrator: could not attach the prompt gate; sends stay stock', error)
-          }
-          return
-        }
-        attempts += 1
-        if (attempts < ATTACH_ATTEMPTS) timer = setTimeout(tryAttach, ATTACH_DELAY_MS)
-      }
-      tryAttach()
-      return () => {
-        if (timer !== undefined) clearTimeout(timer)
-        detach?.()
-      }
+      return attachWhenAvailable(
+        () => sessions.binding(sessionId)?.session,
+        gate,
+        (message, error) => { console.warn(`dsh-orquestrator: ${message}`, error) },
+      )
     },
     loadCatalog(sessionId): Promise<CatalogState> {
       return loadCatalog({
@@ -129,7 +106,7 @@ export function apply(ctx: ClientContext): void {
       label: () => t('command.label'),
       description: () => t('command.description'),
       icon: IconAgentPresetOutline16,
-      available: session => sessions.binding(session.sessionId)?.session.getSnapshot().subagent === null,
+      available: () => true,
       ui: {
         kind: 'action',
         run(session) {

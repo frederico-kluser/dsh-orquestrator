@@ -1,7 +1,7 @@
 /**
  * dsh-orquestrator, browser half.
  *
- * Wires five things into the stock DSH web client:
+ * Wires six things into the stock DSH web client:
  * - the dialog stylesheet (DSH tokens only);
  * - the `orquestrator` dictionaries (English, Portuguese, Chinese);
  * - a composer overlay occupant that hosts the dialog and attaches the prompt
@@ -10,7 +10,9 @@
  *   configured in this conversation (own model? which? which effort?) and
  *   opens the dialog on click;
  * - a `/orquestrar` slash command that opens the same dialog on demand (the
- *   manual path, and the way to change or clear the stored choice).
+ *   manual path, and the way to change or clear the stored choice);
+ * - marks on the rows of the subagent dropdown in the task header: the model
+ *   each subagent runs on and a status icon (`subagent-menu.ts`).
  *
  * Everything here is fail-open: if any piece cannot mount, sends behave
  * exactly as stock DSH.
@@ -24,7 +26,7 @@ import { OFF_CONFIG } from '../shared.ts'
 import { loadCatalog, type CatalogState } from './catalog.ts'
 import { ConfigClient } from './config-client.ts'
 import { DialogHost } from './dialogs.ts'
-import { createLastChoiceMemory, PromptGate, attachWhenAvailable } from './gate.ts'
+import { createLastChoiceMemory, createSkillChoiceMemory, PromptGate, attachWhenAvailable } from './gate.ts'
 import type {
   CommandUiLike, LocaleLike, ModelDirectoriesLike, RemoteSessionLike, SessionsLike, SlotsLike,
 } from './host-types.ts'
@@ -32,6 +34,8 @@ import { NS, en, pt, zh } from './locales.ts'
 import { ConfigChip, type ConfigChipHost } from './ConfigChip.tsx'
 import { OrchestratorOverlay, type OverlayHost } from './OrchestratorOverlay.tsx'
 import { installStyles } from './styles.ts'
+import { installSubagentMarks } from './subagent-menu.ts'
+import { SubagentsClient } from './subagents-client.ts'
 
 /** Required services: the session registry, the slot registry and the locale runtime. */
 export const inject = ['sessions', 'slots', 'locale']
@@ -69,6 +73,7 @@ export function apply(ctx: ClientContext): void {
     client,
     dialogs,
     memory,
+    skillMemory: createSkillChoiceMemory(safeStorage()),
     warn: (message, error) => { console.warn(`dsh-orquestrator: ${message}`, error) },
   })
 
@@ -118,6 +123,21 @@ export function apply(ctx: ClientContext): void {
     'dsh-orquestrator: config chip',
   )
 
+  // The subagent dropdown in the task header: each row also shows which model the subagent runs on and a status icon
+  // (spinner, check, failure mark). DSH's menu takes no slot, so this decorates its DOM from outside, fail-open.
+  ctx.effect(
+    () => installSubagentMarks({
+      document,
+      sessions,
+      locale,
+      client: new SubagentsClient(),
+      visibleSessionIds: () => dialogs.presenterSessionIds(),
+      loadCatalog: (sessionId) => host.loadCatalog(sessionId),
+      warn: (message, error) => { console.warn(`dsh-orquestrator: ${message}`, error) },
+    }),
+    'dsh-orquestrator: subagent marks',
+  )
+
   // The `/orquestrar` command exists only while the command UI is mounted.
   ctx.inject(['commandUi'], (scope: ClientContext) => {
     const commandUi = scope.get('commandUi') as unknown as CommandUiLike
@@ -146,11 +166,18 @@ export function apply(ctx: ClientContext): void {
     } catch (error: unknown) {
       console.warn('dsh-orquestrator: could not read the stored choice; opening with defaults', error)
     }
+    // The composer may have gone while the host answered (the user navigated away): nobody can render the dialog
+    // now, and one nobody can render must never be raised.
+    if (!dialogs.hasPresenter(sessionId)) return
     await dialogs.request({
       sessionId,
       mode: 'configure',
       preview: '',
-      initial: stored ?? memory.read() ?? OFF_CONFIG,
+      initial: () => stored ?? memory.read() ?? OFF_CONFIG,
+      // Nothing is being sent, so there is no message to carry the skill's token.
+      skill: null,
+      skillInMessage: false,
+      initialSkill: false,
       save: async (config) => { await client.save(sessionId, config) },
     })
   }

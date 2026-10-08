@@ -1,7 +1,7 @@
 {
   "name": "dsh-orquestrator",
-  "version": "0.7.0",
-  "description": "DeepSeek Harness plugin: a native-looking modal on task send lets you pick the model subagents run on. The pick, a reasoning-effort ceiling and an output-token cap are enforced in code on every child DSH starts, whichever tool starts it: the subagent tools, a workflow, ralph or a one-shot background job.",
+  "version": "0.8.0",
+  "description": "DeepSeek Harness plugin: a native-looking modal on task send lets you pick the model subagents run on. The pick, a reasoning-effort ceiling and an output-token cap are enforced in code on every child DSH starts, whichever tool starts it: the subagent tools, a workflow, ralph or a one-shot background job. It also ships a global agent skill that teaches the main agent to split work, run subagents in parallel and verify them (a checkbox in the modal applies it to a message), and shows the model and state of each subagent in the task page's subagent list.",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -16,6 +16,7 @@
   "files": [
     "lib/index.js",
     "lib/client.cjs",
+    "skills/orchestrate-subagents/SKILL.md",
     "cordis.patch.yml",
     "README.md",
     "README.pt-BR.md",
@@ -43,17 +44,21 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
+    "@types/jsdom": "^30.0.0",
     "@types/node": "^24.0.0",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",
+    "jsdom": "^30.1.2",
+    "playwright-core": "1.62.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3"
   },
   "scripts": {
+    "gen:skill": "node scripts/gen-skill.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "build": "pnpm run typecheck && tsdown --config tsdown.config.ts",
+    "build": "pnpm run gen:skill && pnpm run typecheck && tsdown --config tsdown.config.ts",
     "test": "node --test \"test/**/*.test.ts\"",
     "check": "pnpm run build && pnpm run test && node scripts/check-lib.mjs",
     "check:lib": "node scripts/check-lib.mjs"
@@ -76,6 +81,7 @@
     "workflow",
     "reasoning-effort",
     "orchestration",
-    "multi-model"
+    "multi-model",
+    "agent-skill"
   ]
 }

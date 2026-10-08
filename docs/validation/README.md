@@ -2,12 +2,127 @@
 
 Everything in this plugin was validated against a real DeepSeek Harness, not only against
 mocks. This page states what was run, what it proved, what it found and what it did not
-cover: first the **0.5.1** fix (the dialog could not save when the host and the page were different versions), then the
-**0.5.0** validation (the reviewer removed, the start guard on its own), then the
+cover: first the **0.8.0** validation (the orchestration skill, its dialog checkbox and the model/state marks on the
+subagent list; every run on the project's Mac mini test host), then the **0.5.1** fix (the dialog could not save when
+the host and the page were different versions), then the
 **0.4.0** validation of the start guard on the three target models, then the **0.2.0** validation
 on the same three models, then the **0.1.0** validation on a Mac mini. The 0.4.0 and older sections
 describe versions that still had the independent reviewer, which 0.5.0 removed
 ([D16](../estudos/decisoes.md)); they are kept as the record of what was run.
+
+## 0.8.0: the orchestration skill, its dialog checkbox and the subagent list marks (2026-10-07)
+
+**What was added.** Installing the plugin now registers one global agent skill (`orchestrate-subagents`) with DSH's
+skill registry; the dialog gained an "Orchestration skill" checkbox (checked by default) whose only action is to put
+the skill's `/name` token at the end of the message, so DSH's own skill gesture injects the instructions into that
+step; and the task page's subagent dropdown now shows, per child, the model it runs on and its state (running, done,
+failed, stopped) from a host-side ledger fed by DSH's `subagent/start` and `subagent/end` events.
+
+**Where it ran.** Every run of this validation happened on the project's Mac mini test host (Apple M1, macOS 15) —
+the operator moved heavy testing there before this release — against an isolated DSH home built from the user's
+settings (main agent GLM 5.3 at `high`, `workspace-write` permissions) with only GLM 5.3 and DeepSeek V4.1 Flash
+(Azure) used. The plugin under test was the working tree rsynced to `/Volumes/Ext2TB/dsh-orquestrator-validate`,
+driven against the DSH 0.1.6-alpha.2 checkout (`ddefc45`) on the same machine. The maintainer's real DSH and
+`~/.dsh` were never touched (the setup copies `settings.yaml` read-only once).
+
+**Static battery.** `pnpm run typecheck` clean; `node scripts/gen-skill.mjs --check` up to date; the full suite twice
+with `DSH_CHECKOUT` — **841 tests, 0 failed, 0 skipped** (122 suites; 6.9 s and 5.8 s) — and once in CI mode without
+the checkout: **804, 0 failed**. `pnpm run build` twice produced byte-identical bundles in both rounds
+(`lib/index.js` sha256 `aa27cc8330ec9b57...`, `lib/client.cjs` `d3f7699ea929099a...`) and the same hashes as the build
+on the development machine: the committed artifacts are reproducible across machines. `scripts/check-lib.mjs` fails
+at this point by design — it compares against git HEAD and the 0.8.0 `lib/` is not committed yet; it is the CI gate
+for right after the commit.
+
+**Browser battery** (a real `dsh web` in the isolated home; `scripts/e2e/ui-e2e-skill.mjs`, `ui-e2e-marks.mjs`,
+`ui-e2e.mjs`, run through `scripts/e2e/with-server.sh`):
+
+- **Skill checkbox and prompt injection: 127/127 checks** over 6 pages, 0 uncaught errors, 0 failed plugin
+  responses. Covered: exactly one checkbox, checked by default and remembering the last answer; the token at the end
+  of the message on a line of its own, and never in the first words of a first message of five words or more; the
+  injected `<skill_content>` carrying the whole body of `SKILL.md`; a typed token never doubled; every cancel path
+  (Escape, close button, Cancel, mask) sending the message untouched; `/orquestrar` with no skill section; the
+  keyboard tour (14 Tab stops each way, Space toggles, Enter confirms); a 1024x600 screen with the effort block open
+  (the stack scrolls, the primary action stays reachable); the light theme; and the wire behavior against an older
+  host emulated with route interception (no `skill` field, `available: false`, a malformed offer, a failing route:
+  no checkbox, no token; `skill: false` and `modelInvocable: false` verified against real host configurations). Two
+  documented limits reproduce as advice lines: every tokened message re-injects a copy of the skill into the
+  history, and a first message shorter than five words still carries the token in its automatic title.
+- **A live run of two real subagents: 15/15** (the only model cost of this validation). Both children ran on
+  `azure-opencode/DeepSeek-V4.1-Flash` at medium with the 64 000-token cap, and the ledger's two records match the
+  children in the session logs (ids, parents, routes). The dropdown was captured mid-run (one spinner row) and after
+  (two check rows).
+- **A subagent's own conversation: 12/12.** The dialog there has no skill section and no checkbox, and both send
+  paths post only the typed text to `/api/subagents/prompt` (the outgoing request was captured and aborted, so no
+  model ran). The shipped S10 step of `ui-e2e-skill.mjs` skipped on the fresh home because it looked its parent up
+  by one hard-coded session title (a replica script verified the behavior 12/12 at run time); the step's discovery
+  was generalized afterwards and then ran its own checks 10/10 on the same home, keeping a clean skip for homes
+  without children.
+- **Subagent list marks: 146/146 checks** over 20 pages (3 skipped for fixtures a fresh home does not carry; the
+  states they cover were driven through the ledger route instead). Confirmed: the status icon and its translated
+  tooltip for every state (Running, Done, Failed: error, Failed: token limit reached, Failed: declined the task, an
+  unknown reason raw, Stopped, Outcome not recorded); the model label follows DSH's own `lastUsed` first and the
+  ledger's route second; a `running` record is believed for 5 s measured on the HOST clock (checked with a clock one
+  hour off in both directions); a 404 is remembered for the life of the page (one request, no polling across reopens)
+  while a 500 is retried; rows update in place with no duplicates; closing the menu removes every trace; the native
+  rows keep working (labels, arrow to the sidebar, keyboard, `aria-label` unchanged) and each marked row gained an
+  `aria-describedby`; and there were no page errors.
+- **No regression in the earlier browser phases**: cancel 11/11, command 7/7, light 5/5, small 3/3 (after the known
+  `open()` flake of `ui-e2e.mjs`, clean on retry), effort 16/16; plus `readme` 2/2 and `readme-light` 1/1 (the
+  figures now in the README).
+
+**A/B with real models: what the skill changes** (one sample per arm; main agent GLM 5.3 at high, subagents DeepSeek
+V4.1 Flash; the same three-file task in both arms — create `greet.js`, `farewell.js` and `test.js`, `node test.js`
+exits 0 — and only the checkbox differs):
+
+| Measure | checkbox off | checkbox on |
+| --- | --- | --- |
+| Main agent tool calls | write ×6, bash ×2, present | todo_write ×5, subagent ×3, list_agents ×2, send_message ×2, get_goal, glob, job_list, present |
+| Two `subagent` calls in one message | no (it batched 3 `write`s) | yes — the two writers, children created 1 ms apart |
+| Main agent read/wrote/ran itself | 8 calls | 1 (a `glob`) |
+| A separate verifier after the writers | no (it ran `node test.js` twice itself) | yes ("try to REFUTE the claim…"), started after the writers ended |
+| The final answer says how it was verified | "prints `All tests passed`" | a proof section with the independent verifier's verdict |
+| Children (model) | 0 | 3 (DeepSeek V4.1 Flash, medium, 64 000 cap) |
+| Wall time / logged tokens | 9.5 s / 88 163 | 374.3 s / 1 082 308 |
+| End state | 3 files, `node test.js` exit 0 | the same, exit 0 (probed) |
+
+One sample cannot separate the token from the injection, and both runs share an artifact of the scratch workspace
+(the repo's own `package.json` forced ESM rewrites in both arms). The honest summary: with the skill the model
+orchestrates instead of doing the work itself, and on a small task that costs 39x the time and 12x the tokens for the
+same end state — the skill pays when a task is big enough to parallelize and to need an independent check.
+
+**The skill text was pressure-tested and fact-checked before it shipped.** Four imagined tasks (a code change, a
+read-only question, a one-line fix, a 40-file migration) were played against it: the orchestration followed the rules
+literally, and the frictions found became rules 3, 6 and 7 (the shared working tree, what a verifier runs, one
+re-brief). A separate fact-checker then checked all 18 claims the text makes about DSH behavior against the DSH
+source: 11 true, 1 false (in the shipped continuable mode a background subagent's result arrives in the completion
+notice and no job exists for `job_output`), 4 partly, 2 unverifiable — plus 5 internal contradictions (a lookup that
+cannot be stated unverified, an uncapped re-brief loop, per-piece verifiers running the full suite over a half-edited
+tree). All six findings were fixed and the text regenerated.
+
+**Three independent code reviews shaped what shipped** (host half, dialog/gate half, marks half; plus adversarial
+experiments and mutation runs: 53 + 51 + 86 mutants, all killed after the fixes). Fixed before release: the
+pre-existing dialog queue jam (since 0.6.0: a configure dialog for a conversation whose composer unmounted became the
+current dialog, and every later send in every conversation hung until reload), sends reaching the host out of order,
+a typed token ignoring the unticked box, a slow host silently dropping the checkbox, marks matching the wrong child
+on identical labels or a prefix ("Review" capturing "Review the auth module"), a ledger call that never settled
+wedging the marks forever, the staleness clock using the browser's clock against the host's records, hostile files in
+the state directory (a symlinked temp file, a FIFO, a 93 MB ledger blocking load for 23 s), two processes on one
+state directory dropping each other's records, the optional tracker aborting `apply()` before the start guard
+installed, and an end event closing a newer run of the same child. Accepted and documented: the skill text is
+re-injected by every tokened message (the checkbox is the control), a first message shorter than five words carries
+the token in its title, a long model label ellipsizes at the effort name when the row's metrics column is wide, and
+a continuable child's recorded route cannot be corrected at its end (DSH releases the agent first) — the page prefers
+DSH's own `lastUsed`. The reviewers also found one DSH defect (a session rename never wins over the generated title
+in the sidebar), which is upstream.
+
+**Wire compatibility** was checked with the REAL 0.7.0 code in both directions: a 0.7 page reads and saves against the
+0.8 host (the extra `skill` field is ignored), and a 0.8 page against a 0.7 host offers no checkbox and shows the
+marks DSH itself supports (one 404 stops the ledger polling).
+
+**Not covered.** The pt and zh renderings in a real browser (DSH's language is a setting), the `steer` delivery mode,
+Firefox and Safari, screen readers, power-loss durability (the state writes are atomic but not fsynced), Windows and
+Node 22, the marks script's own optional live phase (its states were covered by the live run above), and the 3 marks
+checks that need fixtures a fresh home does not carry.
 
 ## 0.5.1: the dialog saves when the two halves are different versions (2026-10-04)
 

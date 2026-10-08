@@ -11,6 +11,7 @@ describe('parsePluginConfig', () => {
     assert.deepEqual(parsed.effort, { enabled: true })
     assert.deepEqual(parsed.limits, { worker: 64_000 })
     assert.deepEqual(parsed.guard, { enabled: true, explicitModel: 'override' })
+    assert.deepEqual(parsed.skill, { enabled: true, modelInvocable: true })
   })
 
   it('resolves the effort ceiling and the token limit', () => {
@@ -63,6 +64,36 @@ describe('parsePluginConfig', () => {
     assert.throws(() => parsePluginConfig({ children: null as never }), /invalid config field "children": must be false or an object/)
   })
 
+  it('registers the global skill by default, in the model\'s catalog too', () => {
+    assert.deepEqual(parsePluginConfig(undefined).skill, { enabled: true, modelInvocable: true })
+    assert.deepEqual(parsePluginConfig({}).skill, { enabled: true, modelInvocable: true })
+    assert.deepEqual(parsePluginConfig({ skill: {} }).skill, { enabled: true, modelInvocable: true })
+    assert.deepEqual(parsePluginConfig({ skill: { modelInvocable: true } }).skill, { enabled: true, modelInvocable: true })
+  })
+
+  it('lets the operator keep the skill out of the model\'s catalog, or not register it at all', () => {
+    assert.deepEqual(parsePluginConfig({ skill: { modelInvocable: false } }).skill, { enabled: true, modelInvocable: false })
+    assert.deepEqual(parsePluginConfig({ skill: false }).skill, { enabled: false, modelInvocable: true })
+  })
+
+  it('leaves the rest of the configuration alone when it resolves the skill', () => {
+    const parsed = parsePluginConfig({ skill: false, children: { explicitModel: 'keep' }, limits: { workerMaxTokens: 8000 } })
+    assert.deepEqual(parsed.guard, { enabled: true, explicitModel: 'keep' })
+    assert.deepEqual(parsed.limits, { worker: 8000 })
+    assert.deepEqual(parsed.effort, { enabled: true })
+  })
+
+  it('fails loud on a malformed skill block, naming the field', () => {
+    assert.throws(() => parsePluginConfig({ skill: { modelInvokable: false } as never }), /invalid config field "skill\.modelInvokable": is not a known field \(modelInvocable\)/)
+    assert.throws(() => parsePluginConfig({ skill: { modelInvocable: false, extra: 1 } as never }), /skill\.extra.*not a known field/)
+    assert.throws(() => parsePluginConfig({ skill: { modelInvocable: 'no' as never } }), /invalid config field "skill\.modelInvocable": must be a boolean/)
+    assert.throws(() => parsePluginConfig({ skill: { modelInvocable: 0 as never } }), /skill\.modelInvocable.*must be a boolean/)
+    assert.throws(() => parsePluginConfig({ skill: { modelInvocable: null as never } }), /skill\.modelInvocable.*must be a boolean/)
+    for (const value of [true, 'yes', 1, [], null]) {
+      assert.throws(() => parsePluginConfig({ skill: value as never }), /invalid config field "skill": must be false or an object/, `skill: ${JSON.stringify(value)}`)
+    }
+  })
+
   it('still loads a patch file written for 0.4.0: the reviewer fields are ignored, never a load error', () => {
     const legacy = {
       tools: [{ name: 'subagent', provider: 'spawn', mode: 'continuable' }],
@@ -94,10 +125,20 @@ describe('the fields the plugin warns about', () => {
   })
 
   it('knows every field the configuration documents, and points each mis-indented block field at its block', () => {
-    assert.deepEqual(unknownConfigFields({ defaults: {}, stateDir: 'x', persist: true, maxSessions: 1, effort: false, limits: false, children: false }), [])
+    assert.deepEqual(unknownConfigFields({ defaults: {}, stateDir: 'x', persist: true, maxSessions: 1, effort: false, limits: false, children: false, skill: false }), [])
     assert.deepEqual(unknownConfigFields({ worker: 'low', workerEffort: 'low' }), [
       'unknown config field "worker" is ignored (did you mean effort.worker?)',
       'unknown config field "workerEffort" is ignored (did you mean defaults.workerEffort?)',
+    ])
+  })
+
+  it('knows the skill block, and points a mis-indented modelInvocable at it', () => {
+    assert.deepEqual(unknownConfigFields({ skill: false }), [])
+    assert.deepEqual(unknownConfigFields({ skill: { modelInvocable: false } }), [])
+    assert.deepEqual(unknownConfigFields({ modelInvocable: false }), ['unknown config field "modelInvocable" is ignored (did you mean skill.modelInvocable?)'])
+    assert.deepEqual(unknownConfigFields({ skill: {}, modelInvocable: true, colour: 'blue' }), [
+      'unknown config field "modelInvocable" is ignored (did you mean skill.modelInvocable?)',
+      'unknown config field "colour" is ignored',
     ])
   })
 

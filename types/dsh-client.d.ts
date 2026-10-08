@@ -6,7 +6,7 @@
  * plugin uses, so the repository type-checks without a DSH checkout.
  *
  * Source of truth: packages/client/ui-primitives/src (Modal.tsx, Button.tsx,
- * Switch.tsx, Checkbox.tsx, Menu.tsx, icons/props.ts) at DSH 0.1.6-alpha.2.
+ * Switch.tsx, Checkbox.tsx, StateDot.tsx, Tag.tsx, Menu.tsx, icons/props.ts) at DSH 0.1.6-alpha.2.
  * If a prop below drifts, `scripts/e2e/` fails first on a real DSH.
  */
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
@@ -28,6 +28,7 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export const IconDataOutline16: IconComponent
   export const IconChevronDownOutline14: IconComponent
   export const IconLoadingOutline16: IconComponent
+  export const IconSkillOutline16: IconComponent
   export const IconWarningOutline16: IconComponent
 
   /** Props of the centered, body-portaled modal. */
@@ -76,6 +77,23 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     disabled?: boolean
     title?: string | undefined
     className?: string | undefined
+  }): JSX.Element
+
+  /** Status dot: `ongoing` is the animated pixel chase, the other states are solid colored dots. */
+  export type StateDotState = 'done' | 'warning' | 'ongoing' | 'error' | 'idle'
+  export function StateDot(props: {
+    state: StateDotState
+    size?: number | undefined
+    className?: string | undefined
+  }): JSX.Element
+
+  /** Palette of the read-only capsule badge. */
+  export type TagTone = 'outline' | 'solid' | 'neutral' | 'quiet' | 'success' | 'info' | 'warning' | 'danger'
+  /** Read-only capsule badge. */
+  export function Tag(props: {
+    tone?: TagTone
+    className?: string | undefined
+    children?: ReactNode
   }): JSX.Element
 
   /** Selectable menu row. */

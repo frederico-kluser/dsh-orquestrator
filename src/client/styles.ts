@@ -50,6 +50,19 @@ export const CSS = `
 .dsh-orq-chip:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
 .dsh-orq-chip-on { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-label-primary); }
 .dsh-orq-chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-orq-skill { display: flex; flex-direction: column; gap: 6px; }
+.dsh-orq-skill-hint { padding-left: 22px; }
+.dsh-orq-sub-icon { display: inline-flex; flex: none; align-items: center; justify-content: center; box-sizing: border-box; width: 14px; height: 18px; margin: 0 -2px; color: var(--dsw-alias-label-tertiary); }
+.dsh-orq-sub-icon svg { display: block; flex: none; transform-origin: 50% 50%; }
+.dsh-orq-sub-icon[data-orq-state='running'] { color: var(--dsw-static-deepseek-450); }
+.dsh-orq-sub-icon[data-orq-state='running'] svg { animation: dsh-orq-spin 900ms linear infinite; }
+.dsh-orq-sub-icon[data-orq-state='done'] { color: var(--dsw-alias-state-success-primary); }
+.dsh-orq-sub-icon[data-orq-state='failed'] { color: var(--dsw-alias-state-error-primary); }
+.dsh-orq-sub-icon[data-orq-state='stopped'] { color: var(--dsw-alias-state-warn-primary); }
+[role='treeitem'][data-orq-row] .dsh-orq-sub-icon + [data-state] { display: none; }
+.dsh-orq-sub-model { display: flex; min-width: 0; margin-top: 2px; }
+.dsh-orq-sub-tag { display: block; box-sizing: border-box; min-width: 0; max-width: 100%; height: 16px; padding: 0 6px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 999px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font-size: 10px; line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: reduce) { .dsh-orq-sub-icon[data-orq-state='running'] svg { animation: none; } }
 `
 
 /**

@@ -9,6 +9,7 @@
 #                             preset (`workspace-write`, not the user's `danger-full-access`)
 #   home/profiles/headless    the headless profile with THIS working tree installed (`link:`): the plugin under test
 #   home/profiles/before      the headless profile with the previous build (ORQ_BEFORE_REF, default 487e720, 0.3.0)
+#   home/profiles/web         a minimal web profile (base + web-app bundles) with THIS working tree installed, for the browser phases
 #   plugin-before/            that previous build, extracted without node_modules
 #   runs/, state/             run evidence and the plugin's state directory
 #
@@ -62,6 +63,15 @@ echo "before: $(grep -m1 '"version"' "$root/plugin-before/package.json" | tr -d 
 
 dsh plugin --profile headless add "link:$repo" > /dev/null
 dsh plugin --profile before add "link:$root/plugin-before" > /dev/null
+
+# The browser phases need the web app: a minimal web profile (the base and web-app bundles only, none of the user's own
+# plugins), this working tree linked in. Start it with `dsh --profile web --no-open --port 0`.
+rm -rf "$DSH_HOME/profiles/web"
+mkdir -p "$DSH_HOME/profiles/web"
+cp "$HOME/.dsh/profiles/headless/pnpm-workspace.yaml" "$DSH_HOME/profiles/web/"
+printf '%s\n' '{ "name": "dsh-profile-web", "private": true, "dependencies": {}, "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"] } } }' > "$DSH_HOME/profiles/web/package.json"
+printf '[]\n' > "$DSH_HOME/profiles/web/cordis.patch.yml"
+dsh plugin --profile web add "link:$repo" > /dev/null
 
 echo "after:  $(grep -m1 '"version"' "$repo/package.json" | tr -d ' ,') (this working tree)"
 echo "main agent: $(grep -A3 '^agent-default-model' "$DSH_HOME/settings.yaml" | tr -s ' \n' ' ')"

@@ -6,10 +6,11 @@
  * @module dsh-orquestrator/store
  */
 
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { renameSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { parseConfig, type OrchestratorConfig } from './shared.ts'
+import { readStateFile, writeStateFile } from './state-file.ts'
 
 /** Persisted file schema version. */
 const FILE_VERSION = 1
@@ -139,19 +140,20 @@ export class ConfigStore {
     }
   }
 
-  /** Load the state file; a missing file is empty, a corrupt one is set aside. */
+  /**
+   * Load the state file. A missing file is empty; a corrupt one is set aside; one that must not be read (a link, a
+   * pipe, a directory, anything over the size bound) is only reported, and the next write replaces it.
+   */
   private load(): void {
     if (this.file === undefined) return
-    let raw: string
-    try {
-      raw = readFileSync(this.file, 'utf8')
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
-      this.logger?.warn(`dsh-orquestrator: cannot read ${this.file}: ${String(error)}`)
+    const read = readStateFile(this.file)
+    if (read.kind === 'missing') return
+    if (read.kind !== 'text') {
+      this.logger?.warn(`dsh-orquestrator: cannot read ${this.file}: ${read.kind === 'refused' ? read.reason : String(read.error)}`)
       return
     }
     try {
-      const parsed: unknown = JSON.parse(raw)
+      const parsed: unknown = JSON.parse(read.text)
       if (typeof parsed !== 'object' || parsed === null || (parsed as { version?: unknown }).version !== FILE_VERSION) {
         throw new Error('unsupported state file version')
       }
@@ -165,8 +167,8 @@ export class ConfigStore {
         loaded.push([id, { config, updatedAt }])
       }
       loaded.sort((a, b) => a[1].updatedAt - b[1].updatedAt)
-      for (const [id, entry] of loaded) this.entries.set(id, entry)
-      this.prune()
+      // Only the newest `maxSessions` go in: a huge file loads in bounded time (pruning one by one is quadratic).
+      for (const [id, entry] of loaded.slice(Math.max(0, loaded.length - this.maxSessions))) this.entries.set(id, entry)
     } catch (error: unknown) {
       const aside = `${this.file}.corrupt-${String(this.now())}`
       try {
@@ -178,19 +180,12 @@ export class ConfigStore {
     }
   }
 
-  /** Persist atomically (tmp + rename), owner-only. Failures are logged, never thrown. */
+  /** Persist atomically (see {@link writeStateFile}), owner-only. Failures are logged, never thrown. */
   private save(): void {
     if (this.file === undefined) return
-    const sessions: Record<string, Entry> = {}
-    for (const [id, entry] of this.entries) sessions[id] = entry
-    const body = `${JSON.stringify({ version: FILE_VERSION, sessions }, null, 2)}\n`
-    // Per-process temp name: two DSH processes sharing a state dir never interleave writes.
-    const tmp = `${this.file}.${String(process.pid)}.tmp`
+    const body = `${JSON.stringify({ version: FILE_VERSION, sessions: Object.fromEntries(this.entries) }, null, 2)}\n`
     try {
-      mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 })
-      writeFileSync(tmp, body, { mode: 0o600 })
-      chmodSync(tmp, 0o600)
-      renameSync(tmp, this.file)
+      writeStateFile(this.file, body)
     } catch (error: unknown) {
       this.logger?.warn(`dsh-orquestrator: cannot persist ${this.file}: ${String(error)}`)
     }

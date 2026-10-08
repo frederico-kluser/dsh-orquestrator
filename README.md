@@ -19,6 +19,15 @@ because DSH otherwise runs a re-routed child at its route's default (`max` on ma
 the cause of subagents that burn their whole budget on one edge case. See
 [Reasoning effort](#reasoning-effort).
 
+Since 0.8.0 the plugin also ships a **global agent skill**, `orchestrate-subagents`, and the dialog
+carries a checkbox for it, checked by default: when it is checked, the message goes out with
+`/orchestrate-subagents` and DSH loads the skill's instructions for that task. The skill teaches the main
+agent to split the work into small pieces, run subagents in parallel, send subagents to read the code
+instead of reading it itself, and check every result with verifier subagents. See
+[The orchestration skill](#the-orchestration-skill). The subagent list of a task page now also shows which
+model each subagent runs on and a status icon (running, done, failed). See
+[Subagent list: model and state](#subagent-list-model-and-state).
+
 **Cancel, Escape and the close button send the task exactly as DSH always did.**
 Nothing else about DSH changes.
 
@@ -68,6 +77,12 @@ a turn is running:
   turn at high effort; GLM 5.3 is text only).
 - **Reasoning effort** (collapsed, shown once a model is picked): how hard the model may
   think. It defaults to the recommended level for the model; open it to see or change it.
+- **Orchestration skill** (a checkbox, checked by default; shown when the plugin's host half has registered the
+  skill): applies the global skill `orchestrate-subagents` to this message. The message goes out with the
+  `/orchestrate-subagents` token and DSH injects the skill's instructions into that step. Uncheck it to send
+  the message without the skill; the dialog remembers your last answer for the next message. If the message
+  already contains the token (you typed it), the box is shown ticked and locked, because DSH loads the skill
+  anyway. See [The orchestration skill](#the-orchestration-skill).
 - **There is no "do not ask again"**: the modal is raised for every message you send and
   nothing can silence it. One answer never hides it from a later message or from
   another conversation. The last confirmed choice only pre-fills the dialog.
@@ -131,6 +146,100 @@ instruction. `keep` lets the caller's model stand, under the same ceilings. A ch
 no model (`defaults.workerEffort` alone) leaves children on the main agent's model under that level,
 and a model a script names itself stands.
 
+## The orchestration skill
+
+When it loads, the plugin registers one skill with DSH's skill registry: `orchestrate-subagents`
+([`skills/orchestrate-subagents/SKILL.md`](skills/orchestrate-subagents/SKILL.md)). It is registered by the
+plugin, not copied into a skills folder, so installing the plugin is all it takes for every task of every
+session to have it.
+
+What it teaches the agent that coordinates (never a subagent; the skill says so itself):
+
+1. **Break the task into small pieces first**, as a written plan with the dependencies between them, each
+   piece worth a subagent (tiny items of one shape are batched, not one agent each).
+2. **Start everything that can run together, together**: several `subagent` calls in one message, background
+   jobs for the slow pieces, a `workflow` script when many pieces share one shape.
+3. **Parallel pieces share one working tree**: every file has one owner, a file several pieces need is a piece
+   of its own done first, a baseline of the tests is recorded before code changes, and commits, stashes and
+   dependency changes happen only when the task asks for them.
+4. **Do not read code yourself.** Send a subagent to read and answer a question, asking for `path:line`
+   references, facts kept apart from guesses and a size limit, so a report costs little context.
+5. **Do not write or run anything yourself.** Edits, builds and tests belong to subagents.
+6. **Verify with a different subagent**, started after the piece finishes and given the requirements and
+   where to look, not the author's report; a read-only finding gets a reader who tries to refute it. A final
+   verifier checks the whole change.
+7. **Repair in rounds, then stop**: at most two rounds per piece, then report what is still broken.
+8. **Report from evidence**: what was proved, by which command, and what was not verified.
+
+It also carries the brief template (goal, where, out of scope, context, done when, report format), the
+verifier brief, and the fixed report format every subagent is asked for. Its wording was tried on four
+imagined tasks (a code change, a read-only question, a one-line typo, a 40-file migration) before it was
+settled, and the rough edges those exposed are what rules 3 and 6 now say.
+
+It reaches a task in three ways, all native DSH:
+
+| How | What happens |
+| --- | --- |
+| The dialog's checkbox (checked by default) | The message goes out with the `/orchestrate-subagents` token on a line of its own at the end (the end, because DSH titles a conversation with the first five words of its first message; a first message
+shorter than five words still carries the token in its title). DSH's skill gesture sees it and injects the skill's full instructions into that step, closest to the model's answer. The transcript shows the token, so you can see which messages carried the skill. |
+| You type `/orchestrate-subagents` yourself (any profile, headless included) | The same gesture. |
+| The model's own choice | The skill is listed in the model's skill catalog, so the main agent may load it with the `skill` tool when a task clearly matches. `skill: { modelInvocable: false }` keeps it out of the catalog, so only the token loads it. |
+
+The checkbox is shown only when the host half has registered the skill and DSH's `dsh-tool-skill`, the
+plugin that owns the `/name` gesture, is loaded (the dialog asks the host), so a page whose host half is older
+than 0.8.0, or a composition without DSH's skill registry or without that plugin, never sends a token that
+nothing would expand. It is not shown when you are typing to a subagent in its own conversation either: the
+skill is for the agent that coordinates, and a child that received it would try to coordinate.
+`skill: false` switches the registration off, and the checkbox with it.
+
+![A message that carried the skill: the token on its own last line, and DSH injecting the skill (the "Context injection" rows)](docs/img/skill-transcript.png)
+
+The skill text is embedded in `lib/index.js` at build time (`pnpm run gen:skill` renders
+`src/skill.generated.ts` from the Markdown, and the tests fail when the two differ), so the installed plugin
+never reads it from disk; the file is only handed to DSH as the skill's path, so the transcript can open it.
+To use the same text in another agent harness, link the folder into that harness's own skills directory (for
+Claude Code: `ln -s <clone>/skills/orchestrate-subagents ~/.claude/skills/orchestrate-subagents`). Do not link
+it under `~/.agents/skills`: DSH reads that directory too and would only log, on every catalog build, that the
+plugin's own registration outranks the copy.
+
+**It is an instruction, not an enforcement.** Unlike the model, effort and token cap, which the start guard
+imposes in code, the skill asks the model to work a certain way, and a model can ignore it, above all late in
+a long conversation. It does not block any tool: the main agent can still read and edit files. If it
+matters that the main agent never touches code, that is a job for the session's permission preset.
+
+## Subagent list: model and state
+
+A task page lists its subagents in a dropdown in the header (the count next to the title). From 0.8.0 each
+row also shows:
+
+- **The model** the subagent runs on, as a small label under the row (`DeepSeek V4.1 Flash · medium`): the
+  model's name from the composer's own catalog, plus the reasoning level when there is one.
+- **A status icon** in place of DSH's dot: a spinner while it runs, a check when it is done, a red mark when
+  it failed (an error, the token ceiling, a refusal), an amber square when it was stopped, and a grey dot when
+  the outcome was not recorded.
+
+![The subagent dropdown: one subagent running (spinner), one finished (check), each with the model it runs on](docs/img/subagent-list.png)
+
+DSH records no outcome for a subagent (its catalog only knows "running" and "not running"), so the host half
+records one. It listens to DSH's `subagent/start` and `subagent/end` events, which every in-process child
+emits whichever tool started it, and keeps the model, the state and the stop reason of the latest run of each
+child in `<stateDir>/subagents.json` (owner-only, the 2000 most recent). The page reads it from
+`GET /dsh-orquestrator/subagents?sessionId=<id>`, behind the same trust fence as the configuration route.
+A child that ran before 0.8.0, or while the plugin was not loaded, has no record: its row shows the model
+DSH itself knows for it, when it knows one, and a grey dot, never an invented "done".
+
+The model on a row is the one DSH itself reports for the child's session (`lastUsed`) when it has one, and
+otherwise the one the host recorded when the run started. The host can correct what it recorded at the end of
+a run only for a one-shot child: DSH releases a continuable child (what the standard preset's `subagent` and
+`subagent_fork` tools start by default) before it announces the end, so the agent is already gone, and the
+record keeps the route requested at the start of the run. Its state and stop reason are still recorded.
+
+DSH's dropdown cannot be extended through a slot, so the page half decorates its rows from the outside: it
+watches for the menu, works out which child each row is from DSH's own session store, and adds two small
+elements to the row. It is fail-open (anything unexpected leaves DSH's row as it is), reads only roles and
+structure, never class names, and removes everything it added when the plugin unloads. The DSH structure it
+relies on is pinned in the contract tests.
+
 ## Configuration
 
 Everything is optional; without configuration the plugin does nothing until a user
@@ -150,8 +259,10 @@ confirms the dialog. Add overrides to your profile's `cordis.patch.yml`
       workerMaxTokens: 64000
     children:                      # the start guard; false switches the enforcement off (the dialog still stores choices)
       explicitModel: override      # override | keep: a model the caller names itself, e.g. agent({ model }) in a workflow script
-    persist: true                  # remember choices across restarts
-    stateDir: ~/.dsh/dsh-orquestrator
+    skill:                         # the global orchestration skill; false = do not register it (the dialog then has no checkbox)
+      modelInvocable: true         # list it in the model's skill catalog; false = only the /orchestrate-subagents token loads it
+    persist: true                  # remember choices and subagent outcomes across restarts
+    stateDir: /home/me/.dsh/dsh-orquestrator   # an absolute path: "~" is not expanded
     maxSessions: 500               # stored sessions before the oldest are pruned
 ```
 
@@ -188,10 +299,37 @@ were left out and why: [docs/estudos/](docs/estudos/README.md).
 
 ## Limits
 
+- **The orchestration skill is an instruction, not an enforcement.** The model, the effort ceiling and the token
+  cap are imposed in code; the skill asks the model to split, parallelize, delegate reading and verify, and a
+  model can ignore it, above all late in a long conversation. It blocks no tool (the main agent can still read
+  and edit files), and only the main agent receives it: subagents see only the briefs the main agent writes, so
+  the skill tells the main agent to put the report format and the verifier rules in them. Each time the checkbox
+  is checked the skill's text (about 1,800 tokens) is injected again, so uncheck it on a short follow-up.
+  **Orchestrating costs time and tokens.** In one measured run (one sample per arm, GLM 5.3 as the main agent) a
+  three-file task took 374 s and about 1.08 million logged tokens with the skill (a plan, two writers in
+  parallel, one repair round, an independent verifier), against 9.5 s and 88 thousand tokens for the main agent
+  doing the same work alone; both ended correct. The skill pays when a task is big enough to parallelize and to
+  need an independent check; untick the checkbox for small ones.
+- **A subagent's state is known only for children that started while the plugin was loaded.** Older ones show
+  the model DSH knows for them and a grey dot. After you update the plugin, restart `dsh` and reload the page:
+  a page that loaded before the host half had the new route asked for it once, got a 404, and does not ask
+  again (until it is reloaded); its rows then show a spinner for a child DSH says is running, a grey dot for
+  the rest, and the model DSH knows for each. A child on a backend without a session of its own (`acp`,
+  `codex`, `claude-code`) is not in DSH's dropdown at all, so it has no row to mark. A cancelled child shows as
+  stopped, any other ending that is not a normal completion as failed.
+- **The marks on the dropdown rows are added from outside DSH's closed component.** They depend on its roles and
+  structure (a `role="tree"` menu on the page body, `role="treeitem"` rows, the status dot and the content span),
+  which the contract tests pin against a DSH checkout; when DSH changes them the marks disappear and DSH's own
+  rows stay as they were. Which child a row is comes from matching the row against DSH's session store (the
+  number of rows, and each row's label and title, in order). When two catalogs fit the same menu equally well
+  (two conversations on the page whose subagents have identical labels and titles), the plugin marks nothing
+  rather than guess, so a menu is never decorated with another conversation's children.
 - **The plugin controls which model runs and how hard it thinks. It does not check what a
   subagent produces.** The main agent reads the result as DSH always delivered it; if you want a
-  check, ask the main agent to verify, or run the project's own tests. (An independent reviewer
-  used to do this; see [below](#why-the-reviewer-was-removed).)
+  check, tick the orchestration skill (it tells the main agent to verify every piece with a separate
+  verifier subagent, which is an instruction, see above), ask the main agent to verify, or run the
+  project's own tests. (An independent reviewer used to do this in code; see
+  [below](#why-the-reviewer-was-removed).)
 - Providers that cannot take agent options (`codex`, `claude-code`, ACP) keep the models they
   run on; the plugin logs a warning (once per provider) and does not touch their children. A
   provider that runs its own default route (the SDK provider) is left alone when no subagent
@@ -227,12 +365,15 @@ were left out and why: [docs/estudos/](docs/estudos/README.md).
 ## Security model
 
 The plugin runs no code of the subagents and starts no process of its own. It changes only the
-options DSH starts a child with. What it does: serves its one route behind the DSH trust fence
-(Host/Origin fence and browser authentication) with strict wire validation, keeps its state in
-an owner-only file that holds provider and model ids and no credentials, and never reads, writes or
-forwards API keys. What it does **not** do: it provides no sandbox, filters no network and controls
-no process environment. What subagents may do is decided by the permission preset of the session,
-exactly as without the plugin.
+options DSH starts a child with. What it does: serves its two routes (the configuration route and the
+read-only subagent route) behind the DSH trust fence (Host/Origin fence and browser authentication)
+with strict wire validation, keeps its state in owner-only files that hold provider and model ids,
+states and stop reasons and no credentials (the per-session choices and the subagent ledger), listens
+to DSH's subagent lifecycle events read-only, registers one static skill text with DSH's skill registry,
+and never reads, writes or forwards API keys. What it does **not** do: it provides no sandbox, filters no
+network and controls no process environment. What subagents may do is decided by the permission preset of
+the session, exactly as without the plugin. The skill adds instructions to a message; it grants no
+permission.
 
 ## Why the reviewer was removed
 
@@ -256,16 +397,19 @@ The studies, the reviewer protocol and the decisions behind it stay in the repos
 
 ## Verified
 
-Version 0.5.0 was validated on a real DSH 0.1.6-alpha.2 with the three target models only: GLM 5.3
-(main agent), DeepSeek V4.1 Flash (subagents) and MiMo-V2.6-Pro (the model a workflow script names
-itself). Headless, eight scenarios read back from the session logs: the workflow agents on the
-picked model at the model's ceiling with a 64 000-token cap; `explicitModel: override` and `keep`;
-the enforcement switched off; the `subagent` tool in the background and `subagent_fork` governed with
-no tool wrapper at all; and a confirmed model that no longer exists rejected with a message that names
-it, through a workflow and through the tool. Through the dialog in a real browser: 65 checks, including
-a real delegation and a real workflow whose children were read back from the logs. A stored choice
-written by 0.4.0 (with its reviewer block) loaded and was rewritten in the new shape. Evidence and
-findings, including what was not covered: [docs/validation/README.md](docs/validation/README.md).
+Version 0.8.0 was validated end to end on a real DSH 0.1.6-alpha.2, every run on the project's Mac mini test
+host inside an isolated DSH home, with only GLM 5.3 (main agent) and DeepSeek V4.1 Flash (subagents): 841 unit,
+integration and contract tests twice (804 without a DSH checkout, what CI runs), with a byte-identical rebuild on
+two machines; 127 browser checks of the dialog and the skill checkbox, including the wire behavior against a 0.7
+host and a message addressed to a subagent's own conversation; 146 checks of the subagent list marks over 20
+pages, with every state driven through the ledger route and a live run of two real subagents (spinner to check,
+ledger matching the session logs); the five earlier browser phases re-ran green; and an A/B run with real models
+measuring what the skill changes (the main agent orchestrating two writers plus an independent verifier instead
+of doing the work itself, at 39x the time and 12x the tokens on a three-file task). The skill text itself was
+pressure-tested on four imagined tasks and fact-checked claim by claim against the DSH source before it shipped,
+and three independent code reviews fixed a pre-existing dialog jam and several matching, timing and hostile-file
+defects found by adversarial experiments. Evidence and findings, including what was not covered:
+[docs/validation/README.md](docs/validation/README.md).
 
 ## Develop
 

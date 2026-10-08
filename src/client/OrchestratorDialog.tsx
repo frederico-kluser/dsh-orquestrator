@@ -12,14 +12,22 @@
  * defaults to the recommended level for the model, so most people never open
  * it, and it says in one line why it exists.
  *
+ * When the host offers the global orchestration skill (gate mode only), a third
+ * block holds one checkbox, ticked by default, that applies the skill to the
+ * message being sent: a confirm answers `applySkill` and the gate then puts the
+ * skill's `/name` token in the prompt. Without an offer the block is not there.
+ * A message that already carries the token gets the skill whatever the box says,
+ * so the box is shown ticked and locked, with a line that says why.
+ *
  * "Cancel" (button, Escape, mask click) never blocks the task: in gate mode it
- * clears any stored choice and lets the task go out exactly as stock DSH.
+ * clears any stored choice and lets the task go out exactly as stock DSH, with
+ * no skill token.
  * @module dsh-orquestrator/client/OrchestratorDialog
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type JSX } from 'react'
 import {
-  Button, IconAgentPresetOutline16, Modal, Switch,
+  Button, Checkbox, IconAgentPresetOutline16, IconSkillOutline16, Modal, Switch,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { notesFor } from '../models.ts'
 import { buildConfig, type ModelRoute } from '../shared.ts'
@@ -56,6 +64,12 @@ const CANCEL_CLEAR_WAIT_MS = 1_500
 export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: OrchestratorDialogProps): JSX.Element {
   const { initial, mode } = request
   const uid = useId()
+  // The skill checkbox exists only when a task is being sent and the host offers the skill.
+  const skill = mode === 'gate' ? request.skill : null
+  const skillOffered = skill !== null
+  // A token already in the message applies the skill whatever the box says: show that, do not pretend to ask.
+  const skillLocked = skillOffered && request.skillInMessage
+  const [skillOn, setSkillOn] = useState(request.initialSkill)
   const [subagentsOn, setSubagentsOn] = useState(initial.subagentModel !== null)
   const [subagentRoute, setSubagentRoute] = useState<ModelRoute | null>(initial.subagentModel)
   const [workerEffort, setWorkerEffort] = useState<string | null>(initial.workerEffort)
@@ -124,8 +138,8 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
       setError(t('error.save', { message: cause instanceof Error ? cause.message : String(cause) }))
       return
     }
-    request.resolve({ kind: 'confirm', config })
-  }, [busy, needsModel, subagentsOn, subagentRoute, workerChosen, request, t])
+    request.resolve({ kind: 'confirm', config, applySkill: skillOffered && (skillLocked || skillOn) })
+  }, [busy, needsModel, subagentsOn, subagentRoute, workerChosen, skillOffered, skillLocked, skillOn, request, t])
 
   const sameText = useMemo(
     () => (mainName === undefined ? t('subagents.same.unknown') : t('subagents.same', { model: mainName })),
@@ -243,6 +257,19 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                       </div>
                     )
                   : undefined}
+              </section>
+            )
+          : undefined}
+
+        {skill !== null
+          ? (
+              <section className="dsh-orq-section dsh-orq-skill" aria-labelledby={`${uid}-skill`}>
+                <h3 className="dsh-orq-title" id={`${uid}-skill`}>
+                  <IconSkillOutline16 size={16} />
+                  {t('skill.title')}
+                </h3>
+                <Checkbox checked={skillLocked || skillOn} onChange={setSkillOn} label={t('skill.checkbox')} disabled={busy || skillLocked} />
+                <p className="dsh-orq-hint dsh-orq-skill-hint">{t(skillLocked ? 'skill.typed' : 'skill.hint', { token: `/${skill.name}` })}</p>
               </section>
             )
           : undefined}

@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.8.0
+
+**New: a global agent skill, a checkbox for it in the dialog, and the model and the state of every
+subagent in the task page's subagent list.**
+
+- **The orchestration skill (`orchestrate-subagents`).** Installing the plugin registers one skill with
+  DSH's skill registry (`ctx.skills.register`), so it is available to every task of every session with
+  nothing to copy. It teaches the agent that coordinates (never a subagent) to break the task into small
+  pieces, start everything that can run together in parallel, keep parallel writers apart in the shared
+  working tree (one owner per file, a test baseline first, no commits or dependency changes unless asked),
+  never read or write code itself, send subagents to read and report back in a fixed format (`path:line`
+  references, facts apart from guesses, a size limit), check every result with a separate verifier subagent
+  that is given the requirements and not the author's report, repair in at most two rounds, and report only
+  what was proved. Before it was settled its wording was tried on four imagined tasks (a code change, a
+  read-only question, a one-line typo, a 40-file migration), and the gaps those exposed became rules. The text lives in
+  [`skills/orchestrate-subagents/SKILL.md`](skills/orchestrate-subagents/SKILL.md) and is embedded in
+  `lib/index.js` at build time (`pnpm run gen:skill`; a test fails when the generated module and the Markdown
+  differ). It is an instruction, not an enforcement: it blocks no tool.
+- **A checkbox in the dialog, checked by default.** When it is checked and the send is confirmed, the message
+  goes out with the `/orchestrate-subagents` token on a line of its own at the end (at the end, not the start,
+  because DSH names a conversation after the first words of its first message), and DSH's own skill gesture injects the skill's
+  instructions into that step. Unchecked, or Cancel, Escape and the close button, the message goes out exactly
+  as before. The last answer pre-fills the next dialog. The checkbox is shown only when the host half says the
+  skill is registered (the configuration route's answer now carries `skill: { name, available }`), so a page
+  newer than its host never sends a token nothing expands, and not in a subagent's own conversation (the skill is
+  for the agent that coordinates). Typing `/orchestrate-subagents` yourself works in
+  every profile, headless included.
+- **Which model each subagent runs on, and its state, in the subagent dropdown.** Each row of the dropdown that
+  lists a task's subagents now shows the model as a small label (`DeepSeek V4.1 Flash · medium`) and a status
+  icon in place of DSH's dot: a spinner while it runs, a check when it is done, a red mark when it failed (an
+  error, the token ceiling, a refusal), an amber square when it was stopped, a grey dot when the outcome was
+  not recorded. DSH keeps no outcome for a subagent, so the host half now listens to `subagent/start` and
+  `subagent/end` (every in-process child emits them, whichever tool started it), keeps a record per child in
+  `<stateDir>/subagents.json` and serves it on `GET /dsh-orquestrator/subagents?sessionId=<id>` behind the same
+  trust fence. A child that ran before this version has no record: its row shows the model DSH knows for it
+  and a grey dot, never an invented "done". The rows are decorated from outside DSH's closed component, by roles
+  and structure only, fail-open, and everything is removed when the plugin unloads.
+- **Configuration.** `skill: false` does not register the skill (and the dialog shows no checkbox);
+  `skill: { modelInvocable: false }` keeps it out of the model's skill catalog so only the token loads it.
+- **Tests.** 841 tests with a DSH checkout and 804 without one (what CI runs), typecheck clean; new: a real-dialog
+  render suite (jsdom + the real `OrchestratorDialog` and client entry), a real-runtime contract suite (real
+  `SkillRegistry`, real `tool-skill`, real continuable epochs), hardened-state-file and two-process tests.
+- **Build and tests.** `pnpm run build` now renders `src/skill.generated.ts` first. `jsdom` is a new dev
+  dependency, for the tests of the code that decorates DSH's menu. The browser validation scripts gained a web
+  profile in `scripts/e2e/setup-isolated-home.sh`.
+
+- **Fixes and hardening found by independent reviews before release.** The dialog queue could wedge every later
+  send until a page reload: a configure dialog (`/orquestrar`, the dock chip) for a conversation whose composer
+  unmounted while the host was answering became the current dialog and nobody could answer it; a request for a
+  conversation without a mounted composer is now cancelled at once, and so are the queued requests of a composer
+  that leaves (present since 0.6.0). Two quick sends in one conversation now reach the host in order. A message
+  that already carries the token shows the box ticked and locked, since DSH loads the skill anyway. The two state
+  files (`sessions.json`, `subagents.json`) are read without following a symlink, refused when they are not
+  regular files or exceed 16 MiB, and written through a temp file created exclusively with mode `0600`; two DSH
+  processes sharing a state directory no longer drop each other's subagent records. The marks never decorate a
+  menu with another conversation's children (two catalogs that fit equally well mark nothing), a host that never
+  answers cannot wedge them, and the age of a run is measured with the host's clock.
+- **Limits worth knowing.** A first message shorter than five words still carries the token in its automatic
+  conversation title (DSH titles a conversation with its first five words). The model on a row is the one DSH
+  reports for the child's session, then the one the host recorded when the run started: the host can correct its
+  record at the end of a run only for one-shot children (DSH releases a continuable child, which is what the
+  standard preset's `subagent` tools start by default, before it announces the end). Orchestrating costs time and
+  tokens: see Limits in the README.
+
+Compatibility: the configuration route's answer gains an optional `skill` field, the new read-only route answers
+with the host's clock (`now`), and a 0.7 page ignores all of it. A 0.8 page against a 0.7 host offers no
+checkbox; its subagent rows show a spinner while DSH says a child runs, a grey dot for the rest and the model DSH
+knows, because the route answers 404 once and the page then stops asking (until it is reloaded). Restart `dsh`
+after updating and reload the page so both halves match.
+
 ## 0.7.0
 
 **New: a status chip under the composer says how subagents are configured in the current

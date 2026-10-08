@@ -160,6 +160,66 @@ export interface ModelInfoSourceLike {
   resolveCallConfig?(config: AgentOptionsLike, signal?: AbortSignal): Promise<unknown>
 }
 
+/** Invocation controls of a registered skill (`SkillInvocationPolicy`). */
+export interface SkillInvocationLike {
+  /** Whether the model's skill catalog and `skill` tool include it. */
+  readonly modelInvocable: boolean
+  /** Whether a `/name` token in the user's message loads it. */
+  readonly userInvocable: boolean
+}
+
+/** What `ctx.skills.register()` accepts (`SkillRegistration`), narrowed to the fields this plugin sets. */
+export interface SkillRegistrationLike {
+  /** Kebab-case identifier, also the `/name` token. */
+  readonly name: string
+  /** Short routing description shown in the model's catalog (it is capped there). */
+  readonly description: string
+  /** Optional extra routing guidance. */
+  readonly whenToUse?: string
+  /** The full Markdown instructions: what a load injects. */
+  readonly content: string
+  /** Origin bucket label. */
+  readonly source: string
+  /** Invocation controls; omission allows both the model and the user. */
+  readonly invocation?: SkillInvocationLike
+  /** Absolute path of a SKILL.md on disk, when one exists (it lets the transcript open the file). */
+  readonly path?: string
+}
+
+/** The `ctx.skills` registry slice (`SkillRegistry`). */
+export interface SkillsLike {
+  /**
+   * Register a runtime skill into the calling context's layer. A duplicate name in one layer is ignored with a warning
+   * and gets a no-op disposer, so it cannot remove the winner.
+   * @param skill - the skill definition.
+   * @returns the disposer that unregisters it.
+   */
+  register(skill: SkillRegistrationLike): () => void
+}
+
+/** Payload of the `subagent/start` event (`SubagentRunInfo`). */
+export interface SubagentRunInfoLike {
+  /** Identity shared with the paired end event. */
+  readonly runId: string
+  /** The subagent backend that established the child (`spawn`, `fork`, `acp`, ...). */
+  readonly provider: string
+  /** The child agent's session id. */
+  readonly id: string
+  /** Whether the child is an in-process agent with a session of its own (remote backends are not). */
+  readonly local: boolean
+}
+
+/** Payload of the `subagent/end` event (`SubagentRunEndInfo`). */
+export interface SubagentRunEndInfoLike extends SubagentRunInfoLike {
+  /** Why the run ended: `completed`, `aborted`, `error`, `max-tokens`, `refusal`, or a reason a backend added. */
+  readonly stopReason: string
+}
+
+/** The agent registry slice (`ctx.agents`): resolves a live in-process agent by session id. */
+export interface AgentRegistryLike {
+  get(id: string): AgentLike | undefined
+}
+
 /** The Cordis logger slice. */
 export interface LoggerLike {
   info(message: string): void

@@ -15,17 +15,14 @@ export interface PromptPartLike {
   readonly text?: string
 }
 
-/** The slice of the client Session snapshot the gate reads. */
+/**
+ * The slice of the client Session snapshot the gate reads: only whether the conversation is a subagent's own. The
+ * gate asks before every message whatever the turn state or the age of the conversation (DSH's `running` and
+ * `blank`), so it reads neither.
+ */
 export interface SessionSnapshotLike {
-  /** Whether the addressed agent has a turn in flight. */
-  readonly running: boolean
-  /** Non-null for an addressed (continuable) subagent conversation. */
+  /** Non-null for an addressed (continuable) subagent conversation: the user is typing to a child, not to the agent that coordinates. */
   readonly subagent: unknown
-  /**
-   * Whether this conversation has had no turn yet (DSH's own `SessionSnapshot.blank`).
-   * Absent means "unknown", and the gate then keeps the plain per-session rule.
-   */
-  readonly blank?: boolean
 }
 
 /** The outward Session face (`SessionFace`), narrowed to what the gate touches. */
@@ -40,9 +37,50 @@ export interface SessionFaceLike {
   ): Promise<unknown>
 }
 
+/** One row of the subagent catalog a session shows in its header menu (`SubagentListEntry`), narrowed. */
+export type SubagentCatalogEntryLike =
+  | {
+    readonly kind: 'child'
+    /** The child session id. */
+    readonly id: string
+    /** Whether the child is live at the moment DSH sampled it; no durable outcome. */
+    readonly activity: 'running' | 'inactive'
+    readonly hasChildren: boolean
+    readonly mode: 'one-shot' | 'continuable'
+    /** The creation label the menu shows; the session id stands in when absent. */
+    readonly label?: string
+  }
+  | { readonly kind: 'diagnostic'; readonly id: string; readonly reason: string }
+
+/** One parent's direct-child catalog (`SubagentCatalogSnapshot`), narrowed. */
+export interface SubagentCatalogLike {
+  readonly entries: readonly SubagentCatalogEntryLike[]
+  readonly state: 'loading' | 'ready' | 'error'
+}
+
+/** One row of the client's session list (`SessionSummary`), narrowed to what the subagent menu marks read. */
+export interface SessionSummaryLike {
+  readonly id: string
+  readonly parentId?: string
+  readonly origin?: 'subagent'
+  readonly running: boolean
+  /** The session title; DSH's subagent menu puts it right after the label in a row's `aria-label` (`label title · mode · activity`). */
+  readonly title?: string
+  /** Host-computed projections; `modelSelection.lastUsed` is the route of the latest model request of that session. */
+  readonly projectionValues?: { readonly modelSelection?: { readonly lastUsed: CurrentSelectionLike | null } }
+}
+
+/** The client's session list state (`SessionListState`), narrowed. */
+export interface SessionListStateLike {
+  readonly byId: Readonly<Record<string, SessionSummaryLike>>
+  readonly subagentsByParent: Readonly<Record<string, SubagentCatalogLike>>
+}
+
 /** `ctx.sessions`, narrowed. */
 export interface SessionsLike {
   binding(id: string): { readonly session: SessionFaceLike } | undefined
+  /** The session list store; optional so that code reading it degrades when a DSH line moves it. */
+  readonly list?: { getSnapshot(): SessionListStateLike; subscribe(listener: () => void): () => void }
 }
 
 /** The reasoning levels one exact route offers, in escalation order, and the one it uses by default. */

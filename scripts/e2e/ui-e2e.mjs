@@ -4,6 +4,7 @@
  * web server (run on the validation machine with an isolated DSH_HOME).
  *
  *   DSH_URL=<authenticated dsh web URL> OUT_DIR=<dir> PHASE=<name> node ui-e2e.mjs
+ *   PHASE=<name> scripts/e2e/with-server.sh node scripts/e2e/ui-e2e.mjs    starts that isolated server (and DSH_URL) for you
  *
  * PHASE:
  *   cancel    a new task raises the modal (one switch, no "do not ask again"); Escape/Cancel sends it as stock DSH
@@ -54,7 +55,9 @@ const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail === '' ? '' : `  [${String(detail).slice(0, 200)}]`}`)
 }
 
-const browser = await chromium.launch({ channel: 'chrome', headless: true })
+// CHROME_PATH points at a Chrome/Chromium binary when there is no system Chrome (the default `channel: 'chrome'`).
+const chromePath = process.env.CHROME_PATH
+const browser = await chromium.launch(chromePath === undefined ? { channel: 'chrome', headless: true } : { executablePath: chromePath, headless: true, args: ['--no-sandbox'] })
 const scheme = phase === 'light' || phase === 'readme-light' ? 'light' : 'dark'
 const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, colorScheme: scheme })
 const page = await context.newPage()
@@ -125,7 +128,9 @@ if (phase === 'cancel') {
     const switches = dialog().getByRole('switch')
     check('one switch (the subagent model); there is no reviewer', (await switches.count()) === 1 && (await dialog().getByText(/reviewer/i).count()) === 0, await switches.count())
     check('the switch starts off', (await switches.nth(0).getAttribute('aria-checked')) === 'false')
-    check('there is no "do not ask again" checkbox: the modal always asks', (await dialog().getByRole('checkbox').count()) === 0)
+    // 0.8.0: the one checkbox is the orchestration skill (checked by default); nothing offers to stop asking.
+    const boxes = dialog().getByRole('checkbox')
+    check('there is no "do not ask again" checkbox: the modal always asks', (await dialog().getByRole('checkbox', { name: /ask again|remember|do not ask/i }).count()) === 0 && (await boxes.count()) <= 1, await boxes.count())
     check('primary action is focused', await dialog().getByRole('button', { name: 'Send with these options' }).evaluate((element) => element === document.activeElement))
 
     await page.keyboard.press('Escape')

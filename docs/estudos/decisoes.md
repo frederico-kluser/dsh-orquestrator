@@ -555,6 +555,92 @@ lados para um problema que se resolve com uma constante, e o cliente antigo não
 
 ---
 
+### D18 — A skill global `orchestrate-subagents` e o checkbox no diálogo (0.8.0)
+**Decisão.** O plugin registra no registro de skills do DSH (`ctx.skills.register`), quando carrega, uma skill
+global, `orchestrate-subagents`. O texto vive em `skills/orchestrate-subagents/SKILL.md` e é embutido em
+`lib/index.js` no build (`scripts/gen-skill.mjs` gera `src/skill.generated.ts`; um teste falha quando os dois
+divergem). O diálogo que abre antes de toda mensagem ganha um checkbox, **marcado por padrão**: com ele marcado e
+o envio confirmado, a mensagem sai com o token `/orchestrate-subagents` numa linha própria no fim (no fim, e não no
+começo, porque o DSH batiza a conversa com as primeiras palavras da primeira mensagem: o token na frente encabeçaria
+o título de toda conversa que aplica a skill; descoberto na validação ao vivo), e o próprio DSH injeta as
+instruções da skill nesse passo (o gesto `/nome` do `dsh-tool-skill`). Cancelar, Esc e ✕ continuam enviando a
+mensagem exatamente como o DSH sempre fez, sem token.
+
+**Por quê.**
+* *É o mecanismo que o DSH já tem para "instruções que uma tarefa escolhe".* O registro dá disponibilidade global
+  ao instalar o plugin (nada a copiar para uma pasta de skills), entra no catálogo de skills do modelo e dispensa
+  uma seção nova no prompt. O guia do projeto (seção 6, "Modo Coordenador Puro") descrevia exatamente uma instrução
+  injetada no orquestrador; a skill é a forma nativa dela.
+* *A mensagem fica limpa.* O token é uma palavra; o corpo (cerca de 1 800 tokens) entra como contexto injetado,
+  "o mais perto da resposta do modelo", e a transcrição mostra quais mensagens levaram a skill.
+* *Instrução, não imposição (a bússola de D16).* O que o plugin impõe em código continua sendo o modelo, o teto de
+  esforço e o teto de tokens. A skill pede ao modelo que divida, paralelize, delegue a leitura e verifique, e não
+  bloqueia nenhuma ferramenta. O README e o diálogo não prometem o contrário.
+* *O checkbox só aparece quando o host registrou a skill.* As duas metades carregam em momentos diferentes (D17):
+  uma página nova contra um host antigo mandaria um token que ninguém expande. A rota de configuração, que o gate já
+  lê antes de toda mensagem, passa a dizer se a skill está registrada; um host que não diz (anterior à 0.8) significa
+  "não ofereça".
+* *A escolha lembrada é só do checkbox.* Como a escolha do modelo, a última resposta pré-preenche o próximo diálogo
+  (a primeira vez, marcado). Não vai para o host nem para o fio: nenhuma compatibilidade entre metades a manter.
+
+**Alternativas.** (a) Colar o texto inteiro no prompt, no navegador: polui a mensagem do usuário e a transcrição,
+gasta tokens sem o modelo saber que é uma skill e leva o texto nos dois pacotes. (b) Injetar no host em
+`agent/pre-step` por sessão: alcançaria headless e TUI, mas o usuário não veria o que foi aplicado; quem quer a skill
+fora da web digita `/orchestrate-subagents` e o gesto nativo faz o mesmo. (c) Instalar um `SKILL.md` em
+`~/.agents/skills`: um plugin escrevendo fora do próprio diretório e fora do ciclo de `dsh plugin`. (d) Só
+invocável pelo usuário (`modelInvocable: false`) como padrão: o catálogo do modelo é o que torna a skill "disponível
+para toda tarefa"; a opção `skill.modelInvocable` existe para quem não quer a linha no catálogo.
+
+**Onde.** `skills/orchestrate-subagents/SKILL.md`, `scripts/gen-skill.mjs`, `src/skill.ts`, `src/skill.generated.ts`,
+`src/config.ts` (`skill`), `src/routes.ts` (`skill` na resposta da rota de configuração), `src/shared.ts`
+(`SKILL_NAME`, `SkillOffer`), `src/client/skill-token.ts`, `src/client/gate.ts`, `src/client/OrchestratorDialog.tsx`.
+
+**Verificação.** Testes de unidade (registro, gerador, token, gate, diálogo); testes de contrato contra o código do
+DSH (o registro aceita o que registramos, o gesto `/nome` é o que a documentação diz). Num DSH isolado, em
+navegador real e com modelos reais: ver [a validação](../validation/README.md).
+
+---
+
+### D19 — O modelo e o estado de cada subagente na lista do cabeçalho (0.8.0)
+**Decisão.** Cada linha do menu de subagentes de uma página de tarefa mostra (1) o modelo em que o subagente roda,
+como um rótulo pequeno (`DeepSeek V4.1 Flash · medium`), e (2) um ícone de estado no lugar da bolinha do DSH: um
+spinner enquanto roda, um check quando termina, uma marca vermelha quando falha (erro, teto de tokens, recusa), um
+quadrado âmbar quando foi parado e um ponto cinza quando o resultado não foi registrado. O host registra o resultado
+(`subagent/start` e `subagent/end`) e a página o lê numa rota própria.
+
+**Por quê.**
+* *O DSH não registra o resultado.* O catálogo só sabe `running` e `inactive`; o README do `ui-subagent` diz que não
+  distingue conclusão, falha e cancelamento. O motivo de parada (`completed`, `aborted`, `error`, `max-tokens`,
+  `refusal`) só existe em `subagent/end`, que todo filho em processo emite, qualquer que seja a ferramenta que o
+  iniciou (uma ferramenta, um `workflow`, `ralph`, um job).
+* *O modelo vem do agente vivo.* No `subagent/start` o filho já existe (`ctx.agents.get(id)`), com a rota que o guarda
+  planejou ou a que ele herdou. Num filho de uma execução só (*one-shot*), no `subagent/end` o cabeçalho do último
+  pedido tem a rota que de fato serviu, e o host a grava no lugar da planejada. **Limite** (achado pela revisão
+  independente, verificado no runtime real): um filho *continuable*, que é o que as ferramentas `subagent` e
+  `subagent_fork` do preset padrão iniciam por padrão, é liberado pelo DSH antes de o `subagent/end` ser anunciado,
+  então o agente já não existe e não há correção possível: o registro guarda a rota pedida no início da época (a
+  mais recente, num filho retomado). O estado e o motivo de parada continuam registrados, porque o evento de fim os
+  carrega. A página, por isso, prefere o modelo que o próprio DSH informa (`lastUsed`) ao da rota do livro-razão, e
+  só cai para o do livro-razão quando o DSH não tem nenhum.
+* *Sem registro, sem invenção.* Um filho anterior ao plugin ou criado enquanto ele não estava carregado aparece com
+  um ponto cinza e, se o DSH souber, o modelo (`projections.modelSelection.lastUsed`), em vez de um "concluído"
+  que ninguém verificou. Um registro que estava `running` quando o host morreu carrega como `stopped`
+  (`interrupted`); um `running` com mais de 20 s que o catálogo já vê como inativo vira `unknown`, para um spinner
+  nunca girar para sempre.
+* *O registro do host é mais novo que o catálogo do navegador.* Havendo registro, ele decide o estado; a atividade
+  do catálogo só decide sem registro.
+
+**Alternativas.** Ver N23 (substituir o componente do DSH) e N24 (derivar o estado do log de cada filho).
+
+**Onde.** `src/subagents.ts` (livro-razão e rastreador), `src/routes.ts` (`GET /dsh-orquestrator/subagents`),
+`src/shared.ts` (`SubagentRecord`, `subagentStateOf`), `src/client/subagent-marks.ts` (decisão pura),
+`src/client/subagent-menu.ts` (DOM), `src/client/subagents-client.ts`, `src/client/styles.ts`.
+
+**Verificação.** Testes de unidade e de DOM (jsdom) e testes de contrato contra a estrutura do menu do DSH; num DSH
+isolado, em navegador real: ver [a validação](../validation/README.md).
+
+---
+
 ## Recomendações não adotadas ou adiadas
 
 ### N01 — Extinguir `APPROVED_WITH_FIXES` (revisor só lê)
@@ -692,3 +778,19 @@ para o modelo que o **usuário** escolheu; um modelo que o chamador nomeou (`kee
 o runtime de LLM puder falhar de forma transitória na descrição de um modelo (hoje os adaptadores
 embutidos resolvem localmente e de forma determinística).
 
+### N23 — Substituir o componente do menu de subagentes do DSH (0.8.0)
+**Origem.** O slot `conversation.session.header.lineage` é `single` com prioridade, e um registro de prioridade menor
+"sombreia" o ocupante do DSH: dava para registrar uma lista nossa, com modelo e estado, no lugar da dele.
+**Por quê não.** Seriam cerca de 870 linhas do componente (árvore, teclado, abertura por hover, portal, estados de
+carga e de diagnóstico, alternador na página do filho) e do CSS copiadas e mantidas, mais as ações (`openChild`,
+`openChildAside`, `refresh`, `setCatalogOpen`) reconstruídas a partir de serviços que o plugin não injeta. Toda melhoria
+futura do DSH no menu se perderia. Decorar as linhas por fora custa menos e falha para o lado seguro (o DSH continua
+mostrando a sua linha). **Reabrir** se o DSH publicar um ponto de extensão por linha, ou se a estrutura do menu mudar
+a ponto de a decoração por papéis não bastar.
+
+### N24 — Derivar o resultado de um subagente do log da sessão dele (0.8.0)
+**Origem.** O log de cada filho tem `turn/end` com o motivo; dava para ler o resultado de filhos antigos.
+**Por quê não.** O navegador não lê o log (só projeções), e o host teria de abrir e descomprimir o log de cada filho a
+cada consulta; o catálogo do DSH foi desenhado para não carregar filhos. O livro-razão guarda o que os eventos já
+dizem, a um custo constante. O preço é que filhos de antes da 0.8.0 ficam sem resultado (ponto cinza). **Reabrir** se
+o DSH expuser o motivo de parada numa projeção da sessão.

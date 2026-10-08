@@ -43,6 +43,14 @@ export interface Config {
    * caller's model stand (with the ceilings).
    */
   readonly children?: false | { readonly explicitModel?: 'override' | 'keep' }
+  /**
+   * The global skill `orchestrate-subagents`, registered with DSH's skill registry at load: a `/orchestrate-subagents`
+   * token in a message loads its instructions (the dialog adds the token when the user ticks the skill), and the
+   * model's skill catalog lists it. Default: registered and model-invocable. `false` does not register it, so the
+   * dialog does not offer it. `modelInvocable: false` keeps it out of the model's skill catalog, so only the `/name`
+   * token and the dialog's checkbox load it.
+   */
+  readonly skill?: false | { readonly modelInvocable?: boolean }
 }
 
 /** Validated configuration with every default resolved. */
@@ -57,10 +65,12 @@ export interface PluginConfig {
   readonly limits: { readonly worker: number | undefined }
   /** The start guard (`children`): `enabled` false switches the enforcement off. */
   readonly guard: { readonly enabled: boolean; readonly explicitModel: 'override' | 'keep' }
+  /** The global skill (`skill`): `enabled` false does not register it; `modelInvocable` false keeps it out of the model's skill catalog. */
+  readonly skill: { readonly enabled: boolean; readonly modelInvocable: boolean }
 }
 
 /** Every top-level field of the configuration. */
-const KNOWN_FIELDS: ReadonlySet<string> = new Set(['defaults', 'stateDir', 'persist', 'maxSessions', 'effort', 'limits', 'children'])
+const KNOWN_FIELDS: ReadonlySet<string> = new Set(['defaults', 'stateDir', 'persist', 'maxSessions', 'effort', 'limits', 'children', 'skill'])
 
 /** Top-level fields that existed until 0.4.0 for the reviewer and the tool wrapper, and do nothing now. */
 const REMOVED_FIELDS: ReadonlySet<string> = new Set([
@@ -75,6 +85,7 @@ const MISPLACED: Readonly<Record<string, string>> = Object.freeze({
   workerMaxTokens: 'limits.workerMaxTokens',
   subagentModel: 'defaults.subagentModel',
   workerEffort: 'defaults.workerEffort',
+  modelInvocable: 'skill.modelInvocable',
 })
 
 /** A plain object check that also excludes arrays. */
@@ -177,6 +188,7 @@ export function parsePluginConfig(raw: Config | undefined): PluginConfig {
     effort: parseEffortPolicy(config.effort),
     limits: parseLimits(config.limits),
     guard: parseGuard(config.children),
+    skill: parseSkill(config.skill),
   }
 }
 
@@ -208,4 +220,15 @@ function parseGuard(raw: Config['children']): PluginConfig['guard'] {
   const explicitModel = raw['explicitModel'] ?? 'override'
   if (explicitModel !== 'override' && explicitModel !== 'keep') throw invalid('children.explicitModel', 'must be "override" or "keep"')
   return { enabled: true, explicitModel }
+}
+
+/** Resolve the `skill` block (the global skill). Unknown keys fail loud: a typo must not silently keep the default. */
+function parseSkill(raw: Config['skill']): PluginConfig['skill'] {
+  if (raw === undefined) return { enabled: true, modelInvocable: true }
+  if (raw === false) return { enabled: false, modelInvocable: true }
+  if (!isRecord(raw)) throw invalid('skill', 'must be false or an object')
+  for (const key of Object.keys(raw)) {
+    if (key !== 'modelInvocable') throw invalid(`skill.${key}`, 'is not a known field (modelInvocable)')
+  }
+  return { enabled: true, modelInvocable: bool('skill.modelInvocable', raw['modelInvocable'], true) }
 }

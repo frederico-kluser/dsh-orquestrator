@@ -15,6 +15,15 @@ export const ROUTE_PREFIX = '/dsh-orquestrator'
 /** Session configuration route: `GET ?sessionId=<id>` reads, `POST` writes or clears. */
 export const CONFIG_ROUTE = `${ROUTE_PREFIX}/config`
 
+/** Subagent ledger route: `GET ?sessionId=<id>` lists the subagents started under that session, with their model and outcome. */
+export const SUBAGENTS_ROUTE = `${ROUTE_PREFIX}/subagents`
+
+/**
+ * The global skill this plugin registers with DSH's skill registry. The kebab-case name is the `/name` token DSH
+ * expands into the skill's instructions, and the token the dialog adds to a message when the user ticks the skill.
+ */
+export const SKILL_NAME = 'orchestrate-subagents'
+
 /** One provider/model route, as advertised by the model catalog. */
 export interface ModelRoute {
   /** Registered LLM provider id (catalog group id). */
@@ -75,18 +84,29 @@ export function toWireConfig(config: OrchestratorConfig): WireConfig {
   return { ...config, reviewer: LEGACY_REVIEWER }
 }
 
+/** What the host says about the global skill: registered with `ctx.skills` (`available`), or not (switched off, or no skill registry). */
+export interface SkillOffer {
+  /** Kebab-case skill name, also the `/name` token. */
+  readonly name: string
+  /** Whether the skill is registered right now, so that the token will load it. */
+  readonly available: boolean
+}
+
 /** Payload of `GET ${CONFIG_ROUTE}?sessionId=<id>` and the answer to a successful `POST`, as the browser reads it. */
 export interface ConfigStatePayload {
   /** The session the configuration belongs to. */
   readonly sessionId: string
   /** The stored configuration; null when the user never confirmed or cancelled. */
   readonly config: OrchestratorConfig | null
+  /** The skill the host offers; null when the host does not say (a host older than the skill), which means "do not offer it". */
+  readonly skill: SkillOffer | null
 }
 
-/** The same payload as the host writes it: the configuration carries {@link LEGACY_REVIEWER}. */
+/** The same payload as the host writes it: the configuration carries {@link LEGACY_REVIEWER}; `skill` is absent from hosts older than 0.8. */
 export interface ConfigWirePayload {
   readonly sessionId: string
   readonly config: WireConfig | null
+  readonly skill?: SkillOffer
 }
 
 /** Body of `POST ${CONFIG_ROUTE}`; `config: null` clears the session's configuration. */
@@ -181,4 +201,124 @@ export function buildConfig(input: {
  */
 export function routeKey(route: ModelRoute): string {
   return `${route.provider}/${route.model}`
+}
+
+/** The skill-name grammar of DSH's registry (`isSkillName`): lowercase words joined by single hyphens. */
+const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+/**
+ * Parse the host's skill offer from untrusted JSON.
+ * @param value - candidate `skill` field of a configuration payload.
+ * @returns the offer, or null when the field is absent or malformed (a host that predates the skill never sends it).
+ */
+export function parseSkillOffer(value: unknown): SkillOffer | null {
+  if (!isRecord(value)) return null
+  const name = value['name']
+  const available = value['available']
+  if (typeof name !== 'string' || name.length > 64 || !SKILL_NAME_PATTERN.test(name) || typeof available !== 'boolean') return null
+  return { name, available }
+}
+
+/**
+ * Where a subagent stands. `stopped` is a cancellation (stop reason `aborted`); `failed` is every other ending that is
+ * not a normal completion (an error, a token ceiling, a refusal, and any reason a backend adds later).
+ */
+export type SubagentState = 'running' | 'done' | 'failed' | 'stopped'
+
+/**
+ * Map a terminal stop reason of DSH's subagent seam to a state. The reason set is merge-extensible, so an unknown
+ * reason counts as a failure, as DSH's own consumers treat it.
+ * @param stopReason - `completed`, `aborted`, `error`, `max-tokens`, `refusal` or a reason a backend added.
+ * @returns the terminal state.
+ */
+export function subagentStateOf(stopReason: string): Exclude<SubagentState, 'running'> {
+  if (stopReason === 'completed') return 'done'
+  if (stopReason === 'aborted') return 'stopped'
+  return 'failed'
+}
+
+/** One subagent the host saw start, as `GET ${SUBAGENTS_ROUTE}` reports it. */
+export interface SubagentRecord {
+  /** The child session id: the id the web client's subagent catalog uses. */
+  readonly id: string
+  /** The session that started the child (the caller's own session), when known. */
+  readonly parentId: string | null
+  /** The DSH subagent backend that runs the child (`spawn`, `fork`, ...). */
+  readonly backend: string
+  /** The model route the child runs on; null when it is not known. */
+  readonly route: ModelRoute | null
+  readonly state: SubagentState
+  /** The terminal stop reason of the latest run, null while running. */
+  readonly stopReason: string | null
+  /** Epoch milliseconds of the latest start (a continuable child starts again when it is resumed). */
+  readonly startedAt: number
+  /** Epoch milliseconds of the latest end, null while running. */
+  readonly endedAt: number | null
+}
+
+/** Answer of `GET ${SUBAGENTS_ROUTE}?sessionId=<id>`: the subagents started under that session, direct and deeper, oldest first. */
+export interface SubagentsPayload {
+  readonly sessionId: string
+  readonly subagents: readonly SubagentRecord[]
+  /**
+   * The host's clock, epoch milliseconds, when it answered. The records' times are the host's, so the browser compares
+   * them with this and not with its own clock (a tunnelled or skewed browser would otherwise misjudge how long ago a
+   * child started). Absent from a host that does not send it.
+   */
+  readonly now?: number
+}
+
+/** Most records one answer carries (a defensive bound on both ends of the wire). */
+export const MAX_SUBAGENTS_PER_RESPONSE = 500
+
+const SUBAGENT_STATES: ReadonlySet<string> = new Set<SubagentState>(['running', 'done', 'failed', 'stopped'])
+
+/** A finite, non-negative epoch-milliseconds value. */
+function isTime(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+/**
+ * Parse one subagent record from untrusted JSON.
+ * @param value - candidate record.
+ * @returns the normalized record, or undefined when malformed.
+ */
+export function parseSubagentRecord(value: unknown): SubagentRecord | undefined {
+  if (!isRecord(value) || !isId(value['id']) || !isId(value['backend'])) return undefined
+  const state = value['state']
+  if (typeof state !== 'string' || !SUBAGENT_STATES.has(state)) return undefined
+  const parentId = value['parentId'] ?? null
+  if (parentId !== null && !isId(parentId)) return undefined
+  const rawRoute = value['route'] ?? null
+  const route = rawRoute === null ? null : parseModelRoute(rawRoute)
+  if (route === undefined) return undefined
+  const stopReason = value['stopReason'] ?? null
+  if (stopReason !== null && !isId(stopReason)) return undefined
+  const endedAt = value['endedAt'] ?? null
+  if (!isTime(value['startedAt']) || (endedAt !== null && !isTime(endedAt))) return undefined
+  return {
+    id: value['id'],
+    parentId,
+    backend: value['backend'],
+    route,
+    state: state as SubagentState,
+    stopReason,
+    startedAt: value['startedAt'],
+    endedAt,
+  }
+}
+
+/**
+ * Parse the subagent ledger answer from untrusted JSON. A malformed record is dropped, never a reason to lose the others.
+ * @param value - candidate payload.
+ * @returns the payload, or undefined when it is not an object with a session id and a list.
+ */
+export function parseSubagentsPayload(value: unknown): SubagentsPayload | undefined {
+  if (!isRecord(value) || !isId(value['sessionId']) || !Array.isArray(value['subagents'])) return undefined
+  const subagents: SubagentRecord[] = []
+  for (const candidate of (value['subagents'] as unknown[]).slice(0, MAX_SUBAGENTS_PER_RESPONSE)) {
+    const record = parseSubagentRecord(candidate)
+    if (record !== undefined) subagents.push(record)
+  }
+  return isTime(value['now']) ? { sessionId: value['sessionId'], subagents, now: value['now'] } : { sessionId: value['sessionId'], subagents }
 }

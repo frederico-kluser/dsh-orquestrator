@@ -6,8 +6,8 @@
  */
 
 import {
-  CONFIG_ROUTE, parseConfig, toWireConfig,
-  type ConfigStatePayload, type ConfigWritePayload, type ErrorPayload, type OrchestratorConfig,
+  CONFIG_ROUTE, parseConfig, parseSkillOffer, toWireConfig,
+  type ConfigStatePayload, type ConfigWritePayload, type ErrorPayload, type OrchestratorConfig, type SkillOffer,
 } from '../shared.ts'
 
 /** The fetch surface the client needs (injectable for tests). */
@@ -42,6 +42,14 @@ export class ConfigHttpError extends Error {
   }
 }
 
+/** What one read of the configuration route tells the browser about a session. */
+export interface HostState {
+  /** The session's stored configuration; null when none. */
+  readonly config: OrchestratorConfig | null
+  /** The skill the host offers; null when the host does not say (a host older than the skill), which means "do not offer it". */
+  readonly skill: SkillOffer | null
+}
+
 /** HTTP carrier of the per-session configuration. */
 export class ConfigClient {
   private readonly fetcher: Fetch
@@ -63,10 +71,21 @@ export class ConfigClient {
    * @throws {ConfigHttpError} when the route is unreachable or refuses.
    */
   async load(sessionId: string): Promise<OrchestratorConfig | null> {
+    return (await this.loadState(sessionId)).config
+  }
+
+  /**
+   * Read what the host says about a session in one request: its stored
+   * configuration and the skill the host offers.
+   * @param sessionId - the session.
+   * @returns the stored configuration (null when none) and the skill offer (null when the host does not say).
+   * @throws {ConfigHttpError} when the route is unreachable or refuses.
+   */
+  async loadState(sessionId: string): Promise<HostState> {
     const url = new URL(CONFIG_ROUTE, this.base())
     url.searchParams.set('sessionId', sessionId)
     const payload = await this.call(url, { headers: { accept: 'application/json' } })
-    return payload.config
+    return { config: payload.config, skill: payload.skill }
   }
 
   /**
@@ -97,13 +116,13 @@ export class ConfigClient {
       throw new ConfigHttpError(0, undefined, cause instanceof Error ? cause.message : String(cause))
     }
     const body = (await response.json().catch(() => undefined)) as
-      | { sessionId?: unknown; config?: unknown; code?: ErrorPayload['code']; message?: string }
+      | { sessionId?: unknown; config?: unknown; skill?: unknown; code?: ErrorPayload['code']; message?: string }
       | undefined
     if (!response.ok || body === undefined || !('config' in body)) {
       throw new ConfigHttpError(response.status, body?.code, body?.message)
     }
     const config = body.config === null ? null : parseConfig(body.config)
     if (config === undefined) throw new ConfigHttpError(response.status, 'internal', 'the host answered a malformed configuration')
-    return { sessionId: String(body.sessionId ?? ''), config }
+    return { sessionId: String(body.sessionId ?? ''), config, skill: parseSkillOffer(body.skill) }
   }
 }

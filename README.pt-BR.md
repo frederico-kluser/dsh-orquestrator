@@ -80,9 +80,11 @@ mesmo com um turno a correr:
 - **Skill de orquestração** (um checkbox, marcado por padrão; aparece quando a metade do host do plugin
   registrou a skill): aplica a skill global `orchestrate-subagents` a esta mensagem. A mensagem sai com o
   token `/orchestrate-subagents` e o DSH injeta as instruções da skill nesse passo. Desmarque para enviar a
-  mensagem sem a skill; o diálogo lembra a sua última resposta para a próxima mensagem. Se a mensagem já
-  contém o token (você o digitou), o checkbox aparece marcado e travado, porque o DSH carrega a skill de
-  qualquer jeito. Veja [A skill de orquestração](#a-skill-de-orquestração).
+  mensagem sem a skill; o diálogo lembra a sua última resposta para a próxima mensagem. O checkbox é acoplado
+  ao switch do modelo de subagentes acima: com o switch desligado ele fica desmarcado e desabilitado (uma dica
+  aponta para o switch), e ao ligar o switch de novo ele volta ao último estado. Se a mensagem já contém o
+  token (você o digitou), o checkbox aparece marcado e travado, porque o DSH carrega a skill de qualquer jeito.
+  Veja [A skill de orquestração](#a-skill-de-orquestração).
 - **Não existe "não perguntar de novo"**: o modal aparece em toda mensagem que você envia e nada
   o silencia. Uma resposta nunca o esconde de uma mensagem seguinte nem de outra conversa. A
   última escolha confirmada só pré-preenche o diálogo.

@@ -76,6 +76,7 @@ export const en = {
   'sub.model.title': 'This subagent runs on {model}',
   'sub.model.titleEffort': 'This subagent runs on {model}, reasoning effort {effort}',
   'skill.typed': 'The message already contains {token}, so the skill applies.',
+  'skill.needsModel': 'Applies when subagents run on a model of their own. Turn on the switch above.',
 } as const
 
 /** Every key of the dictionary. */
@@ -148,6 +149,7 @@ export const pt: Record<OrchestratorKey, string> = {
   'sub.model.title': 'Este subagente roda em {model}',
   'sub.model.titleEffort': 'Este subagente roda em {model}, esforço de raciocínio {effort}',
   'skill.typed': 'A mensagem já contém {token}, então a skill se aplica.',
+  'skill.needsModel': 'Aplica-se quando os subagentes rodam num modelo próprio. Ligue o interruptor acima.',
 }
 
 /** Simplified Chinese dictionary. */
@@ -217,4 +219,5 @@ export const zh: Record<OrchestratorKey, string> = {
   'sub.model.title': '此子智能体运行在 {model} 上',
   'sub.model.titleEffort': '此子智能体运行在 {model} 上，推理强度 {effort}',
   'skill.typed': '消息中已包含 {token}，因此会应用该技能。',
+  'skill.needsModel': '子智能体运行在自己的模型上时才会应用。打开上面的开关。',
 }

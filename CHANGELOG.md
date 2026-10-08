@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.8.1
+
+**The orchestration-skill checkbox is now coupled to the subagent-model switch** (asked right after 0.8.0), and
+the stored reasoning-effort level is never lost.
+
+- **Switch off, checkbox off.** With the "Subagent model" switch off the skill checkbox is unchecked and disabled
+  (a hint points at the switch): sending adds no token. Turning the switch back on restores the box's last state
+  (the remembered answer, or a typed token that locks it). A token already typed by hand is never removed: the hint
+  then says the skill applies anyway.
+- **The skill preference survives the switch.** It is remembered only when the box was actually answered (switch
+  on, not locked); flipping the switch never overwrites it, while the subagent-model choice keeps being stored.
+- **The stored effort level is never lost.** While the model's reasoning ladder is unknown (the catalog still
+  loading, or failed), a confirm used to drop the stored level to "recommended" silently; now the stored level
+  stays selected and is written back. With a stored choice the picker and the effort block come up with the last
+  confirmed model and level; with no stored choice the picker starts empty and sending waits for a model.
+- Tests: 847 on the Mac mini (+6). The browser checks re-ran green there against freshly built bundles: the skill
+  script 132/132 (including the new coupling checks), a subagent's own conversation 10/10, the five earlier phases
+  and the README figures, which now show the coupled states. One check of `scripts/e2e/ui-e2e-skill.mjs` that
+  contradicted the shipped behavior was fixed; the two harness quirks that remain (turn numbering against a reused
+  abandoned session, and the known `open()` flake of `ui-e2e.mjs`) are noted in the validation page.
+
+Compatibility: none on the wire — 0.8.0 and 0.8.1 halves mix fine.
+
 ## 0.8.0
 
 **New: a global agent skill, a checkbox for it in the dialog, and the model and the state of every

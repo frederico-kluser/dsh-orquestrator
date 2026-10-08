@@ -13,11 +13,15 @@
  * it, and it says in one line why it exists.
  *
  * When the host offers the global orchestration skill (gate mode only), a third
- * block holds one checkbox, ticked by default, that applies the skill to the
- * message being sent: a confirm answers `applySkill` and the gate then puts the
- * skill's `/name` token in the prompt. Without an offer the block is not there.
- * A message that already carries the token gets the skill whatever the box says,
- * so the box is shown ticked and locked, with a line that says why.
+ * block holds one checkbox that applies the skill to the message being sent: a
+ * confirm answers `applySkill` and the gate then puts the skill's `/name` token
+ * in the prompt. Without an offer the block is not there. The box follows the
+ * subagent-model switch: the skill orchestrates subagents, so with the switch
+ * off it shows unchecked and disabled whatever the memory or a typed token
+ * says, and the answer is then `applySkill: false`. Toggling the switch off and
+ * back on keeps the box state the user left (only the shown value is gated).
+ * A message that already carries the token gets the skill whatever the box
+ * says: the hint says so, and the gate never removes that token.
  *
  * "Cancel" (button, Escape, mask click) never blocks the task: in gate mode it
  * clears any stored choice and lets the task go out exactly as stock DSH, with
@@ -96,7 +100,13 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
   // Reasoning effort: what "recommended" means for the chosen model.
   const effortActive = subagentsOn && subagentRoute !== null
   const workerAdvice = effortActive ? adviseEffort(catalog.groups, subagentRoute) : undefined
-  const workerChosen = workerAdvice?.ladder?.efforts.some(effort => effort.id === workerEffort) === true ? workerEffort : null
+  // A stored level stays chosen until the model's ladder says otherwise: while the catalog is loading or
+  // unreachable the ladder is unknown, and dropping the level would silently reset a confirmed choice to
+  // "recommended". Only a ladder that is known and lacks the level falls back to it.
+  const workerLadder = workerAdvice?.ladder
+  const workerChosen = workerLadder === undefined
+    ? workerEffort
+    : (workerLadder.efforts.some(effort => effort.id === workerEffort) ? workerEffort : null)
   const recommendedText = workerAdvice?.level === undefined
     ? t('effort.recommended.default')
     : t('effort.recommended', { level: workerAdvice.level.name })
@@ -138,7 +148,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
       setError(t('error.save', { message: cause instanceof Error ? cause.message : String(cause) }))
       return
     }
-    request.resolve({ kind: 'confirm', config, applySkill: skillOffered && (skillLocked || skillOn) })
+    request.resolve({ kind: 'confirm', config, applySkill: skillOffered && subagentsOn && (skillLocked || skillOn) })
   }, [busy, needsModel, subagentsOn, subagentRoute, workerChosen, skillOffered, skillLocked, skillOn, request, t])
 
   const sameText = useMemo(
@@ -253,7 +263,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                                 onMenuOpenChange={onMenuOpenChange}
                               />
                             )
-                          : <p className="dsh-orq-hint">{t('effort.subagent')}: {t('effort.none')}</p>}
+                          : <p className="dsh-orq-hint">{t('effort.subagent')}: {workerChosen ?? t('effort.none')}</p>}
                       </div>
                     )
                   : undefined}
@@ -268,8 +278,15 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                   <IconSkillOutline16 size={16} />
                   {t('skill.title')}
                 </h3>
-                <Checkbox checked={skillLocked || skillOn} onChange={setSkillOn} label={t('skill.checkbox')} disabled={busy || skillLocked} />
-                <p className="dsh-orq-hint dsh-orq-skill-hint">{t(skillLocked ? 'skill.typed' : 'skill.hint', { token: `/${skill.name}` })}</p>
+                <Checkbox
+                  checked={subagentsOn && (skillLocked || skillOn)}
+                  onChange={setSkillOn}
+                  label={t('skill.checkbox')}
+                  disabled={busy || skillLocked || !subagentsOn}
+                />
+                <p className="dsh-orq-hint dsh-orq-skill-hint">
+                  {t(skillLocked ? 'skill.typed' : (subagentsOn ? 'skill.hint' : 'skill.needsModel'), { token: `/${skill.name}` })}
+                </p>
               </section>
             )
           : undefined}

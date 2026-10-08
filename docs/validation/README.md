@@ -2,13 +2,37 @@
 
 Everything in this plugin was validated against a real DeepSeek Harness, not only against
 mocks. This page states what was run, what it proved, what it found and what it did not
-cover: first the **0.8.0** validation (the orchestration skill, its dialog checkbox and the model/state marks on the
-subagent list; every run on the project's Mac mini test host), then the **0.5.1** fix (the dialog could not save when
-the host and the page were different versions), then the
+cover: first the **0.8.1** follow-up (the skill checkbox coupled to the subagent-model switch), then the **0.8.0**
+validation (the orchestration skill, its dialog checkbox and the model/state marks on the subagent list; every run on
+the project's Mac mini test host), then the **0.5.1** fix (the dialog could not save when the host and the page were
+different versions), then the
 **0.4.0** validation of the start guard on the three target models, then the **0.2.0** validation
 on the same three models, then the **0.1.0** validation on a Mac mini. The 0.4.0 and older sections
 describe versions that still had the independent reviewer, which 0.5.0 removed
 ([D16](../estudos/decisoes.md)); they are kept as the record of what was run.
+
+## 0.8.1: the skill checkbox coupled to the subagent-model switch (2026-10-08)
+
+**What changed.** The "Orchestration skill" checkbox is now gated by the "Subagent model" switch: with the switch
+off the box is unchecked and disabled (with a hint pointing at the switch) and the send carries no token; turning
+the switch back on restores the box's last state. The skill preference is written only when the box was actually
+answered, so flipping the switch never overwrites it. One real defect fell out of the requirement: while the
+model's reasoning ladder was unknown (the catalog loading or failed) a confirm silently dropped the stored
+effort level to "recommended"; the stored level now stays selected and is written back.
+
+**Where it ran.** The same Mac mini battery against freshly built bundles — `lib/client.cjs` sha256
+`916549e5e352f8ff...`, byte-identical to the release build — 847/847 unit, integration and contract tests (+6 for
+the coupling and the pre-fill), and in the browser: the skill script 132/132 (including the new coupling checks:
+switch off renders the box unchecked and disabled, OFF→ON restores it, confirm with the switch off sends no token
+and remembers nothing), a subagent's own conversation 10/10, the five earlier phases (cancel 11/11, command 7/7,
+light 5/5, small 3/3 after the known flake, effort 16/16 — the effort phase is the live check that the dialog
+reopens with the stored model and its stored level, not "recommended") and the README figures, re-shot with the
+coupled states. 15/15 mutations of the changed logic die.
+
+**Not fixed (harness quirks, not the plugin).** `ui-e2e-skill.mjs` numbers turns from the session's first turn, so
+a "New session" that reuses an abandoned session can turn a correct send into a spurious FAIL (seen once; the log
+showed the send was right); and `ui-e2e.mjs`'s `open()` still has its known landing race on the composer's
+placeholder (it passes on retry). Both live in the test scripts only.
 
 ## 0.8.0: the orchestration skill, its dialog checkbox and the subagent list marks (2026-10-07)
 

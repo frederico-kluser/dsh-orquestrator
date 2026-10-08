@@ -80,9 +80,11 @@ a turn is running:
 - **Orchestration skill** (a checkbox, checked by default; shown when the plugin's host half has registered the
   skill): applies the global skill `orchestrate-subagents` to this message. The message goes out with the
   `/orchestrate-subagents` token and DSH injects the skill's instructions into that step. Uncheck it to send
-  the message without the skill; the dialog remembers your last answer for the next message. If the message
-  already contains the token (you typed it), the box is shown ticked and locked, because DSH loads the skill
-  anyway. See [The orchestration skill](#the-orchestration-skill).
+  the message without the skill; the dialog remembers your last answer for the next message. The box is coupled
+  to the subagent-model switch above: with the switch off it is off and disabled (a hint points at the switch),
+  and turning the switch back on restores its last state. If the message already contains the token (you typed
+  it), the box is shown ticked and locked, because DSH loads the skill anyway. See
+  [The orchestration skill](#the-orchestration-skill).
 - **There is no "do not ask again"**: the modal is raised for every message you send and
   nothing can silence it. One answer never hides it from a later message or from
   another conversation. The last confirmed choice only pre-fills the dialog.

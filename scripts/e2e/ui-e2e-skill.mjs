@@ -11,12 +11,14 @@
  * PHASE:
  *   skill   the one phase. `STEPS` (default: all five) picks which groups run:
  *     conversation  S1..S5 and S7 in ONE conversation, plus the extras that need the same conversation
- *                   S1  new task: the dialog has ONE checkbox ("Apply the orchestration skill to this task", CHECKED), the
- *                       "Orchestration skill" heading, the `/orchestrate-subagents` hint, no remember/ask-again box, the switch OFF
- *                   S2  uncheck + confirm: the message goes out as typed; the session log has no token and no skill-invocation
- *                   S3  the last answer pre-fills the next dialog (unchecked); check + confirm: the transcript and the log show the
- *                       typed text with `/orchestrate-subagents` on a line of its own AT THE END, and DSH injected the skill
- *                       (`source.kind === 'skill-invocation'`)
+ *                   S1  new task: the dialog has ONE checkbox ("Apply the orchestration skill to this task"), UNCHECKED and
+ *                       DISABLED because the "Subagent model" switch is off (the skill box follows that switch), the
+ *                       "Orchestration skill" heading, the "turn on the switch above" hint, no remember/ask-again box
+ *                   S2  confirm with the switch off (the box is already unchecked and disabled): the message goes out as
+ *                       typed; the session log has no token and no skill-invocation, and no skill answer is remembered
+ *                   S3  the switch and a model come first (DeepSeek V4.1 Flash), then the box: the transcript and the log show
+ *                       the typed text with `/orchestrate-subagents` on a line of its own AT THE END, and DSH injected the
+ *                       skill (`source.kind === 'skill-invocation'`)
  *                   S4  Escape (cancel): no token, no injection, and the next dialog is unchanged; the other ways to cancel
  *                       (the close button after toggling, the Cancel button, a click on the mask) do the same
  *                   S5  `/orquestrar` (configure mode, nothing is sent): no skill section, no checkbox
@@ -86,6 +88,7 @@ const DIALOG = 'Orchestrate subagents'
 const SKILL = 'orchestrate-subagents'
 const TOKEN = `/${SKILL}`
 const SKILL_LABEL = 'Apply the orchestration skill to this task'
+const NEEDS_MODEL_HINT = 'Turn on the switch above'
 const SKILL_TITLE = 'Orchestration skill'
 const MEMORY_KEY = 'dsh-orquestrator:skill:v1'
 const REMEMBER_BOX = /ask again|remember|do not ask/i
@@ -342,11 +345,11 @@ async function conversation() {
     const boxes = dlg.getByRole('checkbox')
     check('S1 the dialog has exactly ONE checkbox', (await boxes.count()) === 1, await boxes.count())
     const box = skillBox(s)
-    check(`S1 it is named "${SKILL_LABEL}" and is CHECKED`, (await box.count()) === 1 && await box.isChecked())
+    check(`S1 it is named "${SKILL_LABEL}", UNCHECKED and DISABLED (the subagent-model switch is off)`, (await box.count()) === 1 && !(await box.isChecked()) && await box.isDisabled())
     check(`S1 the section heading "${SKILL_TITLE}" is there`, (await dlg.getByRole('heading', { name: SKILL_TITLE, exact: true }).count()) === 1)
     const region = skillRegion(s)
     const regionText = (await region.count()) === 1 ? (await region.innerText()).replace(/\s+/g, ' ') : ''
-    check('S1 the section hint mentions /orchestrate-subagents and holds the checkbox', regionText.includes(TOKEN) && (await region.getByRole('checkbox').count()) === 1, regionText.slice(0, 200))
+    check('S1 the section hint says the skill needs the switch above, and holds the checkbox', regionText.includes(NEEDS_MODEL_HINT) && (await region.getByRole('checkbox').count()) === 1, regionText.slice(0, 200))
     check('S1 no checkbox named like "ask again" / "remember" / "do not ask"', (await dlg.getByRole('checkbox', { name: REMEMBER_BOX }).count()) === 0)
     const switches = dlg.getByRole('switch')
     check('S1 the subagent-model switch is still there, once, and OFF', (await switches.count()) === 1 && (await switches.first().getAttribute('aria-checked')) === 'false')
@@ -359,10 +362,9 @@ async function conversation() {
   // ---- S2: unchecked -> the message goes out exactly as typed
   await section('S2', s, async () => {
     const dlg = dialog(s)
-    await skillBox(s).uncheck()
-    check('S2 the checkbox is unchecked before sending', !(await skillBox(s).isChecked()))
+    check('S2 the checkbox is unchecked and disabled before sending (the switch is off)', !(await skillBox(s).isChecked()) && await skillBox(s).isDisabled())
     await sendWith(s)
-    check('S2 the answer is remembered as "off" (localStorage)', (await memory(s)) === 'off', await memory(s))
+    check('S2 no skill answer was remembered (the box was gated, localStorage has no answer)', (await memory(s)) === null, await memory(s))
     const { ok, turn, ms } = await landed(s)
     check('S2 the model answered (turn 1 ended)', ok && turn?.end?.kind === 'completed', `${String(ms)} ms, answer=${JSON.stringify(turn?.answer?.slice(0, 40))}`)
     const events = readEvents(s.sessionId)
@@ -381,10 +383,13 @@ async function conversation() {
   // ---- S3: the last answer pre-fills the next dialog; check it and send
   await section('S3', s, async () => {
     await ask(s, T[1])
-    check('S3 the next dialog opens with the checkbox UNCHECKED (the last answer is remembered)', !(await skillBox(s).isChecked()), await memory(s))
+    check('S3 the next dialog opens with the box gated (the switch is off again, as the last answer stored)', !(await skillBox(s).isChecked()) && await skillBox(s).isDisabled(), await memory(s))
     check('S3 the preview shows what was typed, without any token', await dialog(s).getByText(T[1], { exact: true }).isVisible())
-    await skillBox(s).check()
-    check('S3 the checkbox is checked before sending', await skillBox(s).isChecked())
+    // The skill box follows the subagent-model switch: the switch and a model come first, then the box.
+    await dialog(s).getByRole('switch').click()
+    await pick(s, /Choose a model/, WORKER.name)
+    await skillBox(s).check() // nothing was remembered yet, so the default stands: make sure it is ticked
+    check('S3 with the switch on and a model picked the checkbox is checked and enabled before sending', await skillBox(s).isChecked() && !(await skillBox(s).isDisabled()))
     await shot(s, 'S3-dialog-checked')
     await sendWith(s)
     check('S3 the answer is remembered as "on"', (await memory(s)) === 'on', await memory(s))
@@ -613,10 +618,14 @@ async function conversation() {
     await ask(s, T[9])
     check('X a NEW conversation opens with the same remembered answer (CHECKED)', await skillBox(s).isChecked())
     check('X the new conversation is another session', s.sessionId !== undefined && s.sessionId !== fresh, `${String(s.sessionId).slice(0, 16)} vs ${String(fresh).slice(0, 16)}`)
-    await dialog(s).getByRole('switch').click()
-    await pick(s, /Choose a model/, WORKER.name)
+    // The coupling: the subagent-model switch gates the skill box, and an off-and-on round trip keeps its state.
+    await dialog(s).getByRole('switch').click() // off
+    check('X toggling the subagent-model switch OFF unticks and disables the skill box', !(await skillBox(s).isChecked()) && await skillBox(s).isDisabled())
+    await dialog(s).getByRole('switch').click() // on again
+    check('X toggling the switch back ON restores the skill box (ticked and enabled)', await skillBox(s).isChecked() && !(await skillBox(s).isDisabled()))
     await s.page.waitForTimeout(300)
-    check('X the skill checkbox is untouched by the switch and the model pick', await skillBox(s).isChecked())
+    check('X the picker still shows the remembered model after the round trip', await dialog(s).getByRole('button', { name: WORKER.name }).first().isVisible())
+    check('X the skill box is still ticked after the model pick', await skillBox(s).isChecked())
     const postsBefore = s.t.wire.filter((entry) => entry.method === 'POST').length
     await sendWith(s)
     await s.page.waitForTimeout(500)
@@ -837,7 +846,7 @@ async function themes() {
     await ask(light, T[10])
     const dlg = dialog(light)
     await dlg.getByRole('checkbox').first().waitFor({ state: 'visible', timeout: 8_000 })
-    check('S6 light theme: the skill section renders (heading, one checked checkbox, the hint)', (await skillRegion(light).count()) === 1 && (await skillRegion(light).isVisible()) && (await skillBox(light).isVisible()) && await skillBox(light).isChecked() && (await skillRegion(light).innerText()).includes(TOKEN))
+    check('S6 light theme: the skill section renders (heading, one checkbox, the hint) in the fresh dialog\'s coupled state (switch off: the box is UNCHECKED and DISABLED, the hint points at the switch)', (await skillRegion(light).count()) === 1 && (await skillRegion(light).isVisible()) && (await skillBox(light).isVisible()) && (await dlg.getByRole('switch').first().getAttribute('aria-checked')) === 'false' && !(await skillBox(light).isChecked()) && await skillBox(light).isDisabled() && (await skillRegion(light).innerText()).includes(NEEDS_MODEL_HINT), (await skillRegion(light).innerText()).replace(/\s+/g, ' ').slice(0, 200))
     check('S6 light theme: the rest of the dialog is intact (one switch, off; Send is visible)', (await dlg.getByRole('switch').count()) === 1 && (await dlg.getByRole('button', { name: SEND }).isVisible()))
     const colors = await colorsOf(light)
     const ratio = (entry) => (entry === null ? 0 : contrast(entry.color, entry.background))
@@ -934,14 +943,18 @@ async function wire() {
   await section('S8-malformed', s, () => noSection('a malformed offer (name "Not A Name!")', 'malformed', T[2], 'escape'))
   await section('S8-error', s, () => noSection('a configuration route that fails (HTTP 500)', 'error', T[3], 'confirm'))
 
-  // The unmodified route: the section is back, checked (nothing was ever answered), and a confirm carries the token.
+  // The unmodified route: the section is back (gated by the switch, as nothing was answered), and a confirm carries the token.
   await section('S8-passthrough', s, async () => {
     mode = 'passthrough'
     await s.page.unroute(pattern)
     await ask(s, T[4])
     const dlg = dialog(s)
     check('S8 unmodified route: the skill section is back (one checkbox, named, in the section)', (await dlg.getByRole('checkbox').count()) === 1 && (await skillBox(s).count()) === 1 && (await skillRegion(s).count()) === 1)
-    check('S8 unmodified route: the checkbox opens CHECKED (the earlier sends never recorded an answer)', await skillBox(s).isChecked())
+    check('S8 unmodified route: the box opens gated by the switch (unchecked and disabled)', !(await skillBox(s).isChecked()) && await skillBox(s).isDisabled())
+    await dialog(s).getByRole('switch').click()
+    await pick(s, /Choose a model/, WORKER.name)
+    await skillBox(s).check()
+    check('S8 unmodified route: with the switch on the box is checked and enabled', await skillBox(s).isChecked() && !(await skillBox(s).isDisabled()))
     await shot(s, 'S8-unmodified')
     await sendWith(s)
     turn += 1
@@ -982,12 +995,14 @@ async function queued() {
   await open(s)
   await section('X-queue', s, async () => {
     await ask(s, 'Run the shell command: sleep 15 ; then reply with exactly the word: slept')
-    await skillBox(s).uncheck()
+    check('X-queue the first dialog has the box gated (the switch is off)', !(await skillBox(s).isChecked()) && await skillBox(s).isDisabled())
     await sendWith(s)
     await s.page.getByRole('button', { name: 'Stop generating' }).waitFor({ state: 'visible', timeout: 20_000 })
     await s.page.waitForTimeout(2_500)
     await ask(s, T[12])
-    check('X-queue the dialog also opens while a turn is running (checkbox unchecked: the last answer)', !(await skillBox(s).isChecked()))
+    check('X-queue the dialog also opens while a turn is running (the box is still gated by the switch)', !(await skillBox(s).isChecked()) && await skillBox(s).isDisabled())
+    await dialog(s).getByRole('switch').click()
+    await pick(s, /Choose a model/, WORKER.name)
     await skillBox(s).check()
     await sendWith(s)
     const first = await awaitTurn(s, 1, 90_000)

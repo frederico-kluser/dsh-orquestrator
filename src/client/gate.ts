@@ -252,9 +252,13 @@ export class PromptGate {
 
   /**
    * Remember an answer for the next dialog. Each memory is written on its own and a failure only costs the
-   * convenience: what is sent never depends on it.
+   * convenience: what is sent never depends on it. The subagent-model choice is a real answer even with the
+   * switch off (an off choice is what the user chose); the skill question is answered only while its checkbox
+   * is interactive.
    * @param answer - how the dialog ended.
-   * @param skillAsked - whether the user could answer the skill question (it was offered and not forced by a typed token).
+   * @param skillAsked - whether the skill question was offered and not forced by a typed token. The answer
+   * itself says whether the box was interactive: with the subagent-model switch off the dialog shows it
+   * unchecked and disabled, and there is then no skill answer to remember.
    */
   private remember(answer: DialogResult, skillAsked: boolean): void {
     if (answer.kind !== 'confirm') return
@@ -263,7 +267,10 @@ export class PromptGate {
     } catch (error: unknown) {
       this.deps.warn('could not remember the choice', error)
     }
-    if (!skillAsked) return
+    // No skill answer without an interactive box (switch off or a typed token): writing the forced
+    // `applySkill: false` would reset the user's preference. The config shape is a sound signal because the
+    // dialog refuses to confirm with the switch on and no model picked (pinned in the dialog-render tests).
+    if (!skillAsked || answer.config.subagentModel === null) return
     try {
       this.deps.skillMemory.write(answer.applySkill)
     } catch (error: unknown) {

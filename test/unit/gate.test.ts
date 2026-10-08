@@ -532,7 +532,7 @@ describe('the skill checkbox', () => {
     }
   })
 
-  it('opens ticked on first use, then follows the last answer, whatever the answer to the model question is', async () => {
+  it('opens ticked on first use, then follows the last answer an interactive box gave', async () => {
     const h = harness()
     const { session, detach } = mounted(h)
     const opened: boolean[] = []
@@ -543,11 +543,22 @@ describe('the skill checkbox', () => {
     await ask(cancelIt) // first use: ticked
     await ask(confirmAs(active, false)) // unticks it
     await ask(cancelIt) // a cancel changes nothing: still unticked
-    await ask(confirmAs(OFF_CONFIG, false)) // still unticked
+    await ask(confirmAs(OFF_CONFIG, false)) // a model-off answer has no interactive box: no skill answer, so the memory holds
     await ask(confirmAs(chosen, true)) // ticks it again
     await ask(cancelIt)
     assert.deepEqual(opened, [true, true, false, false, false, true])
-    assert.deepEqual(h.skillMemory.writes, [false, false, true])
+    assert.deepEqual(h.skillMemory.writes, [false, true], 'the off confirm wrote nothing')
+    detach()
+  })
+
+  it('a confirm with the subagent-model switch off remembers the model choice and never a skill answer', async () => {
+    const h = harness()
+    const { session, detach } = mounted(h)
+    // Even a dialog that somehow reported a ticked box: with no model on the answer there was no interactive box.
+    answerNext(h.dialogs, confirmAs(OFF_CONFIG, true))
+    await session.prompt(text('go'), 'queue')
+    assert.deepEqual(h.memory.last, OFF_CONFIG, 'an off choice is a real answer and persists')
+    assert.deepEqual(h.skillMemory.writes, [], 'no interactive box, no skill answer')
     detach()
   })
 

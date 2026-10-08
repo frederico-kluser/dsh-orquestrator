@@ -76,7 +76,7 @@ const { OrchestratorDialog } = await load<typeof import('../../src/client/Orches
 const { DialogHost } = await load<typeof import('../../src/client/dialogs.ts')>('client/dialogs.js')
 const { LOADING_CATALOG } = await load<typeof import('../../src/client/catalog.ts')>('client/catalog.js')
 const { en } = await load<typeof import('../../src/client/locales.ts')>('client/locales.js')
-const { OFF_CONFIG, SKILL_NAME } = await load<typeof import('../../src/shared.ts')>('shared.js')
+const { OFF_CONFIG, SKILL_NAME, buildConfig } = await load<typeof import('../../src/shared.ts')>('shared.js')
 const entry = await load<typeof import('../../src/client/index.ts')>('client/index.js')
 
 after(() => {
@@ -91,6 +91,11 @@ const t = (key: keyof typeof en, params: Record<string, unknown> = {}): string =
   Object.entries(params).reduce((text: string, [name, value]) => text.replaceAll(`{${name}}`, String(value)), en[key])
 const offer: SkillOffer = { name: SKILL_NAME, available: true }
 const KEY = 'dsh-orquestrator:skill:v1'
+const LAST = 'dsh-orquestrator:last:v1'
+/** A model to run subagents on: with it stored, the subagent-model switch opens ON and the skill box is interactive. */
+const ROUTE = { provider: 'openrouter', model: 'google/gemini-3.8-flash' }
+const ON_CONFIG = buildConfig({ subagentModel: ROUTE })
+const STORED_EFFORT = buildConfig({ subagentModel: ROUTE, workerEffort: 'high' })
 
 /** Wait, inside act so that React settles, until something is on the page; running out of turns fails the test instead of hanging it. */
 async function until(what: string, ready: () => boolean): Promise<void> {
@@ -100,6 +105,8 @@ async function until(what: string, ready: () => boolean): Promise<void> {
 const click = (node: Element | null | undefined): Promise<void> => act(async () => { (node as HTMLElement).click() })
 const button = (el: Element, variant: 'primary' | 'outline'): Element | null => el.querySelector(`footer button[data-variant=${variant}]`)
 const skillBox = (el: Element): HTMLInputElement | null => el.querySelector<HTMLInputElement>('.dsh-orq-skill input[type=checkbox]')
+const modelSwitch = (el: Element): HTMLInputElement | null => el.querySelector<HTMLInputElement>('input[role=switch]')
+const skillHint = (el: Element): string | null => el.querySelector('.dsh-orq-skill-hint')?.textContent ?? null
 
 interface Open {
   readonly el: HTMLElement
@@ -133,7 +140,7 @@ async function open(overrides: Partial<DialogInput> = {}, holdSave = false): Pro
 }
 
 describe('the dialog, rendered', { timeout: 30_000 }, () => {
-  it('shows the skill as its last section: a title, a checkbox, and a hint that names the token; the error line comes after', async () => {
+  it('shows the skill as its last section: a title, a checkbox, and the hint that fits the switch; the error line comes after', async () => {
     const o = await open({}, true)
     const section = o.el.querySelector('section.dsh-orq-skill')
     assert.ok(section)
@@ -141,7 +148,7 @@ describe('the dialog, rendered', { timeout: 30_000 }, () => {
     assert.equal(heading?.textContent, t('skill.title'))
     assert.equal(section.getAttribute('aria-labelledby'), heading?.id)
     assert.equal(section.querySelector('label')?.textContent, t('skill.checkbox'))
-    assert.equal(section.querySelector('.dsh-orq-skill-hint')?.textContent, t('skill.hint', { token: `/${SKILL_NAME}` }))
+    assert.equal(skillHint(o.el), t('skill.needsModel'), 'the switch is off on a fresh dialog: the box waits for it')
     const stack = o.el.querySelector('.dsh-orq-stack')
     const names = (): string[] => [...(stack?.children ?? [])].map(child => child.className)
     assert.deepEqual(names(), ['dsh-orq-task', 'dsh-orq-section', 'dsh-orq-section dsh-orq-skill'])
@@ -151,19 +158,75 @@ describe('the dialog, rendered', { timeout: 30_000 }, () => {
     await o.close()
   })
 
-  it('opens the box the way the request says, and a confirm answers what the box shows', async () => {
+  it('opens the box the way the request says (switch on), and a confirm answers what the box shows', async () => {
     for (const initialSkill of [true, false]) {
       for (const clicks of [0, 1, 2, 3]) {
-        const o = await open({ initialSkill })
+        const o = await open({ initialSkill, initial: ON_CONFIG })
         assert.equal(skillBox(o.el)?.checked, initialSkill, `initialSkill ${String(initialSkill)}`)
+        assert.equal(skillBox(o.el)?.disabled, false)
         for (let i = 0; i < clicks; i += 1) await click(skillBox(o.el))
         const expected = clicks % 2 === 0 ? initialSkill : !initialSkill
         assert.equal(skillBox(o.el)?.checked, expected)
         await click(button(o.el, 'primary'))
-        assert.deepEqual(await o.answer, { kind: 'confirm', config: OFF_CONFIG, applySkill: expected }, `${String(initialSkill)} after ${String(clicks)} clicks`)
+        assert.deepEqual(await o.answer, { kind: 'confirm', config: ON_CONFIG, applySkill: expected }, `${String(initialSkill)} after ${String(clicks)} clicks`)
         await o.close()
       }
     }
+  })
+
+  it('the box follows the subagent-model switch: off and locked without it, whatever the memory says', async () => {
+    const o = await open({ initialSkill: true })
+    assert.deepEqual([skillBox(o.el)?.checked, skillBox(o.el)?.disabled], [false, true], 'unchecked and disabled with the switch off')
+    assert.equal(skillHint(o.el), t('skill.needsModel'))
+    await click(skillBox(o.el))
+    assert.equal(skillBox(o.el)?.checked, false, 'a disabled box does not move')
+    await click(modelSwitch(o.el)) // the switch on: the box shows the state the memory holds
+    assert.deepEqual([skillBox(o.el)?.checked, skillBox(o.el)?.disabled], [true, false])
+    assert.equal(skillHint(o.el), t('skill.hint', { token: `/${SKILL_NAME}` }))
+    await click(modelSwitch(o.el)) // and off again: the shown state is gated again
+    assert.deepEqual([skillBox(o.el)?.checked, skillBox(o.el)?.disabled], [false, true])
+    await o.close()
+  })
+
+  it('a switch off-and-on round trip keeps the box state the user left, and the confirm answers the effective box', async () => {
+    const o = await open({ initialSkill: true, initial: ON_CONFIG })
+    await click(skillBox(o.el)) // the user unticks it
+    await click(modelSwitch(o.el)) // off
+    assert.deepEqual([skillBox(o.el)?.checked, skillBox(o.el)?.disabled], [false, true])
+    await click(modelSwitch(o.el)) // on again
+    assert.equal(skillBox(o.el)?.checked, false, 'the user\'s untick is restored, not the ticked default')
+    await click(button(o.el, 'primary'))
+    assert.deepEqual(await o.answer, { kind: 'confirm', config: ON_CONFIG, applySkill: false })
+    await o.close()
+    const ticked = await open({ initialSkill: true, initial: ON_CONFIG })
+    await click(button(ticked.el, 'primary'))
+    assert.deepEqual(await ticked.answer, { kind: 'confirm', config: ON_CONFIG, applySkill: true }, 'applySkill true only when the effective box is ticked')
+    await ticked.close()
+    const gated = await open({ initialSkill: false })
+    await click(modelSwitch(gated.el)) // switch on, but no model picked yet: the box shows the remembered off state
+    assert.equal(skillBox(gated.el)?.checked, false)
+    await click(skillBox(gated.el)) // the box is interactive: the user ticks it
+    await click(modelSwitch(gated.el)) // switch off: the tick is remembered but not shown
+    assert.equal(skillBox(gated.el)?.checked, false)
+    await click(modelSwitch(gated.el))
+    assert.equal(skillBox(gated.el)?.checked, true, 'restored')
+    await gated.close()
+  })
+
+  it('refuses to confirm with the switch on and no model: a confirmed choice always carries a model (the gate\'s memory rule reads it from the config)', async () => {
+    const o = await open({ initialSkill: true })
+    await click(modelSwitch(o.el)) // switch on, picker empty
+    assert.deepEqual([skillBox(o.el)?.checked, skillBox(o.el)?.disabled], [true, false])
+    const primary = button(o.el, 'primary') as HTMLButtonElement | null
+    assert.equal(primary?.disabled, true, 'the confirm button waits for a model')
+    let settled = false
+    void o.answer.then(() => { settled = true })
+    await click(primary)
+    await act(async () => { await new Promise<void>((resolve) => { setImmediate(resolve) }) })
+    assert.equal(settled, false, 'no confirm came out of it')
+    await click(button(o.el, 'outline'))
+    assert.deepEqual(await o.answer, { kind: 'cancel' }, 'only the cancel settles')
+    await o.close()
   })
 
   it('answers a plain cancel, whatever the box says, from the Cancel button and from the close button', async () => {
@@ -189,7 +252,7 @@ describe('the dialog, rendered', { timeout: 30_000 }, () => {
   })
 
   it('locks the box while the choice is saved, and unlocks it with the user\'s state when the save fails', async () => {
-    const o = await open({}, true)
+    const o = await open({ initial: ON_CONFIG }, true)
     await click(skillBox(o.el)) // untick
     assert.equal(skillBox(o.el)?.disabled, false)
     await click(button(o.el, 'primary'))
@@ -201,23 +264,34 @@ describe('the dialog, rendered', { timeout: 30_000 }, () => {
     await click(skillBox(o.el)) // tick it again, and retry: the retry must carry what the box shows NOW, not what it showed at the first try
     await click(button(o.el, 'primary'))
     await o.settleSave()
-    assert.deepEqual(await o.answer, { kind: 'confirm', config: OFF_CONFIG, applySkill: true })
+    assert.deepEqual(await o.answer, { kind: 'confirm', config: ON_CONFIG, applySkill: true })
     await o.close()
   })
 
-  it('a token already in the message: the box is ticked and locked, says why, and the answer is applySkill true', async () => {
-    const o = await open({ skillInMessage: true, initialSkill: false })
-    assert.equal(skillBox(o.el)?.checked, true)
-    assert.equal(skillBox(o.el)?.disabled, true)
-    assert.equal(o.el.querySelector('.dsh-orq-skill-hint')?.textContent, t('skill.typed', { token: `/${SKILL_NAME}` }))
-    await click(skillBox(o.el)) // a locked box does not move
-    assert.equal(skillBox(o.el)?.checked, true)
-    await click(button(o.el, 'primary'))
-    assert.deepEqual(await o.answer, { kind: 'confirm', config: OFF_CONFIG, applySkill: true })
-    await o.close()
+  it('a token already in the message: the hint says so whatever the switch is, and only the switch decides the box', async () => {
+    for (const initial of [ON_CONFIG, OFF_CONFIG]) {
+      const locked = initial === ON_CONFIG
+      const o = await open({ skillInMessage: true, initialSkill: false, initial })
+      assert.equal(skillHint(o.el), t('skill.typed', { token: `/${SKILL_NAME}` }), 'reality first: the token applies the skill')
+      assert.deepEqual([skillBox(o.el)?.checked, skillBox(o.el)?.disabled], [locked, true], locked ? 'ticked and locked' : 'unchecked and gated by the switch')
+      await click(skillBox(o.el)) // a locked box does not move
+      assert.equal(skillBox(o.el)?.checked, locked)
+      await click(button(o.el, 'primary'))
+      assert.deepEqual(await o.answer, { kind: 'confirm', config: initial, applySkill: locked }, locked ? 'a token with the switch on' : 'a token with the switch off')
+      await o.close()
+    }
     const bare = await open({ skill: null, skillInMessage: true })
     assert.equal(bare.el.querySelector('.dsh-orq-skill'), null, 'nothing to lock when nothing is offered')
     await bare.close()
+  })
+
+  it('keeps a stored effort level while the model\'s ladder is unknown, and confirm writes it back', async () => {
+    const o = await open({ initial: STORED_EFFORT, initialSkill: true })
+    assert.ok(o.el.querySelector('section.dsh-orq-section-quiet'), 'the effort block is there with the stored model')
+    assert.equal(o.el.querySelector('section.dsh-orq-section-quiet .dsh-orq-hint')?.textContent, t('effort.summary.custom'), 'a stored level stays chosen (the catalog has not answered yet)')
+    await click(button(o.el, 'primary'))
+    assert.deepEqual(await o.answer, { kind: 'confirm', config: STORED_EFFORT, applySkill: true }, 'confirm keeps the level instead of resetting it to recommended')
+    await o.close()
   })
 })
 
@@ -275,6 +349,7 @@ describe('the client entry, wired', { timeout: 30_000 }, () => {
   it('remembers the skill answer in the page\'s storage and opens the next dialog the way it was left', async () => {
     const app = await boot()
     const chat = await app.conversation('s')
+    app.storage.set(LAST, JSON.stringify(ON_CONFIG)) // this conversation already runs subagents on their own model
     const sent = chat.send('one')
     await until('the first dialog', () => skillBox(chat.el) !== null)
     assert.equal(skillBox(chat.el)?.checked, true, 'ticked on first use')
@@ -295,17 +370,33 @@ describe('the client entry, wired', { timeout: 30_000 }, () => {
     await chat.leave()
   })
 
-  it('a message that already carries the token opens the box ticked and locked, and goes out with that one token', async () => {
+  it('a message that already carries the token says so and goes out with that one token, box or not', async () => {
     const app = await boot()
     const chat = await app.conversation('s')
     const sent = chat.send(`/${SKILL_NAME} fix it`)
     await until('the dialog', () => skillBox(chat.el) !== null)
-    assert.deepEqual([skillBox(chat.el)?.checked, skillBox(chat.el)?.disabled], [true, true])
+    assert.deepEqual([skillBox(chat.el)?.checked, skillBox(chat.el)?.disabled], [false, true], 'a fresh dialog has the switch off: the box is gated, the typed token stands')
     assert.equal(chat.el.querySelector('.dsh-orq-skill-hint')?.textContent, t('skill.typed', { token: `/${SKILL_NAME}` }))
     await click(button(chat.el, 'primary'))
     await sent
     assert.deepEqual(chat.face.sent, [[{ type: 'text', text: `/${SKILL_NAME} fix it` }]])
     assert.equal(app.storage.has(KEY), false, 'the user was not asked, so nothing is remembered')
+    await chat.leave()
+  })
+
+  it('with the subagent-model switch off there is no skill answer to remember, and the model answer still persists', async () => {
+    const app = await boot()
+    const chat = await app.conversation('s')
+    app.storage.set(KEY, 'on') // the preference an earlier, interactive dialog left
+    const sent = chat.send('plain task')
+    await until('the dialog', () => skillBox(chat.el) !== null)
+    assert.deepEqual([skillBox(chat.el)?.checked, skillBox(chat.el)?.disabled], [false, true])
+    assert.equal(chat.el.querySelector('.dsh-orq-skill-hint')?.textContent, t('skill.needsModel'))
+    await click(button(chat.el, 'primary'))
+    await sent
+    assert.equal(app.storage.get(KEY), 'on', 'no skill answer was given: the preference is untouched')
+    assert.equal((JSON.parse(app.storage.get(LAST) ?? 'null') as { subagentModel: unknown }).subagentModel, null, 'the off model choice is remembered as always')
+    assert.deepEqual(chat.face.sent, [[{ type: 'text', text: 'plain task' }]])
     await chat.leave()
   })
 
@@ -338,7 +429,8 @@ describe('the client entry, wired', { timeout: 30_000 }, () => {
     await until('B\'s dialog, not a phantom of the left conversation', () => skillBox(b.el) !== null)
     await click(button(b.el, 'primary'))
     await sent
-    assert.deepEqual(b.face.sent, [[{ type: 'text', text: `from B\n/${SKILL_NAME}` }]])
+    // A fresh dialog has the subagent-model switch off, so no skill token: this test is about the jam, not the skill.
+    assert.deepEqual(b.face.sent, [[{ type: 'text', text: 'from B' }]])
     await b.leave()
   })
 

@@ -42,7 +42,7 @@
   execução e equipas de agentes. O agente principal não consegue contornar: é a guarda que está nas
   portas (`SubagentRuntime.start()` / `startContinuable()`).
 - O plugin **não verifica o conteúdo** do trabalho dos subagentes e **não muda o agente principal**.
-  Cancelar o diálogo envia a tarefa exatamente como o DSH sempre fez.
+  Cancelar o diálogo (ou Esc, ou o ✕) aborta o envio: nada sai e o texto fica no compositor como rascunho.
 - **Modo Coordenador Puro (feito na 0.8.0, como skill global):** um checkbox no diálogo, marcado por
   padrão, cuja única ação é **pôr o token `/orchestrate-subagents` na mensagem**; o DSH então injeta a skill
   global do plugin, que manda o orquestrador não ler nem escrever código, dividir o trabalho em partes
@@ -154,7 +154,7 @@ resposta em código**, em todas as portas de início de filhos.
   depois de escolher modelo; por omissão o nível recomendado).
 - **Sem "não perguntar mais":** o modal apareme em **toda** a mensagem enviada (texto, `@ficheiro`
   ou `/skill` — não importa); a última escolha confirmada apenas pré-preenche. Cancelar / Esc / ✕
-  envia a mensagem como stock e esquece a escolha.
+  abortam o envio (nada sai, o texto fica no compositor) e não guardam nada.
 - **`/orquestrar`** abre o mesmo diálogo a pedido (mudar ou limpar a escolha guardada).
 - **Imposição em código** (a *guarda de início*) para cada filho: o modelo escolhido, o teto de
   esforço (o que o utilizador pediu ou o teto do modelo) e o teto de tokens de saída.
@@ -211,7 +211,7 @@ Um pacote, duas metades (`lib/index.js` para o host, `lib/client.cjs` para o bro
  │        (prototype da classe, envolto) │        │  /dsh-orquestrator/config  (GET / POST)   │
  │   PromptGate ─ toda tarefa? ─▶ modal  │◀──────▶│   trust fence ─▶ validar ─▶ ConfigStore   │
  │   confirmar ─ POST config ────────────┼───────▶│                        (sessions.json)    │
- │   cancelar  ─ POST null  ─────────────┼───────▶│                                           │
+ │   cancelar  ─ aborta, nada enviado ──┼─ ─ ─▶│                                           │
  │   depois o prompt ORIGINAL é enviado  │        │  SubagentRuntime.start / startContinuable │
  └──────────────────────────────────────┘        │   (guarda de início: wrappers próprios na  │
                                                   │    instância do serviço)                  │
@@ -385,8 +385,8 @@ impacto para quem vai estender o projeto.
 >   da resposta do modelo, e a transcrição mostra o token. Nada do texto da skill viaja no fio nem no pacote do
 >   navegador.
 > - O checkbox é **marcado por padrão** e lembra a última resposta; só aparece quando o host diz que a skill está
->   registrada (a rota de configuração passou a responder `skill: { name, available }`). Cancelar, Esc e ✕ enviam
->   a mensagem sem token. Não há campo novo na configuração guardada por sessão, então não há plano de
+>   registrada (a rota de configuração passou a responder `skill: { name, available }`). Cancelar, Esc e ✕
+>   abortam o envio (nada sai). Não há campo novo na configuração guardada por sessão, então não há plano de
 >   compatibilidade de fio a manter além do campo opcional `skill` da resposta.
 > - O conteúdo do contrato da [6.2](#62-contrato-pretendido-da-instrução) ficou na skill, com acréscimos que
 >   quatro ensaios de pensamento expuseram: partes que rodam em paralelo dividem **uma só árvore de trabalho** (um

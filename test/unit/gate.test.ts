@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'node:test'
 import type { ConfigClient } from '../../src/client/config-client.ts'
 import { DialogHost, type DialogRequest } from '../../src/client/dialogs.ts'
 import {
-  PromptGate, attachWhenAvailable, createLastChoiceMemory, createSkillChoiceMemory, isSubagentConversation, patchTargetOf, previewOf, textOf,
+  ABORTED_SEND, PromptGate, attachWhenAvailable, createLastChoiceMemory, createSkillChoiceMemory, isSubagentConversation, patchTargetOf, previewOf, textOf,
   type LastChoiceMemory, type SkillChoiceMemory,
 } from '../../src/client/gate.ts'
 import type { PromptPartLike, SessionFaceLike, SessionSnapshotLike } from '../../src/client/host-types.ts'
@@ -18,11 +18,14 @@ const offered: SkillOffer = { name: SKILL_NAME, available: true }
 /** The real snapshot also says whether a turn runs; the gate does not read it, and the fake keeps saying so to prove it. */
 type FakeSnapshot = SessionSnapshotLike & { readonly running?: boolean }
 
-/** A session class like the real one: `prompt` lives on the prototype. */
+/** A session class like the real one: `prompt` and the echo seam live on the prototype. */
 class FakeSession implements SessionFaceLike {
   readonly sessionId: string
   snapshot: FakeSnapshot = { running: false, subagent: null }
   readonly prompts: { content: readonly PromptPartLike[]; mode: string; requestId: unknown }[] = []
+  /** The local echoes the composer registered for this conversation, in the order it registered them. */
+  readonly echoes: { readonly requestId: string; retired: boolean }[] = []
+  private minted = 0
 
   constructor(sessionId: string) {
     this.sessionId = sessionId
@@ -32,6 +35,14 @@ class FakeSession implements SessionFaceLike {
     return this.snapshot
   }
 
+  /** DSH's `ISession.beginSubmission`: the echo a composer paints before its prompt, retirable by its owner. */
+  beginSubmission(_input: { readonly text: string }): { readonly requestId: string; abandon: () => void } {
+    this.minted += 1
+    const echo = { requestId: `echo-${this.minted}`, retired: false }
+    this.echoes.push(echo)
+    return { requestId: echo.requestId, abandon: () => { echo.retired = true } }
+  }
+
   prompt(content: readonly PromptPartLike[], mode: 'queue' | 'steer', _signal?: AbortSignal, requestId?: unknown): Promise<unknown> {
     this.prompts.push({ content, mode, requestId })
     return Promise.resolve({ ok: true, value: { accepted: true } })
@@ -39,10 +50,14 @@ class FakeSession implements SessionFaceLike {
 }
 
 const originalPrompt = FakeSession.prototype.prompt
+const originalBeginSubmission = FakeSession.prototype.beginSubmission
 
 // A test that fails before it detaches must not leave its gate on the shared prototype: every later test would then
 // run behind that dead gate and wait for a dialog nobody answers, so one failure would show up as a suite that hangs.
-afterEach(() => { FakeSession.prototype.prompt = originalPrompt })
+afterEach(() => {
+  FakeSession.prototype.prompt = originalPrompt
+  FakeSession.prototype.beginSubmission = originalBeginSubmission
+})
 
 interface Harness {
   readonly gate: PromptGate
@@ -150,6 +165,15 @@ function mounted(h: Harness, sessionId = 's'): { session: FakeSession; detach: (
   return { session, detach: h.gate.attach(session) }
 }
 
+/**
+ * Send one message the way the composer does: register the local echo first, then call `prompt` with the identity the
+ * echo minted. The echo is what paints the pending bubble before the dialog is even raised.
+ */
+function send(session: FakeSession, content: readonly PromptPartLike[]): Promise<unknown> {
+  const echo = session.beginSubmission({ text: textOf(content) })
+  return session.prompt(content, 'queue', undefined, echo.requestId)
+}
+
 describe('helpers', () => {
   it('joins text parts and previews on one bounded line', () => {
     assert.equal(textOf([...text('a'), { type: 'image' }, ...text('b')]), 'a\nb')
@@ -205,24 +229,24 @@ describe('beforePrompt', () => {
     const detach = h.gate.attach(session)
     const asked: string[] = []
     const cases: [string, () => Promise<unknown>][] = [
-      ['plain task', () => { session.snapshot = { running: false, subagent: null }; return session.prompt(text('go'), 'queue') }],
-      ['skill invocation', () => session.prompt(text('/anchor-animation-agent-skill do the thing'), 'queue')],
-      ['file reference', () => session.prompt(text('@README.md summarize this'), 'queue')],
-      ['message while a turn runs', () => { session.snapshot = { running: true, subagent: null }; return session.prompt(text('keep going'), 'queue') }],
+      ['plain task', () => { session.snapshot = { running: false, subagent: null }; return send(session, text('go')) }],
+      ['skill invocation', () => send(session, text('/anchor-animation-agent-skill do the thing'))],
+      ['file reference', () => send(session, text('@README.md summarize this'))],
+      ['message while a turn runs', () => { session.snapshot = { running: true, subagent: null }; return send(session, text('keep going')) }],
       ['steer', () => { session.snapshot = { running: true, subagent: null }; return session.prompt(text('stop'), 'steer') }],
-      ['subagent conversation', () => { session.snapshot = { running: false, subagent: { address: 'x' } }; return session.prompt(text('next'), 'queue') }],
+      ['subagent conversation', () => { session.snapshot = { running: false, subagent: { address: 'x' } }; return send(session, text('next')) }],
     ]
     for (const [label, run] of cases) {
       answerNext(h.dialogs, (request) => {
         asked.push(request.preview)
         // The prompt must wait for the answer, whichever kind of message it is.
         assert.equal(session.prompts.length, asked.length - 1, label)
-        request.resolve({ kind: 'cancel' })
+        request.resolve({ kind: 'confirm', config: OFF_CONFIG, applySkill: false })
       })
       await run()
     }
     assert.deepEqual(asked, ['go', '/anchor-animation-agent-skill do the thing', '@README.md summarize this', 'keep going', 'stop', 'next'])
-    assert.equal(session.prompts.length, cases.length) // every send still goes out, after its answer
+    assert.equal(session.prompts.length, cases.length) // every confirmed send goes out, after its answer
     detach()
   })
 
@@ -297,11 +321,11 @@ describe('beforePrompt', () => {
     const detach = h.gate.attach(session)
     h.stored = chosen
     const initials: OrchestratorConfig[] = []
-    const cancel = (request: DialogRequest): void => { initials.push(request.initial); request.resolve({ kind: 'cancel' }) }
+    const confirm = (request: DialogRequest): void => { initials.push(request.initial); request.resolve({ kind: 'confirm', config: OFF_CONFIG, applySkill: false }) }
 
-    answerNext(h.dialogs, cancel)
+    answerNext(h.dialogs, confirm)
     await session.prompt(text('go'), 'queue')
-    answerNext(h.dialogs, cancel)
+    answerNext(h.dialogs, confirm)
     await session.prompt(text('more'), 'queue')
 
     assert.equal(initials.length, 2) // asked twice, never skipped
@@ -320,7 +344,7 @@ describe('beforePrompt', () => {
     h.loadFails = true
     h.memory.last = active
     const initials: OrchestratorConfig[] = []
-    answerNext(h.dialogs, (request) => { initials.push(request.initial); request.resolve({ kind: 'cancel' }) })
+    answerNext(h.dialogs, (request) => { initials.push(request.initial); request.resolve({ kind: 'confirm', config: OFF_CONFIG, applySkill: false }) })
     await session.prompt(text('go'), 'queue')
     assert.equal(session.prompts.length, 1) // asked first, sent after the answer
     assert.deepEqual(initials, [active])
@@ -371,21 +395,22 @@ describe('beforePrompt', () => {
     detach()
   })
 
-  it('returns the content to send: the same array when nothing is applied', async () => {
+  it('returns what to do with the send: the same array when nothing is applied, an abort for a cancel', async () => {
     const h = harness()
     const session = new FakeSession('s')
     h.dialogs.registerPresenter('s', Symbol())
     const original = text('go')
     answerNext(h.dialogs, cancelIt)
-    assert.equal(await h.gate.beforePrompt(session, original, 'queue'), original)
+    assert.deepEqual(await h.gate.beforePrompt(session, original, 'queue'), { kind: 'abort' })
     answerNext(h.dialogs, confirmAs(active, false))
-    assert.equal(await h.gate.beforePrompt(session, original, 'queue'), original)
+    assert.deepEqual(await h.gate.beforePrompt(session, original, 'queue'), { kind: 'send', content: original })
     const empty: PromptPartLike[] = []
-    assert.equal(await h.gate.beforePrompt(session, empty, 'queue'), empty)
+    assert.deepEqual(await h.gate.beforePrompt(session, empty, 'queue'), { kind: 'send', content: empty })
     answerNext(h.dialogs, confirmAs(active, true))
     const applied = await h.gate.beforePrompt(session, original, 'queue')
-    assert.notEqual(applied, original)
-    assert.deepEqual(applied, text(`go\n/${SKILL_NAME}`))
+    assert.equal(applied.kind, 'send')
+    assert.notEqual(applied.kind === 'send' ? applied.content : undefined, original)
+    assert.deepEqual(applied.kind === 'send' ? applied.content : undefined, text(`go\n/${SKILL_NAME}`))
     assert.deepEqual(original, text('go')) // and the input is still as it was
   })
 })
@@ -476,24 +501,54 @@ describe('the skill checkbox', () => {
     detach()
   })
 
-  it('cancelled (button, Escape, close or an aborted send): the message goes out as it is and nothing is remembered', async () => {
+  it('cancelled (button, the ✕, Escape or a mask click): nothing goes out, nothing is remembered, and the send\'s own echo is retired', async () => {
     const h = harness()
     h.skillMemory.last = false // an earlier answer
     const { session, detach } = mounted(h)
     const first = text('one')
     answerNext(h.dialogs, cancelIt)
-    await session.prompt(first, 'queue')
-    assert.equal(session.prompts[0]?.content, first)
+    const aborted = await send(session, first)
+    assert.deepEqual(aborted, ABORTED_SEND, 'the composer is told the send did not happen')
+    assert.equal(session.prompts.length, 0, 'the host prompt is never called')
+    assert.deepEqual(session.echoes.map(echo => echo.retired), [true], 'the bubble the composer painted for it is retired')
 
-    const second = text('two')
+    // The same answer travels whatever control gave it: the four gestures are one `{ kind: 'cancel' }` at the gate.
+    for (const gesture of ['the ✕', 'Escape', 'a mask click']) {
+      answerNext(h.dialogs, cancelIt)
+      assert.deepEqual(await send(session, text(gesture)), ABORTED_SEND, gesture)
+    }
+    assert.equal(session.prompts.length, 0)
+    assert.deepEqual(session.echoes.map(echo => echo.retired), [true, true, true, true])
+
+    // A send the composer itself abandoned while its dialog was up is not sent either.
     const controller = new AbortController()
-    queueMicrotask(() => { controller.abort() })
-    await session.prompt(second, 'queue', controller.signal)
-    assert.equal(session.prompts[1]?.content, second)
+    const echo = session.beginSubmission({ text: 'two' })
+    const sending = session.prompt(text('two'), 'queue', controller.signal, echo.requestId)
+    await shown(h)
+    controller.abort()
+    assert.deepEqual(await sending, ABORTED_SEND)
+    assert.equal(session.prompts.length, 0)
+    assert.deepEqual(session.echoes.map(echo => echo.retired), [true, true, true, true, true])
+
+    // An empty send is not a send either: it passes straight through, still.
+    await session.prompt([], 'queue', undefined, 'empty')
+    assert.equal(session.prompts.length, 1)
 
     assert.deepEqual(h.skillMemory.writes, [])
     assert.equal(h.skillMemory.last, false) // the earlier answer stands
     assert.equal(h.memory.last, null)
+    detach()
+  })
+
+  it('confirmed: the send goes out carrying the echo\'s own identity, and that echo is left to the host\'s prompt', async () => {
+    const h = harness()
+    const { session, detach } = mounted(h)
+    answerNext(h.dialogs, confirmAs(active, true))
+    const sent = await send(session, text('build the thing'))
+    assert.deepEqual(sent, { ok: true, value: { accepted: true } }, 'the host\'s own answer reaches the composer untouched')
+    assert.deepEqual(session.prompts.map(entry => entry.requestId), ['echo-1'], 'the prompt carries the identity the composer minted')
+    assert.deepEqual(session.prompts[0]?.content, text(`build the thing\n/${SKILL_NAME}`))
+    assert.deepEqual(session.echoes.map(echo => echo.retired), [false], 'nothing retires an echo behind the host\'s back')
     detach()
   })
 
@@ -522,12 +577,12 @@ describe('the skill checkbox', () => {
       assert.deepEqual(h.memory.last, active, `${label}: the model choice is remembered as always`)
       assert.equal(h.warnings.some(message => /route unavailable/.test(message)), h.loadFails, label)
 
-      // And a cancel in the same situation is as plain as ever.
+      // And a cancel in the same situation sends nothing at all.
       answerNext(h.dialogs, (request) => { requests.push(request); request.resolve({ kind: 'cancel' }) })
       const again = text('and again')
-      await session.prompt(again, 'queue')
+      assert.deepEqual(await session.prompt(again, 'queue'), ABORTED_SEND)
       assert.equal(requests[1]?.skill, null, label)
-      assert.equal(session.prompts[1]?.content, again, label)
+      assert.equal(session.prompts.length, 1, `${label}: the confirmed send is still the only one`)
       detach()
     }
   })
@@ -762,11 +817,11 @@ describe('sends in a row', () => {
     releaseFirst()
     const one = await shown(h)
     assert.equal(one.preview, 'FIRST')
-    one.resolve({ kind: 'cancel' })
+    one.resolve({ kind: 'confirm', config: active, applySkill: false })
     await first
     const two = await shown(h)
     assert.equal(two.preview, 'SECOND')
-    two.resolve({ kind: 'cancel' })
+    two.resolve({ kind: 'confirm', config: active, applySkill: false })
     await second
     assert.deepEqual(session.prompts.map(sent => sent.requestId), ['r1', 'r2'])
     detach()
@@ -785,7 +840,7 @@ describe('sends in a row', () => {
     assert.equal(b.preview, 'B')
     assert.equal(b.initialSkill, false) // A was answered unticked
     assert.deepEqual(b.initial, chosen)
-    b.resolve({ kind: 'cancel' })
+    b.resolve({ kind: 'confirm', config: active, applySkill: false })
     await second
     assert.deepEqual(session.prompts.map(sent => textOf(sent.content)), [`A`, 'B'])
     detach()
@@ -805,11 +860,12 @@ describe('sends in a row', () => {
     assert.equal(h.dialogs.current.getSnapshot(), one) // and the first dialog is still there, answerable
     one.resolve({ kind: 'cancel' })
     await first
+    assert.deepEqual(session.prompts.map(sent => sent.requestId), ['r2'], 'the cancel sent nothing')
     const three = await shown(h)
     assert.equal(three.preview, 'three') // the third still waited for the first
-    three.resolve({ kind: 'cancel' })
+    three.resolve({ kind: 'confirm', config: active, applySkill: false })
     await third
-    assert.deepEqual(session.prompts.map(sent => sent.requestId), ['r2', 'r1', 'r3'])
+    assert.deepEqual(session.prompts.map(sent => sent.requestId), ['r2', 'r3'])
     detach()
   })
 
@@ -828,7 +884,7 @@ describe('sends in a row', () => {
     const next = face.prompt(text('after'), 'queue')
     const request = await shown(h)
     assert.equal(request.preview, 'after')
-    request.resolve({ kind: 'cancel' })
+    request.resolve({ kind: 'confirm', config: active, applySkill: false })
     await next
     assert.equal(calls, 2)
     detach()
@@ -840,9 +896,9 @@ describe('sends in a row', () => {
     h.loadFails = true
     const first = session.prompt(text('one'), 'queue')
     const second = session.prompt(text('two'), 'queue')
-    ;(await shown(h)).resolve({ kind: 'cancel' })
+    ;(await shown(h)).resolve({ kind: 'confirm', config: active, applySkill: false })
     await first
-    ;(await shown(h)).resolve({ kind: 'cancel' })
+    ;(await shown(h)).resolve({ kind: 'confirm', config: active, applySkill: false })
     await second
     assert.equal(session.prompts.length, 2)
     detach()
@@ -887,17 +943,19 @@ describe('sends in a row', () => {
     const gone = new AbortController()
     gone.abort()
     const original = text('go')
-    assert.equal(await h.gate.beforePrompt(session, original, 'queue', gone.signal), original)
+    assert.deepEqual(await h.gate.beforePrompt(session, original, 'queue', gone.signal), { kind: 'send', content: original })
     assert.deepEqual(h.loads, [])
     assert.equal(h.dialogs.current.getSnapshot(), null)
 
     const controller = new AbortController()
-    const sending = session.prompt(text('later'), 'queue', controller.signal)
+    const echo = session.beginSubmission({ text: 'later' })
+    const sending = session.prompt(text('later'), 'queue', controller.signal, echo.requestId)
     await shown(h)
     controller.abort()
-    await sending
+    assert.deepEqual(await sending, ABORTED_SEND, 'abandoned while its dialog waited: nothing is sent')
     assert.equal(h.dialogs.current.getSnapshot(), null)
-    assert.deepEqual(session.prompts.map(sent => textOf(sent.content)), ['later'])
+    assert.deepEqual(session.prompts.map(sent => textOf(sent.content)), [], 'the prompt is never called')
+    assert.deepEqual(session.echoes.map(entry => entry.retired), [true])
     detach()
   })
 })
@@ -906,7 +964,7 @@ describe('the skill the host last offered', () => {
   it('is still offered when a later read of the host fails, and still gets its token', async () => {
     const h = harness()
     const { session, detach } = mounted(h)
-    answerNext(h.dialogs, cancelIt)
+    answerNext(h.dialogs, confirmAs(active, false))
     await session.prompt(text('one'), 'queue') // a good read: the host names the skill
     h.loadFails = true
     const requests: DialogRequest[] = []
@@ -922,10 +980,10 @@ describe('the skill the host last offered', () => {
     for (const later of [null, { name: SKILL_NAME, available: false }] as (SkillOffer | null)[]) {
       const h = harness()
       const { session, detach } = mounted(h)
-      answerNext(h.dialogs, cancelIt)
+      answerNext(h.dialogs, confirmAs(active, false))
       await session.prompt(text('one'), 'queue')
       h.skill = later
-      answerNext(h.dialogs, cancelIt)
+      answerNext(h.dialogs, confirmAs(active, false))
       await session.prompt(text('two'), 'queue') // a good read that says no
       h.loadFails = true
       const requests: DialogRequest[] = []

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { DialogHost, type DialogInput, type DialogRequest, type DialogResult } from '../../src/client/dialogs.ts'
-import { OFF_CONFIG, SKILL_NAME, buildConfig } from '../../src/shared.ts'
+import { OFF_CONFIG, SKILL_NAME, buildConfig, type OrchestratorConfig } from '../../src/shared.ts'
 
 const input = (sessionId = 's1', mode: DialogInput['mode'] = 'gate'): DialogInput => ({
   sessionId, mode, preview: 'task', initial: OFF_CONFIG, skill: null, skillInMessage: false, initialSkill: false, save: () => Promise.resolve(),
@@ -67,6 +67,35 @@ describe('DialogHost', () => {
     const pending = host.request({ ...input(), skill: { name: SKILL_NAME, available: true }, initialSkill: true })
     onScreen(host)?.resolve(cancel)
     assert.deepEqual(await pending, cancel)
+  })
+
+  it('a cancel carries no choice at all, from a click or from an abandoned send: only a confirm can be stored', async () => {
+    const host = mounted('s1')
+    const answers: DialogResult[] = []
+    const saves: OrchestratorConfig[] = []
+    const observe = (result: DialogResult): void => { answers.push(result) }
+    const save = (config: OrchestratorConfig): Promise<void> => { saves.push(config); return Promise.resolve() }
+    // A cancel is exactly one field: there is no configuration anywhere in it for a caller to persist.
+    assert.deepEqual(Object.keys(cancel), ['kind'])
+
+    const clicked = host.request({ ...input(), onAnswer: observe, save })
+    onScreen(host)?.resolve(cancel)
+    assert.deepEqual(await clicked, cancel)
+    assert.equal(onScreen(host), null)
+
+    const controller = new AbortController()
+    const abandoned = host.request({ ...input(), onAnswer: observe, save }, controller.signal)
+    controller.abort()
+    assert.deepEqual(await abandoned, cancel)
+
+    assert.deepEqual(answers, [cancel, cancel], 'the caller sees the same answer either way')
+    assert.deepEqual(saves, [], 'the host itself persists nothing: a confirm is the only thing that can')
+
+    const confirmed = host.request({ ...input(), onAnswer: observe, save })
+    onScreen(host)?.resolve(confirm(false))
+    assert.deepEqual(await confirmed, confirm(false))
+    assert.deepEqual(answers, [cancel, cancel, confirm(false)])
+    assert.deepEqual(saves, [], 'and even a confirm is stored by the dialog, not by the host')
   })
 
   it('resolves an aborted request as a cancel, on screen or still queued', async () => {

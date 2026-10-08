@@ -36,24 +36,34 @@ export const Button = ({ children, variant, icon: _icon, ...rest }) => h('button
 export const Switch = ({ checked, onChange, label, disabled }) => h('input', { type: 'checkbox', role: 'switch', 'aria-label': label, checked, disabled, onChange: (event) => { onChange(event.target.checked) } })
 export const Checkbox = ({ checked, onChange, label, disabled = false, title, className }) =>
   h('label', { className, title }, h('input', { type: 'checkbox', checked, disabled, onChange: (event) => { onChange(event.target.checked) } }), h('span', null, label))
-export const Modal = ({ open, onClose, title, description, closeLabel, className, footer, children }) => open
-  ? h('div', { role: 'dialog', 'aria-modal': 'true', 'aria-label': title, className }, h('button', { 'aria-label': closeLabel, 'data-close': '', onClick: onClose }), h('p', null, description), children, h('footer', null, footer))
-  : null
+export const Modal = ({ open, onClose, title, description, closeLabel, className, footer, children }) => {
+  React.useEffect(() => {
+    if (!open) return undefined
+    const onKeyDown = (event) => { if (event.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('keydown', onKeyDown) }
+  }, [open, onClose])
+  return open
+    ? h('div', { role: 'presentation' }, h('div', { 'data-mask': '', 'aria-hidden': 'true', onClick: onClose }), h('div', { role: 'dialog', 'aria-modal': 'true', 'aria-label': title, className }, h('button', { 'aria-label': closeLabel, 'data-close': '', onClick: onClose }), h('p', null, description), children, h('footer', null, footer)))
+    : null
+}
 export const Menu = ({ open, anchor, items = [], onSelect }) => h('div', null, anchor, open
   ? h('div', { 'data-menu': '' }, items.filter((item) => item.type === undefined).map((item) => h('button', { key: item.id, type: 'button', 'data-item': item.id, onClick: () => { onSelect(item.id) } }, item.label)))
   : null)
 `
 
 /**
- * The `model-facts.ts` contract, with the test's hand on the trigger: every call is recorded and stays pending until
- * the test answers it, which is how the strip's late-answer rule is pinned. The real module (cache, fetch, never
- * rejecting) is the other writer's surface.
+ * The `model-facts.ts` contract, with the test's hand on the trigger: every call is recorded (model, display name and
+ * the effort the strip is following) and stays pending until the test answers it, which is how the strip's late-answer
+ * rule and its per-effort score are pinned. The real module (cache, fetch, never rejecting) is the other writer's
+ * surface.
  */
 const FACTS_STUB = `const state = { asked: [], pending: [] }
 globalThis.__orqFacts = state
-export function modelFactsOf(model, displayName) {
-  state.asked.push({ model, displayName })
-  return new Promise((resolve) => { state.pending.push({ model, resolve }) })
+export function modelFactsOf(model, displayName, effort) {
+  const asked = { model, displayName, effort: effort ?? null }
+  state.asked.push(asked)
+  return new Promise((resolve) => { state.pending.push({ ...asked, resolve }) })
 }
 `
 
@@ -184,19 +194,28 @@ async function chooseEffort(el: Element, value: string): Promise<void> {
 interface FactsCall {
   readonly model: string
   readonly displayName?: string | undefined
+  /** The effort the answer is for: null is the neutral row, which the data layer resolves to the model's ceiling. */
+  readonly effort: string | null
 }
 interface FactsState {
   readonly asked: FactsCall[]
-  readonly pending: { model: string; resolve: (facts: ModelFacts | null) => void }[]
+  readonly pending: (FactsCall & { resolve: (facts: ModelFacts | null) => void })[]
 }
 const factsState = (): FactsState => (globalThis as unknown as { __orqFacts: FactsState }).__orqFacts
 /** Forget every request of the tests before: each strip test starts from an empty queue. */
 const resetFacts = (): void => { factsState().asked.length = 0; factsState().pending.length = 0 }
-/** Answer the pending facts request of one model, inside act so that React settles. */
-async function answerFacts(model: string, facts: ModelFacts | null): Promise<void> {
+/** Wait until a facts request for one exact (model, effort) pair is in flight. */
+async function untilFacts(what: string, model: string, effort: string | null): Promise<void> {
+  await until(what, () => factsState().pending.some(entry => entry.model === model && entry.effort === effort))
+}
+/**
+ * Answer the pending facts request, inside act so that React settles. Without an `effort` the first pending request of
+ * that model is answered; with one, exactly that pair.
+ */
+async function answerFacts(model: string, facts: ModelFacts | null, effort?: string | null): Promise<void> {
   const pending = factsState().pending
-  const index = pending.findIndex(entry => entry.model === model)
-  assert.ok(index >= 0, `no pending facts request for ${model}`)
+  const index = pending.findIndex(entry => entry.model === model && (effort === undefined || entry.effort === effort))
+  assert.ok(index >= 0, `no pending facts request for ${model}${effort === undefined ? '' : ` at ${effort}`}`)
   const entry = pending.splice(index, 1)[0]
   await act(async () => {
     entry?.resolve(facts)
@@ -330,12 +349,22 @@ describe('the dialog, rendered', { timeout: 30_000 }, () => {
     await o.close()
   })
 
-  it('answers a plain cancel, whatever the box says, from the Cancel button and from the close button', async () => {
-    for (const control of ['cancel', 'close']) {
+  it('aborts the send from the Cancel button, the ✕, Escape and a mask click: one cancel, and nothing is stored', async () => {
+    const gestures: [string, (el: HTMLElement) => Promise<void>][] = [
+      ['the Cancel button', async (el) => { await click(button(el, 'outline')) }],
+      ['the ✕', async (el) => { await click(el.querySelector('[data-close]')) }],
+      ['Escape', async () => {
+        await act(async () => {
+          document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        })
+      }],
+      ['a mask click', async (el) => { await click(el.querySelector('[data-mask]')) }],
+    ]
+    for (const [control, gesture] of gestures) {
       const o = await open()
-      await click(control === 'cancel' ? button(o.el, 'outline') : o.el.querySelector('[data-close]'))
+      await gesture(o.el)
       assert.deepEqual(await o.answer, { kind: 'cancel' }, control)
-      assert.deepEqual(o.saves, [null], `${control} clears the stored choice`)
+      assert.deepEqual(o.saves, [], `${control} stores nothing at all: no config for the next dialog`)
       await o.close()
     }
   })
@@ -477,7 +506,11 @@ describe('the dialog, rendered', { timeout: 30_000 }, () => {
     resetFacts()
     const o = await open({ initial: ON_CONFIG, initialSkill: false }, false, CATALOG)
     await until('the facts request', () => factsState().pending.some(entry => entry.model === ROUTE.model))
-    assert.deepEqual(factsState().asked.at(-1), { model: ROUTE.model, displayName: 'Gemini 3.8 Flash' }, 'the picked model, by id and display name')
+    assert.deepEqual(
+      factsState().asked.at(-1),
+      { model: ROUTE.model, displayName: 'Gemini 3.8 Flash', effort: null },
+      'the picked model, by id and display name, with the neutral effort',
+    )
     assert.equal(o.el.querySelector('.dsh-orq-facts'), null, 'nothing is drawn while the answer is in flight')
     await answerFacts(ROUTE.model, factsOf({ text: true, image: true, audio: false, video: false }, { kind: 'terminal-bench-4', value: '41.8%' }))
     const icons = [...o.el.querySelectorAll('.dsh-orq-fact')]
@@ -525,6 +558,53 @@ describe('the dialog, rendered', { timeout: 30_000 }, () => {
     assert.deepEqual([...o.el.querySelectorAll('.dsh-orq-fact')].map(icon => icon.getAttribute('data-orq-on')), ['false', 'false', 'true', 'false'])
     await o.close()
   })
+
+  it('the score follows the effort select: every level is its own question, and the neutral row asks for the model itself', async () => {
+    resetFacts()
+    const o = await open({ initial: ON_CONFIG, initialSkill: false }, false, CATALOG)
+    await untilFacts('the question for the neutral row', ROUTE.model, null)
+    await answerFacts(ROUTE.model, factsOf({ text: true, image: true, audio: false, video: false }, { kind: 'intelligence', value: '44.8' }), null)
+    assert.equal(o.el.querySelector('.dsh-orq-facts-score')?.textContent, t('facts.intelligence', { value: '44.8' }), 'the ceiling the neutral row resolves to')
+
+    await chooseEffort(o.el, 'low')
+    await untilFacts('the question for low', ROUTE.model, 'low')
+    assert.equal(o.el.querySelector('.dsh-orq-facts'), null, 'the strip of the level before went with it')
+    await answerFacts(ROUTE.model, factsOf({ text: true, image: true, audio: false, video: false }, { kind: 'terminal-bench-4', value: '31.2%' }), 'low')
+    assert.equal(o.el.querySelector('.dsh-orq-facts-score')?.textContent, t('facts.tb4', { value: '31.2%' }), 'the score of that level')
+
+    await chooseEffort(o.el, '')
+    await untilFacts('the question for the neutral row again', ROUTE.model, null)
+    assert.deepEqual(factsState().asked.map(call => call.effort), [null, 'low', null], 'each change asks again, for the level on screen')
+    await answerFacts(ROUTE.model, factsOf({ text: true, image: true, audio: false, video: false }, { kind: 'intelligence', value: '44.8' }), null)
+    assert.equal(o.el.querySelector('.dsh-orq-facts-score')?.textContent, t('facts.intelligence', { value: '44.8' }), 'and back to the model ceiling')
+    await o.close()
+  })
+
+  it('a late answer for an effort the user has left never lands: the pair is the question, not the model', async () => {
+    resetFacts()
+    const o = await open({ initial: ON_CONFIG, initialSkill: false }, false, CATALOG)
+    await untilFacts('the neutral question', ROUTE.model, null)
+    await chooseEffort(o.el, 'high')
+    await untilFacts('the question for high', ROUTE.model, 'high')
+    await answerFacts(ROUTE.model, factsOf({ text: true, image: true, audio: false, video: false }, { kind: 'terminal-bench-4', value: '39.4%' }), 'high')
+    assert.equal(o.el.querySelector('.dsh-orq-facts-score')?.textContent, t('facts.tb4', { value: '39.4%' }))
+    await answerFacts(ROUTE.model, factsOf({ text: true, image: false, audio: false, video: false }, { kind: 'intelligence', value: '44.8' }), null)
+    assert.equal(o.el.querySelector('.dsh-orq-facts-score')?.textContent, t('facts.tb4', { value: '39.4%' }), 'the stale pair was dropped')
+    assert.deepEqual([...o.el.querySelectorAll('.dsh-orq-fact')].map(icon => icon.getAttribute('data-orq-on')), ['false', 'true', 'true', 'false'])
+    await o.close()
+  })
+
+  it('a model change carries the auto-maxed level into the same question: one request, for the new pair', async () => {
+    resetFacts()
+    const o = await open({ initial: ON_CONFIG, initialSkill: false }, false, CATALOG)
+    await untilFacts('the question for the picked model', ROUTE.model, null)
+    await pickModel(o.el, 'GLM 5.3')
+    await untilFacts('the question for the new model at its ceiling', MAIN.model, 'max')
+    await answerFacts(MAIN.model, factsOf({ text: true, image: false, audio: false, video: false }, { kind: 'terminal-bench-4', value: '41.8%' }), 'max')
+    assert.equal(o.el.querySelector('.dsh-orq-facts-score')?.textContent, t('facts.tb4', { value: '41.8%' }))
+    assert.deepEqual(factsState().asked.map(call => [call.model, call.effort]), [[ROUTE.model, null], [MAIN.model, 'max']], 'never the new model at the old level')
+    await o.close()
+  })
 })
 
 /** The client entry, run for real against a fake DSH client and a fake host route. */
@@ -564,15 +644,36 @@ async function boot(skill: SkillOffer | null = offer) {
     class Face {
       readonly sessionId = sessionId
       readonly sent: PromptPartLike[][] = []
+      /** The local echoes the composer registered, exactly as DSH's `sendSession` does before it prompts. */
+      readonly echoes: { readonly requestId: string; retired: boolean }[] = []
+      private minted = 0
       getSnapshot(): { subagent: null } { return { subagent: null } }
-      prompt(content: readonly PromptPartLike[]): Promise<unknown> { this.sent.push([...content]); return Promise.resolve({ ok: true }) }
+      beginSubmission(_input: { readonly text: string }): { readonly requestId: string; abandon: () => void } {
+        this.minted += 1
+        const echo = { requestId: `echo-${this.minted}`, retired: false }
+        this.echoes.push(echo)
+        return { requestId: echo.requestId, abandon: () => { echo.retired = true } }
+      }
+      prompt(content: readonly PromptPartLike[], _mode: 'queue' | 'steer' = 'queue', _signal?: AbortSignal, _requestId?: unknown): Promise<unknown> {
+        this.sent.push([...content])
+        return Promise.resolve({ ok: true, value: { accepted: true } })
+      }
     }
     const face = new Face()
     bindings.set(sessionId, { session: face })
     const el = document.body.appendChild(document.createElement('div'))
     const root = createRoot(el)
     await act(async () => { root.render(React.createElement(overlay?.component as never, { sessionId, host: overlay?.spec.inject(sessionId).host })) })
-    return { el, face, send: (text: string) => face.prompt([{ type: 'text', text }]), leave: () => act(async () => { root.unmount() }) }
+    return {
+      el,
+      face,
+      /** Send the way the composer does: register the echo, then prompt with the identity it minted. */
+      send: (text: string) => {
+        const echo = face.beginSubmission({ text })
+        return face.prompt([{ type: 'text', text }], 'queue', undefined, echo.requestId)
+      },
+      leave: () => act(async () => { root.unmount() }),
+    }
   }
   return { storage, commands, dialogs, conversation, holdNextRead: () => { let release = (): void => {}; holdGet = new Promise<void>((resolve) => { release = resolve }); return release } }
 }
@@ -587,7 +688,7 @@ describe('the client entry, wired', { timeout: 30_000 }, () => {
     assert.equal(skillBox(chat.el)?.checked, true, 'ticked on first use')
     await click(skillBox(chat.el)) // untick
     await click(button(chat.el, 'primary'))
-    assert.deepEqual(await sent, { ok: true })
+    assert.deepEqual(await sent, { ok: true, value: { accepted: true } })
     assert.equal(app.storage.get(KEY), 'off', 'the answer reached localStorage')
     assert.deepEqual(chat.face.sent, [[{ type: 'text', text: 'one' }]])
 
@@ -656,6 +757,40 @@ describe('the client entry, wired', { timeout: 30_000 }, () => {
     assert.deepEqual(chat.face.sent, [])
     assert.equal(app.storage.has(KEY), false, 'a configure dialog never answers the skill question')
     await chat.leave()
+  })
+
+  it('Cancel, the ✕, Escape and a mask click abort the send: no prompt, no echo left, nothing stored, dialog closed', async () => {
+    const gestures: [string, (el: HTMLElement) => Promise<void>][] = [
+      ['the Cancel button', async (el) => { await click(button(el, 'outline')) }],
+      ['the ✕', async (el) => { await click(el.querySelector('[data-close]')) }],
+      ['Escape', async () => {
+        await act(async () => {
+          document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        })
+      }],
+      ['a mask click', async (el) => { await click(el.querySelector('[data-mask]')) }],
+    ]
+    for (const [control, gesture] of gestures) {
+      const app = await boot()
+      const chat = await app.conversation('s')
+      const sent = chat.send(`abort me (${control})`)
+      await until(`${control}: the dialog`, () => skillBox(chat.el) !== null)
+      await gesture(chat.el)
+      // `ok: false` with no message text is DSH's non-send branch: the submit machine puts the captured draft back in
+      // the editor and surfaces no notice at all (`ui-conversation/src/client/input/facade.ts` settleDetachedFailure,
+      // `.../input/machine.ts` onSinkSettled), so this assertion IS "the text is still in the composer".
+      assert.deepEqual(await sent, {
+        ok: false,
+        error: { code: 'dsh-orquestrator/send-aborted', message: 'the orchestration dialog aborted this send: nothing was sent and the text is still in the composer' },
+      }, `${control}: the composer is answered with a non-send`)
+      assert.deepEqual(chat.face.sent, [], `${control}: the wrapped prompt is never called`)
+      assert.deepEqual(chat.face.echoes.map(echo => echo.retired), [true], `${control}: the pending bubble is retired`)
+      assert.equal(app.dialogs.current.getSnapshot(), null, `${control}: the dialog closed`)
+      await until(`${control}: the dialog to leave the page`, () => chat.el.querySelector('[role=dialog]') === null)
+      assert.equal(app.storage.has(KEY), false, `${control}: no skill answer is remembered`)
+      assert.equal(app.storage.has(LAST), false, `${control}: and no configuration is stored`)
+      await chat.leave()
+    }
   })
 
   it('a composer that leaves while /orquestrar reads the host does not jam every later send', async () => {

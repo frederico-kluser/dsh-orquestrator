@@ -28,7 +28,7 @@ lerem o código em vez de ler ele mesmo e conferir cada resultado com subagentes
 também mostra em que modelo cada subagente roda e um ícone de estado (rodando, concluído, falhou). Veja
 [Lista de subagentes: modelo e estado](#lista-de-subagentes-modelo-e-estado).
 
-**Cancelar, Esc e o botão de fechar enviam a tarefa exatamente como o DSH sempre fez.**
+****Cancelar, Escape e o botão de fechar significam a mesma coisa agora: abortar o envio** — nada sai, nenhuma bolha aparece e o texto digitado fica no compositor como rascunho. Só "Send with these options" envia.**
 Nada mais no DSH muda.
 
 | Escuro | Claro |
@@ -98,7 +98,8 @@ mesmo com um turno a correr:
 - **Não existe "não perguntar de novo"**: o modal aparece em toda mensagem que você envia e nada
   o silencia. Uma resposta nunca o esconde de uma mensagem seguinte nem de outra conversa. A
   última escolha confirmada só pré-preenche o diálogo.
-- **Cancelar / Esc / ✕**: envia a mensagem com o comportamento padrão e esquece qualquer escolha guardada.
+- **Cancelar / Esc / ✕**: aborta o envio — nada sai, nenhuma bolha aparece e o texto digitado fica no
+  compositor como rascunho; nada é guardado. Só "Send with these options" envia.
 
 `/orquestrar` abre o mesmo diálogo sob demanda (para mudar ou limpar a escolha guardada).
 

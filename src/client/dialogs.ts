@@ -26,6 +26,10 @@ export type DialogResult =
     /** Whether the message must go out carrying the skill's token. Always false when no skill was offered. */
     readonly applySkill: boolean
   }
+  /**
+   * The dialog was dismissed (Cancel, the ✕, Escape, a mask click, a send that was abandoned, or a composer that
+   * left). It carries no choice: the gate sends nothing for it, and nothing is stored for the next dialog.
+   */
   | { readonly kind: 'cancel' }
 
 /** What a caller supplies to raise a dialog. */
@@ -53,15 +57,18 @@ export interface DialogInput {
   /** Whether the skill checkbox opens checked; a function is read when the dialog is put on screen, like `initial`. */
   readonly initialSkill: boolean | (() => boolean)
   /**
-   * Persist the answer on the host: a configuration on confirm, null on a
-   * gate-mode cancel (the stock behavior must win for this task).
+   * Persist a confirmed choice on the host. Only a confirm carries one: a cancel
+   * writes nothing at all — no configuration, and no skill answer — because an
+   * aborted send leaves no choice behind to remember (the caller's
+   * `onAnswer` bookkeeping skips cancels for the same reason).
    */
-  readonly save: (config: OrchestratorConfig | null) => Promise<void>
+  readonly save: (config: OrchestratorConfig) => Promise<void>
   /**
    * Called once with the answer, synchronously, before the next dialog is put on screen and before the promise of
    * {@link DialogHost.request} resolves. Whatever the answer should leave behind for the next dialog (the choices the
    * caller remembers) is written here, so that the next dialog's `initial` and `initialSkill` functions see it.
    * A callback that throws is ignored.
+   * @param result - how the dialog ended: a confirm carrying the stored choice, or a cancel carrying nothing.
    */
   readonly onAnswer?: (result: DialogResult) => void
 }

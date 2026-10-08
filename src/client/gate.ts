@@ -12,17 +12,40 @@
  *
  * The gate is fail-open by construction: any problem (no composer mounted to
  * show the dialog, an exception here) sends the prompt exactly as stock DSH
- * would. It can delay a send, never lose one. A missing or unreadable host
- * route still asks: a dialog whose save fails out loud beats a modal that
- * never appears.
+ * would. It can delay a send, and only a cancel drops one. A missing or
+ * unreadable host route still asks: a dialog whose save fails out loud beats a
+ * modal that never appears.
  *
  * The answer can also change what is sent. When the host offers the global
  * orchestration skill and the user leaves its checkbox ticked, the prompt goes
  * out carrying the skill's `/name` token, which is what makes the host load the
- * skill for that message. Unticked, cancelled, or with no skill on offer, the
- * prompt goes out untouched. A message that already carries the token keeps it
- * (the host loads the skill whatever the box says), so the dialog shows the box
- * ticked and locked for it.
+ * skill for that message. Unticked, or with no skill on offer, the prompt goes
+ * out untouched. A message that already carries the token keeps it (the host
+ * loads the skill whatever the box says), so the dialog shows the box ticked
+ * and locked for it.
+ *
+ * A cancel is not a send: Cancel, the ✕, Escape and a mask click abort the
+ * message. The gate then never calls the host's `prompt`, and answers the
+ * composer with a failure result (`ok: false`, no message text) instead of an
+ * acceptance. That is the one answer the composer's submit machine treats as a
+ * non-send: it puts the typed draft back in the editor and surfaces no notice
+ * (`onSinkSettled` returns nothing when neither the outcome nor the rejection
+ * carries a message: `packages/client/ui-conversation/src/client/input/machine.ts`),
+ * and `sendSession` maps it to `{ kind: 'error' }` without touching the
+ * transcript (`packages/client/ui-conversation/src/client/service.ts`). A
+ * rejected promise would also restore the draft, but it surfaces a toast; an
+ * `ok: true` acceptance would clear the draft and lose the text. Nothing is
+ * stored: the gate's answer carries no choice, so neither memory is written.
+ *
+ * The composer registers a local echo of the send before it calls `prompt`
+ * (`beginSubmission`, `ISession`), and that echo is what paints the pending
+ * bubble while the dialog is up. A send that never reaches `prompt` must retire
+ * it (the documented `SubmissionHandle.abandon`: "retire the echo as failed
+ * when the caller cannot reach prompt()"), or the bubble would stay in the
+ * conversation for a message that will never run. The gate therefore reads that
+ * one seam too, and abandons the echo of the exact send it aborted — and only
+ * that one: every other outcome hands the send to the original `prompt`, which
+ * retires its own echo when it fails and on acceptance.
  *
  * Sends of one conversation pass the gate one at a time, in the order they were
  * made: a second send waits for the first to be answered, so the dialogs come up
@@ -41,6 +64,73 @@ const PREVIEW_CHARS = 240
 
 /** How often {@link attachWhenAvailable} looks for a session face that is not there yet. */
 const ATTACH_POLL_MS = 500
+
+/**
+ * How many unsettled send echoes are remembered at once. One send keeps its echo from `beginSubmission` until its
+ * `prompt` settles; the bound only covers a caller that registers an echo and never sends it, and it can never mix
+ * two sends up (the identity is a fresh one per send).
+ */
+const ECHO_MEMORY = 16
+
+/** Code of the failure an aborted send resolves with. The composer never reads it; another caller may. */
+const ABORTED_CODE = 'dsh-orquestrator/send-aborted'
+
+/**
+ * What one `prompt` call resolves with when the dialog aborted the send. `ok: false` is exactly the composer's
+ * non-send branch: `sendSession` maps it to `{ kind: 'error' }` without a transcript change, the submit machine puts
+ * the draft back and, because neither the outcome nor a rejection carries a message, surfaces no notice at all. The
+ * `error` field is well formed for any other caller that reads `result.error` (for example `conversation.send`).
+ */
+export const ABORTED_SEND: {
+  readonly ok: false
+  readonly error: { readonly code: string; readonly message: string }
+} = Object.freeze({
+  ok: false as const,
+  error: Object.freeze({
+    code: ABORTED_CODE,
+    message: 'the orchestration dialog aborted this send: nothing was sent and the text is still in the composer',
+  }),
+})
+
+/** What the gate decided for one send. */
+export type GateDecision =
+  /** The send goes on, carrying this content (the original parts, plus the skill's token when it applies). */
+  | { readonly kind: 'send'; readonly content: readonly PromptPartLike[] }
+  /** The send is aborted: the host's `prompt` is never called and the composer gets {@link ABORTED_SEND}. */
+  | { readonly kind: 'abort' }
+
+/** One send's local echo in the composer's snapshot (`SubmissionHandle`), narrowed to retiring it. */
+export interface SubmissionEchoLike {
+  /** The prompt identity that carries the echo. */
+  readonly requestId: unknown
+  /** Retire the echo as failed: the send it announced will not happen. */
+  abandon(): void
+}
+
+/** The echo seam of a session face (`ISession.beginSubmission`), read structurally: a host without it has no echo. */
+type EchoSeam = (this: unknown, input: unknown) => unknown
+
+/**
+ * Read the echo seam off a patch target.
+ * @param target - the patched object (a session class prototype, or a single face).
+ * @returns the method that registers a send's echo, or undefined when the face has none.
+ */
+function echoSeamOf(target: object): EchoSeam | undefined {
+  const candidate = (target as { beginSubmission?: unknown }).beginSubmission
+  return typeof candidate === 'function' ? candidate as EchoSeam : undefined
+}
+
+/**
+ * Narrow what `beginSubmission` answered to something that can be retired.
+ * @param registered - whatever the seam returned.
+ * @returns the echo handle, or undefined for a shape this gate does not know (then nothing is retired).
+ */
+function echoOf(registered: unknown): SubmissionEchoLike | undefined {
+  if (typeof registered !== 'object' || registered === null) return undefined
+  const candidate = registered as { readonly requestId?: unknown; readonly abandon?: unknown }
+  if (candidate.requestId === undefined || typeof candidate.abandon !== 'function') return undefined
+  return candidate as SubmissionEchoLike
+}
 
 /** Persistence of the most recent confirmed choice (a convenience for the next dialog, in any conversation). */
 export interface LastChoiceMemory {
@@ -150,6 +240,8 @@ async function untilTurn(turn: Promise<void>, signal: AbortSignal | undefined): 
 export class PromptGate {
   /** Patched objects (a session class prototype, or a single face) with their attach counts. */
   private readonly patched = new Map<object, { count: number; restore: () => void }>()
+  /** The local echo of each send the composer has registered and not yet sent, by the identity its prompt will carry. */
+  private readonly echoes = new Map<unknown, SubmissionEchoLike>()
   /** The end of each conversation's line of sends: what the next send has to wait for. Never rejects. */
   private readonly lines = new Map<string, Promise<void>>()
   /** What the host said about the skill the last time it was read; undefined until a read has succeeded. */
@@ -170,8 +262,16 @@ export class PromptGate {
    * and on the single face otherwise. Attachments are reference-counted, so
    * two composers never stack wrappers and the last detach restores the
    * original method exactly. The wrapper sends the content {@link beforePrompt}
-   * returns (the original content when the gate fails), after the earlier sends
-   * of the same conversation have been answered.
+   * decides on (the original content when the gate fails), after the earlier
+   * sends of the same conversation have been answered; when the decision is an
+   * abort it never calls the original at all, answers {@link ABORTED_SEND} and
+   * retires the composer's own echo of that send.
+   *
+   * The echo seam (`beginSubmission`) is wrapped with `prompt` when the face has
+   * it, and only to look at: the same call, the same handle back, plus a record
+   * of it keyed by the identity the following `prompt` will carry. A detach
+   * restores both methods, and each only if it is still the one this attach put
+   * there.
    * @param face - the session face of a mounted composer.
    * @returns the detach function.
    */
@@ -182,38 +282,89 @@ export class PromptGate {
       existing.count += 1
       return () => { this.release(target) }
     }
-    const holder = target as { prompt: SessionFaceLike['prompt'] }
+    const holder = target as { prompt: SessionFaceLike['prompt']; beginSubmission?: unknown }
     const original = holder.prompt
+    const originalEcho = echoSeamOf(target)
     const gate = this
     const wrapper: SessionFaceLike['prompt'] = async function wrapped(this: SessionFaceLike, content, mode, signal, requestId) {
-      let sent = content
+      let decision: GateDecision = { kind: 'send', content }
       let release = (): void => {}
       try {
         const place = gate.joinLine(this.sessionId)
         release = place.release
         await untilTurn(place.turn, signal)
-        sent = await gate.beforePrompt(this, content, mode, signal)
+        decision = await gate.beforePrompt(this, content, mode, signal)
       } catch (error: unknown) {
         // Fail open: the original content goes out, as stock DSH would send it.
-        sent = content
+        decision = { kind: 'send', content }
         gate.deps.warn('gate failed; sending as stock DSH would', error)
       }
       try {
-        return original.call(this, sent, mode, signal, requestId)
+        if (decision.kind === 'abort') {
+          // Nothing reaches the host. The composer already painted its own echo of this send: retire it, or a
+          // message that will never run would stay in the conversation.
+          gate.abandonEcho(requestId)
+          return ABORTED_SEND
+        }
+        return original.call(this, decision.content, mode, signal, requestId)
       } finally {
-        // The send is on its way (the host's answer is not waited for): the next send of this conversation may be asked.
+        // The send is on its way (the host's answer is not waited for): the next send of this conversation may be
+        // asked, and from here on the original prompt owns the echo.
+        gate.forgetEcho(requestId)
         release()
       }
     }
+    const wrappedEcho: EchoSeam | undefined = originalEcho === undefined ? undefined : function wrappedSubmission(this: unknown, input: unknown): unknown {
+      const registered = originalEcho.call(this, input)
+      const echo = echoOf(registered)
+      if (echo !== undefined) gate.rememberEcho(echo)
+      return registered
+    }
     const hadOwn = Object.prototype.hasOwnProperty.call(target, 'prompt')
+    const hadOwnEcho = wrappedEcho !== undefined && Object.prototype.hasOwnProperty.call(target, 'beginSubmission')
     holder.prompt = wrapper
+    if (wrappedEcho !== undefined) holder.beginSubmission = wrappedEcho
     const restore = (): void => {
-      if (holder.prompt !== wrapper) return
-      if (hadOwn) holder.prompt = original
-      else delete (holder as { prompt?: unknown }).prompt
+      if (holder.prompt === wrapper) {
+        if (hadOwn) holder.prompt = original
+        else delete (holder as { prompt?: unknown }).prompt
+      }
+      if (wrappedEcho !== undefined && holder.beginSubmission === wrappedEcho) {
+        if (hadOwnEcho) holder.beginSubmission = originalEcho
+        else delete (holder as { beginSubmission?: unknown }).beginSubmission
+      }
     }
     this.patched.set(target, { count: 1, restore })
     return () => { this.release(target) }
+  }
+
+  /** Remember one send's echo, bounded: only an echo its own `prompt` never reaches can stay behind. */
+  private rememberEcho(echo: SubmissionEchoLike): void {
+    this.echoes.set(echo.requestId, echo)
+    while (this.echoes.size > ECHO_MEMORY) {
+      const oldest = this.echoes.keys().next()
+      if (oldest.done === true) break
+      this.echoes.delete(oldest.value)
+    }
+  }
+
+  /** Retire the echo of one aborted send, if the face registered one: never another send's, never throwing. */
+  private abandonEcho(requestId: unknown): void {
+    if (requestId === undefined) return
+    const echo = this.echoes.get(requestId)
+    this.echoes.delete(requestId)
+    if (echo === undefined) return
+    try {
+      echo.abandon()
+    } catch (error: unknown) {
+      this.deps.warn('could not retire the echo of an aborted send', error)
+    }
+  }
+
+  /** Drop a sent send's echo record: the original `prompt` retires it from here on. */
+  private forgetEcho(requestId: unknown): void {
+    if (requestId === undefined) return
+    this.echoes.delete(requestId)
   }
 
   /** Drop one attachment; the last one restores the patched object. */
@@ -284,22 +435,24 @@ export class PromptGate {
    * @param content - the prompt parts; never modified.
    * @param _mode - the delivery mode the composer chose (no longer a reason to stay silent).
    * @param signal - cancellation of the surrounding send.
-   * @returns the content to send, once the answer is in: the same parts, plus
-   * the skill's token when the host offered the skill and the user left it
-   * ticked. The content comes back as it was for a cancel, an unticked skill,
-   * a skill the host did not offer, a message that already carries the token,
-   * an empty or already aborted send, and a dialog nobody can show.
+   * @returns what to do with the send, once the answer is in. A confirm answers
+   * `send` with the same parts, plus the skill's token when the host offered the
+   * skill and the user left it ticked; every other answer that is not a cancel
+   * (an unticked skill, a skill the host did not offer, a message that already
+   * carries the token, an empty or already aborted send, a dialog nobody can
+   * show) answers `send` with the parts untouched. A cancel answers `abort`:
+   * the message never reaches the host, and nothing about it is stored.
    */
   async beforePrompt(
     face: SessionFaceLike,
     content: readonly PromptPartLike[],
     _mode: 'queue' | 'steer',
     signal?: AbortSignal,
-  ): Promise<readonly PromptPartLike[]> {
+  ): Promise<GateDecision> {
     const text = textOf(content).trim()
-    if (text === '' && content.length === 0) return content
+    if (text === '' && content.length === 0) return { kind: 'send', content }
     // A send that was abandoned while it waited has nothing to ask about.
-    if (signal?.aborted === true) return content
+    if (signal?.aborted === true) return { kind: 'send', content }
 
     const sessionId = face.sessionId
     const { client, dialogs, memory, skillMemory } = this.deps
@@ -331,7 +484,7 @@ export class PromptGate {
       // Nobody can render the dialog. A previous one-task choice must not leak
       // into a task the user was never asked about.
       if (isActive(stored)) await client.save(sessionId, null).catch((error: unknown) => { this.deps.warn('could not clear a stale choice', error) })
-      return content
+      return { kind: 'send', content }
     }
 
     // The skill is offered only when the host says it is registered right now:
@@ -355,8 +508,11 @@ export class PromptGate {
       save: async (config) => { await client.save(sessionId, config) },
       onAnswer: (answer) => { this.remember(answer, offer !== null && !typed) },
     }, signal)
-    if (result.kind !== 'confirm' || offer === null || typed) return content
-    return result.applySkill ? withSkillToken(content, offer.name) : content
+    // A cancel is not a send: the wrapper answers the composer with a failure it
+    // treats as a message that never went out (see the module note).
+    if (result.kind !== 'confirm') return { kind: 'abort' }
+    if (offer === null || typed) return { kind: 'send', content }
+    return { kind: 'send', content: result.applySkill ? withSkillToken(content, offer.name) : content }
   }
 }
 

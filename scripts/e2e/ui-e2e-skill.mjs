@@ -23,36 +23,59 @@
  *                   S3  the switch and a model come first (the home's own DeepSeek V4.1 Flash route): the box stays ticked and enabled, the
  *                       effort select jumps to that model's HIGHEST level (its LAST option) the moment the model is
  *                       picked, and the send carries the token, one injection and that auto-max level on the wire
- *                   S4  Escape (cancel): no token, no injection, and the next dialog is unchanged; the other ways to cancel
- *                       (the close button after toggling, the Cancel button, a click on the mask) do the same
- *                   S5  `/orquestrar` (configure mode, nothing is sent): no skill section, no checkbox
- *                   S7  keyboard: Tab never leaves the dialog, Space toggles the checkbox, Escape closes; Enter confirms
+ *                   S4  the ways OUT of the dialog (Escape, the ✕, the Cancel button, a click on the mask) ABORT the send
+ *                       (0.8.3 reversed the 0.6.0 behavior): no message reaches the log or the transcript, NO configuration
+ *                       is written, and the composer still holds the text that was typed; the next dialog is unchanged
+ *                   S5  `/orquestrar` (configure mode, nothing is sent): no skill section, no checkbox, and closing it
+ *                       stores nothing
+ *                   S7  keyboard: Tab never leaves the dialog, Space toggles the checkbox, Escape cancels the send (the
+ *                       draft stays in the composer and the next dialog still works); Enter confirms
  *                   X   a token the user typed (first word or inside the text) is not doubled and LOCKS the box (ticked and
  *                       disabled), a multi-line task keeps the token on its own last line, an attachment-only message gets the
- *                       token as a text part in front of the file, the answer survives a reload and reaches a new conversation,
- *                       the skill + a subagent model travel together (the configuration carries nothing about the skill), an
- *                       OFF -> ON round trip of the switch leaves the STORED effort level untouched (AUTO-MAX fires on a
- *                       model change, not on the switch), a model change does auto-max, and the conversation's title is
- *                       non-empty and carries no token (a provider-generated title is fine)
+ *                       token as a text part in front of the file, the answer survives a reload and reaches a new conversation
+ *                       (and a cancel there leaves its draft in the composer), the skill + a subagent model travel together (the
+ *                       configuration carries nothing about the skill), an OFF -> ON round trip of the switch leaves the STORED
+ *                       effort level untouched (AUTO-MAX fires on a model change, not on the switch), a model change does
+ *                       auto-max, and the conversation's title is non-empty and carries no token (a provider-generated title
+ *                       is fine)
  *     facts         the capability strip and the effort select, driven by a FIXTURE: `page.route` on
  *                   `https://openrouter.ai/api/v1/models` answers exactly three models, so the four modality icons (audio,
  *                   photo, text, video) are asserted marked/dimmed per model and the score badge is matched loosely
  *                   (/Terminal-Bench 4|Intelligence|Inteligência|智能/); the effort select is asserted to be a native
  *                   <select> whose options are the model's ladder plus one first NEUTRAL option, positioned immediately below
- *                   the model select (else directly under the switch), and to auto-max on every model change. One extra pass
- *                   runs WITHOUT the interception and only REPORTS what the live catalog showed (never an assertion)
+ *                   the model select (else directly under the switch), and to auto-max on every model change. F5 then walks
+ *                   the badge over every option of the ladder, the neutral first one included, one arm per KIND of
+ *                   headline: a Terminal-Bench 4 model must show its committed snapshot accuracy (`glm53: 41.82` — one row
+ *                   per model, so the value at its MAX is the value everywhere) and an Intelligence model its intercepted
+ *                   intelligence index (the real field `benchmarks.artificial_analysis.intelligence_index`, ONE scalar per
+ *                   model — OpenRouter carries no per-effort intelligence at all). Both are therefore CONSTANT across the
+ *                   ladder, which is the documented fallback ("a level with no number of its own: the value at the model's
+ *                   MAX") and not a bug; a value that really MOVES (GPT-6 Astra: low 50.61 / medium 54.24 / max 58.18)
+ *                   needs a snapshot model with several rows that this home's picker does not offer, so that half is a
+ *                   SKIP, the data layer's own unit tests covering it with the real rows. One extra pass runs WITHOUT the
+ *                   interception and only REPORTS what the live catalog showed (never an assertion)
  *     child         S10 a subagent's OWN conversation (a continuable child opened from its parent's header dropdown): the dialog
- *                       has NO skill section and the message that goes out has no token. The prompt request is captured and
- *                       aborted, so no model ever runs there. The parent and its continuable child are read from the session
- *                       logs, never from a title written down here; skipped, cleanly, when the home has no such child
+ *                       has NO skill section and the message that goes out has no token (its Escape cancels the send like
+ *                       everywhere else, so the capture is what witnesses the "Send with these options" half). The prompt
+ *                       request is captured and aborted, so no model ever runs there. The parent and its continuable child are
+ *                       read from the session logs, never from a title written down here; skipped, cleanly, when the home has
+ *                       no such child
  *     themes        S6  light theme (the checkbox and the effort select render, readable) and a 1024x600 screen (dark and
  *                       light) with the subagent model on and the skill section: the dialog fits and the primary action
- *                       stays reachable (the stack only has to scroll when the content is taller than its box)
+ *                       stays reachable (the stack only has to scroll when the content is taller than its box). Each theme
+ *                       also asserts the effort select's OWN computed paint (0.8.3): a background it really draws (never
+ *                       transparent, never white in the dark theme) with text at contrast >= 4.5, resting and focused
  *     wire          S8  `page.route` on the configuration route: a host without the `skill` field (older than 0.8), a host that
  *                       says `available: false`, a malformed offer and a failing route show NO section and send NO token; the
  *                       unmodified route brings the section back; a failing save keeps the dialog and the answer
  *     queue         a message sent WHILE a turn runs: the dialog opens and the token is carried by the queued message
  *   S9 (every step)     no uncaught page errors and no failed `/dsh-orquestrator/` responses
+ *
+ * Cancel (0.8.3, a REVERSAL of the 0.6.0 behavior those paths had): Escape, the ✕, the Cancel button and a click on the mask
+ * ABORT the send. Only "Send with these options" sends. Every cancel path is asserted on the same four observables: nothing
+ * in the session log (`absent`, which never waits for a turn), no bubble in the transcript, the draft STILL in the composer
+ * (`composerText`), and not one configuration write on the wire. In `/orquestrar` configure mode there is no send at all:
+ * closing it just stores nothing, which is unchanged.
  *
  * The dialog's copy is never pinned here: the checkbox is found by role, its label by the DOM around it, the levels by
  * the escalation vocabulary the host itself uses (`off`, `low`, `medium`, `high`, `xhigh`, `max`, matched loosely), and
@@ -157,14 +180,59 @@ const EFFORT_PARAGRAPH = /reasoning effort|esforço de raciocínio|推理强度|
 
 /** The capability strip's score label, in the four languages the plugin ships (matched loosely on purpose). */
 const SCORE_LABEL = /Terminal-Bench 4|Intelligence|Inteligência|智能/i
+/** The score label that means "the headline IS the intelligence index" (one scalar per model, so its value never moves). */
+const INDEX_LABEL = /Intelligence|Inteligência|智能/i
+/** The score label that means "the headline is the committed Terminal-Bench 4 snapshot" (matched loosely on purpose). */
+const TB4_LABEL = /Terminal-Bench\s*4|TB\s*4|终端基准/i
 
-/** The browser-side model catalog the strip reads: intercepted so the ikons' marks are exactly known. */
+/**
+ * The intelligence index the fixture's catalog carries, per asset — the REAL field the data layer reads,
+ * `benchmarks.artificial_analysis.intelligence_index`. OpenRouter publishes it as ONE scalar per model: there is no
+ * per-effort intelligence anywhere in that catalog (verified against the live one, all 469 rows), so a single number is
+ * all a fixture of it can honestly carry.
+ *
+ * That is exactly what the documented fallback rule resolves to at every level ("it has no per-effort value: show the
+ * intelligence at the model's MAX"), so the badge is expected to be CONSTANT across the ladder, and F5 asserts that
+ * constancy. A value that MOVES needs a metric with several rows per effort (Terminal-Bench 4, e.g. GPT-6 Astra) and is
+ * deliberately NOT asserted here: this home's picker offers no such model (see the F5 block).
+ */
+const INDEX = {
+  'z-ai/glm-5.3': 44.8,
+  'xiaomi/mimo-v2.6-pro': 51.2,
+  'deepseek/deepseek-v4.1-flash': 33.3,
+}
+
+/**
+ * What the badge must show for each fixture asset, at EVERY option of the effort ladder (the neutral first one included),
+ * and the headline it must read that value from. Both sources are constant per model, which is why the value cannot move:
+ *   - a Terminal-Bench 4 model shows its accuracy from the committed snapshot (`src/bench.generated.ts`, `glm53: 41.82`) —
+ *     the board publishes a single row for GLM-5.3 and the snapshot keeps the MAX per model, so "the accuracy at the
+ *     model's MAX" IS the value at every effort (the documented fallback);
+ *   - an Intelligence model shows its intelligence index from the catalog this fixture intercepts, and that field is ONE
+ *     scalar per model (OpenRouter carries no per-effort intelligence at all, verified on all 469 live rows).
+ * A value that really MOVES (GPT-6 Astra: low 50.61 / medium 54.24 / max 58.18) needs a model whose snapshot rows cover
+ * several efforts: this home's picker offers none, so that half is a SKIP and the data layer's unit tests cover it.
+ */
+const BADGE_FACTS = {
+  'z-ai/glm-5.3': { kind: 'terminal-bench', label: TB4_LABEL, value: 41.82, why: 'its Terminal-Bench 4 accuracy: the committed snapshot keeps one row per model (GLM-5.3 = 41.82), which is the value at the model\'s MAX and therefore at every effort' },
+  'xiaomi/mimo-v2.6-pro': { kind: 'intelligence', label: INDEX_LABEL, value: 51.2, why: 'the intelligence index this fixture intercepts, one scalar per model — constant at every effort by construction' },
+  'deepseek/deepseek-v4.1-flash': { kind: 'intelligence', label: INDEX_LABEL, value: 33.3, why: 'the intelligence index this fixture intercepts, one scalar per model — constant at every effort by construction' },
+}
+
+/** The browser-side model catalog the strip reads: intercepted so the ikons' marks and the intelligence index are known. */
 const MODELS_ROUTE = '**/openrouter.ai/api/v1/models'
+/** One fixture row: the modalities the strip must mark and the ONE intelligence index that whole model carries. */
+const fixtureRow = (asset, name, input) => ({
+  id: asset,
+  name,
+  architecture: { input_modalities: input, output_modalities: ['text'] },
+  benchmarks: { artificial_analysis: { intelligence_index: INDEX[asset] } },
+})
 const FIXTURE_CATALOG = {
   data: [
-    { id: 'z-ai/glm-5.3', name: 'GLM 5.3', architecture: { input_modalities: ['text'], output_modalities: ['text'] }, benchmarks: { artificial_analysis: { intelligence_index: 44.8 } } },
-    { id: 'xiaomi/mimo-v2.6-pro', name: 'MiMo V2.6 Pro', architecture: { input_modalities: ['text', 'image', 'audio', 'video'], output_modalities: ['text'] }, benchmarks: { artificial_analysis: { intelligence_index: 51.2 } } },
-    { id: 'deepseek/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] }, benchmarks: { artificial_analysis: { intelligence_index: 33.3 } } },
+    fixtureRow('z-ai/glm-5.3', 'GLM 5.3', ['text']),
+    fixtureRow('xiaomi/mimo-v2.6-pro', 'MiMo V2.6 Pro', ['text', 'image', 'audio', 'video']),
+    fixtureRow('deepseek/deepseek-v4.1-flash', 'DeepSeek V4.1 Flash', ['text', 'image']),
   ],
 }
 
@@ -345,6 +413,37 @@ const attachmentCards = (s, name) => s.page.locator(`div[title="${name}"]`)
 const ATTACHMENT = 'skill-attachment.txt'
 
 /**
+ * Select-all in the composer: the PLATFORM's own accelerator. `Control+A` is not select-all on macOS — Chrome moves the
+ * caret there, so `Control+A` + `Backspace` deleted one character per round and the composer accumulated every draft
+ * (found by the 0.8.3 verifier on the Mac mini: `Control+A` left `alpha bravo charlie` untouched, `Meta+A` emptied it).
+ * Since 0.8.3 a cancel LEAVES the draft in the composer, so this helper is on the critical path of the S4/S7 walk.
+ */
+const SELECT_ALL = process.platform === 'darwin' ? 'Meta+A' : 'Control+A'
+
+/**
+ * Empty the composer, whatever the platform's accelerator did: select-all + Backspace first, and when the text is still
+ * there the same text is erased character by character, from the caret outwards in both directions. Returns whether the
+ * composer really ended up empty (a caller that cannot clear it must not type into it).
+ */
+async function clearComposer(s) {
+  const composer = s.page.getByRole('textbox', { name: COMPOSER })
+  for (let round = 0; round < 4; round += 1) {
+    const held = await composerText(s)
+    if (held === '') return true
+    await composer.click()
+    await s.page.keyboard.press(SELECT_ALL)
+    await s.page.keyboard.press('Backspace')
+    if ((await composerText(s)) === '') return true
+    for (let index = 0; index < held.length + 2; index += 1) await s.page.keyboard.press('Backspace')
+    for (let index = 0; index < held.length + 2; index += 1) await s.page.keyboard.press('Delete')
+    await s.page.waitForTimeout(200)
+  }
+  const left = await composerText(s)
+  if (left !== '') console.log(`DEBUG the composer could not be emptied: ${JSON.stringify(left)}`)
+  return left === ''
+}
+
+/**
  * Wait for the composer to SETTLE before anything is typed or sent into it. With `file` set, that attachment is the one
  * this send is about: its card must be on screen and past its upload (a ready card shows the file size, an uploading one
  * a status word, so the digit is the signal). Without it, a card left by a previous send is waited out — and taken off
@@ -353,13 +452,7 @@ const ATTACHMENT = 'skill-attachment.txt'
 async function settleComposer(s, { file = null } = {}) {
   const composer = s.page.getByRole('textbox', { name: COMPOSER })
   await composer.waitFor({ state: 'visible', timeout: 15_000 })
-  for (let round = 0; round < 6; round += 1) {
-    if ((await composerText(s)) === '') break
-    await composer.click()
-    await s.page.keyboard.press('Control+A')
-    await s.page.keyboard.press('Backspace')
-    await s.page.waitForTimeout(300)
-  }
+  await clearComposer(s)
   if (file === null) {
     const stale = attachmentCards(s, ATTACHMENT)
     for (let waited = 0; waited < 8_000 && (await stale.count()) > 0; waited += 250) await s.page.waitForTimeout(250)
@@ -388,17 +481,17 @@ async function ask(s, text) {
   const composer = await settleComposer(s)
   const wanted = normal(text)
   let held = ''
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     await composer.click()
     await s.page.keyboard.type(text, { delay: 5 })
     await s.page.waitForTimeout(200)
     held = await composerText(s)
-    if (held.length >= wanted.length - 2) break
-    await s.page.keyboard.press('Control+A') // a keystroke was lost: clear it and type the task again
-    await s.page.keyboard.press('Backspace')
-    await s.page.waitForTimeout(300)
+    // Exactly the task: a composer that still held an earlier draft (the 0.8.3 cancel leaves one) would otherwise send
+    // the concatenation, and every later check would report on the wrong message.
+    if (held === wanted) break
+    await clearComposer(s)
   }
-  if (held.length < wanted.length - 2) console.log(`DEBUG the composer holds ${JSON.stringify(held)} for the ${String(wanted.length)}-character task ${JSON.stringify(wanted)}`)
+  if (held !== wanted) console.log(`DEBUG the composer holds ${JSON.stringify(held)} for the ${String(wanted.length)}-character task ${JSON.stringify(wanted)}`)
   await s.page.keyboard.press('Enter')
   await dialog(s).waitFor({ state: 'visible', timeout: 15_000 })
   noteSession(s)
@@ -526,7 +619,9 @@ async function effortSectionEvidence(s) {
 /**
  * The four modality items the dialog shows for the selected model: one per modality, found by the accessible name each
  * carries (the glyphs themselves are decorative), with the signals a "dimmed" mark can be drawn with. The score badge
- * is whatever leaf element states the headline score.
+ * is the smallest box that states the headline AND its value: a leaf naming the benchmark
+ * (/Terminal-Bench 4|Intelligence|Inteligência|智能/) is grown upwards until a number is in scope, because label and
+ * value are often two separate leaves — a bare label carries nothing the value checks could compare.
  */
 async function stripOf(s) {
   return dialog(s).evaluate((root) => {
@@ -570,18 +665,22 @@ async function stripOf(s) {
           attributes[attribute.name] = attribute.value
         }
       }
+      // Browser context: the tolerant alpha parser has to live INSIDE this callback (a Node-side constant is not defined here).
+      const alpha = (value) => {
+        const parts = String(value).match(/[0-9.]+/g) ?? []
+        return String(value).startsWith('rgba') && parts.length >= 4 ? Number(parts[3]) : 1
+      }
       let background = 'rgb(255, 255, 255)'
       for (let node = item.element; node !== null; node = node.parentElement) {
         const value = getComputedStyle(node).backgroundColor
-        const alpha = value.startsWith('rgba') ? Number(value.split(',')[3]) : 1
-        if (alpha > 0.5) { background = value; break }
+        if (alpha(value) > 0.5) { background = value; break }
       }
       items.push({
         modality: item.modality,
         name: item.name,
         opacity: Number(opacity.toFixed(3)),
         color,
-        alpha: color.startsWith('rgba') ? Number(color.split(',')[3]) : 1,
+        alpha: alpha(color),
         background,
         attributes,
         classes: classOf(item.element),
@@ -590,7 +689,13 @@ async function stripOf(s) {
     }
     const badge = [...root.querySelectorAll('*')]
       .filter((element) => element.children.length === 0 && /Terminal-Bench 4|Intelligence|Inteligência|智能/i.test(element.textContent ?? ''))
-      .map((element) => (element.textContent ?? '').replace(/\s+/g, ' ').trim())
+      .map((element) => {
+        // The label and its number can be two separate leaves: walk up to the SMALLEST box that carries both, so the
+        // entry the checks read is the badge (label + value), never a bare label with nothing to compare.
+        let node = element
+        for (let up = 0; up < 4 && node.parentElement !== null && !/\d/.test(node.textContent ?? ''); up += 1) node = node.parentElement
+        return (node.textContent ?? '').replace(/\s+/g, ' ').trim()
+      })
       .filter((text) => text !== '')
     return { items, badge: [...new Set(badge)].slice(0, 4) }
   })
@@ -918,10 +1023,140 @@ function contrast(foreground, background) {
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
 }
 
+/** The alpha of a computed `rgb(a)` colour (1 when it carries none). The closing parenthesis is never part of the
+ * number: `Number('rgba(38, 49, 72, 0.06)'.split(',')[3])` is NaN, which made a translucent DSH hover token read as
+ * "not painted" and the legibility check that measured it fail (found by the 0.8.3 verifier on the Mac mini). */
+const alphaOf = (value) => {
+  const parts = String(value).match(/[0-9.]+/g) ?? []
+  return String(value).startsWith('rgba') && parts.length >= 4 ? Number(parts[3]) : 1
+}
+
+/** `foreground` composited over `background`: what the eye really sees through a translucent paint. */
+function over(foreground, background) {
+  const parts = (value) => (String(value).match(/[\d.]+/g) ?? []).slice(0, 4).map(Number)
+  const [r, g, b, a = 1] = parts(foreground)
+  const [br, bg, bb] = parts(background)
+  const mix = (front, back) => Math.round(front * a + back * (1 - a))
+  return `rgb(${String(mix(r, br))}, ${String(mix(g, bg))}, ${String(mix(b, bb))})`
+}
+
+/** Whether a computed colour is (near) pure white: the paint the 0.8.2 select fell back to in the dark theme. */
+const isWhite = (value) => (String(value).match(/[\d.]+/g) ?? []).slice(0, 3).map(Number).every((channel) => channel >= 250)
+
+/**
+ * The effort select's OWN computed paint (0.8.3): the background it really draws and the colour of its text, RESTING and
+ * FOCUSED, with the surface behind it for compositing. `colorsOf` walks UP to the nearest opaque ancestor — which is
+ * exactly what hid the white-on-white — so this probe reads the select itself. The stylesheet is never consulted.
+ */
+async function selectPaint(s) {
+  // The EFFORT select, by its position among the dialog's own `<select>`s: on a home whose model picker is a native
+  // select too, `querySelector('select')` would be the MODEL one (it comes first) and the paint of the wrong control
+  // would be judged.
+  const effort = await effortSelect(s)
+  if (effort === undefined) return null
+  const wanted = effort.index
+  const read = async () => dialog(s).evaluate((root, index) => {
+    const select = [...root.querySelectorAll('select')][index]
+    if (select === undefined) return null
+    const style = getComputedStyle(select)
+    return { background: style.backgroundColor, color: style.color, focused: document.activeElement === select }
+  }, wanted)
+  const resting = await read()
+  if (resting === null) return null
+  const handle = dialog(s).locator('select').nth(wanted)
+  await handle.focus({ timeout: 4_000 }).catch(() => undefined)
+  await s.page.waitForTimeout(150)
+  const focused = (await read()) ?? resting
+  await handle.blur({ timeout: 4_000 }).catch(() => undefined)
+  const surface = await dialog(s).evaluate((root, index) => {
+    const alpha = (value) => {
+      const parts = String(value).match(/[0-9.]+/g) ?? []
+      return String(value).startsWith('rgba') && parts.length >= 4 ? Number(parts[3]) : 1
+    }
+    for (let node = [...root.querySelectorAll('select')][index]; node !== null; node = node.parentElement) {
+      const value = getComputedStyle(node).backgroundColor
+      if (alpha(value) > 0.5) return value
+    }
+    return 'rgb(255, 255, 255)'
+  }, wanted)
+  return { resting, focused, surface }
+}
+
+/**
+ * The 0.8.3 legibility assertion for the effort select, in the theme the page carries: its computed background must be
+ * PAINTED (never transparent) and its text must contrast with what is really behind that paint (>= 4.5); in the dark
+ * theme the background must not be white either (the white-on-white reported for 0.8.2). Resting AND focused.
+ */
+async function selectLegibility(s, where, { dark }) {
+  const paint = await selectPaint(s)
+  if (paint === null) {
+    check(`${where}: the effort select is on screen and its computed paint can be read`, false, 'no <select> in the dialog')
+    return
+  }
+  for (const [state, value] of [['unfocused', paint.resting], ['focused', paint.focused]]) {
+    const alpha = alphaOf(value.background)
+    const seen = alpha >= 1 ? value.background : over(value.background, paint.surface)
+    const ratio = contrast(value.color, seen)
+    check(`${where}: the effort select paints its OWN background (computed, never transparent) and its text contrasts with it (>= 4.5) — ${state}`, alpha > 0 && ratio >= 4.5, `background ${value.background} (alpha ${String(alpha)}) over ${paint.surface} = ${seen}; text ${value.color}; contrast ${ratio.toFixed(2)}; focus observed=${String(value.focused)}`)
+    if (dark) check(`${where}: its background is not WHITE in the dark theme (the 0.8.2 white-on-white) — ${state}`, !isWhite(seen), `${seen} from ${value.background} over ${paint.surface}`)
+  }
+}
+
+/** Whether the transcript draws a user bubble holding `needle` right now (the composer's own draft is not a bubble). */
+async function bubbleHolds(s, needle) {
+  const [held, bubbles] = await s.page.evaluate((text) => [
+    [...document.querySelectorAll('[class*="bubble"]')].some((node) => (node.textContent ?? '').replace(/\s+/g, ' ').includes(text)),
+    document.querySelectorAll('[class*="bubble"]').length,
+  ], normal(needle))
+  return { held, bubbles }
+}
+
+/**
+ * A message that must NOT have gone out (0.8.3: Escape/✕/Cancel/mask abort the send). The session log is the witness and
+ * it is read for `ms` before the absence is reported — `landed` would wait a whole minute for a turn that never starts.
+ * The text is searched from the START of the log: every task this script types is asked once per conversation. A log that
+ * cannot be read at all (no ORQ_SESSIONS_DIR, no session id, a wrong path) would make EVERY absence check pass vacuously,
+ * so that case FAILS the check it belongs to and says so in its own `detail`.
+ */
+async function absent(s, expected, ms = 3_000) {
+  const wanted = normal(expected)
+  const started = Date.now()
+  let events = readEvents(s.sessionId)
+  let found = locateMessage(events, wanted, 0)
+  while (found === null && Date.now() - started < ms) {
+    await s.page.waitForTimeout(400)
+    events = readEvents(s.sessionId)
+    found = locateMessage(events, wanted, 0)
+  }
+  const detail = found !== null
+    ? `the log DOES hold it: ${JSON.stringify(found.text)}`
+    : events.length > 0
+      ? `absent from the log (${String(events.length)} events read)`
+      : `the session log could not be read at all (session ${String(s.sessionId).slice(0, 12)}): the absence cannot be witnessed`
+  return { ok: found === null && events.length > 0, text: found?.text, ms: Date.now() - started, events: events.length, detail }
+}
+
+/** Whether a badge text carries one score value (the FORMATTING is the product's: only the number is matched, with a
+ * tolerance that survives the rounded form the badge may print, e.g. 41.82 drawn as `41.8%`). */
+const badgeHas = (badge, value) => badge.some((text) => (String(text).match(/-?\d+(?:[.,]\d+)?/g) ?? [])
+  .map((raw) => Number(raw.replace(',', '.')))
+  .some((number) => Math.abs(number - value) < 0.05))
+
+/** The badge text, polled until it satisfies `ok` (the effort change re-resolves it asynchronously) or `ms` runs out. */
+async function badgeWhen(s, ok, ms = 6_000) {
+  const started = Date.now()
+  let badge = (await stripOf(s)).badge
+  while (Date.now() - started < ms && !ok(badge)) {
+    await s.page.waitForTimeout(250)
+    badge = (await stripOf(s)).badge
+  }
+  return badge
+}
+
 /** What goes out when the checkbox applies the skill (0.8.0): the typed text, then the token on a line of its own. */
 const withToken = (text) => `${text}\n${TOKEN}`
 
-const T = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliet', 'kilo', 'lima', 'mike', 'november', 'oscar', 'papa', 'quebec', 'romeo'].map((word) => `Reply with exactly the word: ${word}`)
+const T = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliet', 'kilo', 'lima', 'mike', 'november', 'oscar', 'papa', 'quebec', 'romeo', 'sierra', 'tango', 'uniform', 'victor'].map((word) => `Reply with exactly the word: ${word}`)
 
 // ------------------------------------------------------------------------------------------------ conversation: S1..S5, S7 and the extras
 
@@ -1027,51 +1262,75 @@ async function conversation() {
     await shot(s, 'S3-transcript-with-token')
   })
 
-  // ---- S4: Escape cancels: no token, no injection, the next dialog is unchanged
+  // ---- S4 (0.8.3): every way OUT of the dialog ABORTS the send. Escape, the ✕, the Cancel button and a click on the mask
+  // are walked one at a time, and each of them must leave the session log, the transcript, the stored configuration and
+  // the remembered answer alone — with the draft still in the composer. The 0.6.0 checks had this backwards: they
+  // asserted the message went out untouched.
   await section('S4', s, async () => {
+    const posts = () => s.t.wire.filter((entry) => entry.method === 'POST').length
+    const postsBefore = posts()
+
+    /** One cancel path: a fresh draft raises the dialog, the path closes it, and NOTHING at all goes out. */
+    const cancel = async (how, task, close) => {
+      await ask(s, task)
+      check(`S4 ${how}: the draft raises the dialog (the box is still CHECKED, the S3 answer)`, await skillBox(s).isChecked())
+      await close()
+      await dialog(s).waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check(`S4 ${how}: the dialog closes`, true), () => check(`S4 ${how}: the dialog closes`, false))
+      const gone = await absent(s, task)
+      const bubble = await bubbleHolds(s, task)
+      check(`S4 ${how}: NOTHING was sent — no user/message for that text in the session log and no bubble in the transcript`, gone.ok && !bubble.held, `log: ${gone.detail} after ${String(gone.ms)} ms; ${String(bubble.bubbles)} bubble(s) on screen, holding it=${String(bubble.held)}`)
+      check(`S4 ${how}: the composer still holds the typed text (the draft survived the cancel)`, (await composerText(s)) === task, JSON.stringify(await composerText(s)))
+    }
+
+    // Escape first, with the switch flipped OFF: the box must not follow the switch (the 0.8.1 coupling is gone).
     await ask(s, T[2])
-    check('S4 the dialog opens CHECKED (the S3 answer)', await skillBox(s).isChecked())
+    check('S4 Escape: the dialog opens CHECKED (the S3 answer)', await skillBox(s).isChecked())
     await dialog(s).getByRole('switch').click() // OFF: the coupling is gone, so the box must not follow it
-    check('S4 flipping the subagent-model switch OFF leaves the box CHECKED and ENABLED (no coupling, no hint)', await skillBox(s).isChecked() && !(await skillBox(s).isDisabled()) && (await effortSectionEvidence(s)).removedHints.length === 0)
+    check('S4 Escape: flipping the subagent-model switch OFF leaves the box CHECKED and ENABLED (no coupling, no hint)', await skillBox(s).isChecked() && !(await skillBox(s).isDisabled()) && (await effortSectionEvidence(s)).removedHints.length === 0)
     await s.page.keyboard.press('Escape')
-    await dialog(s).waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('S4 Escape closes the dialog', true), () => check('S4 Escape closes the dialog', false))
-    const { ok, turn } = await landed(s, T[2])
-    check('S4 the message went out after Escape', ok, turn?.end?.kind)
-    check('S4 log: the message is exactly what was typed (no token), even with the box ticked', turn?.users[0]?.text === T[2], JSON.stringify(turn?.users[0]?.text))
-    check('S4 log: no skill-invocation injection in that turn, and the S2+S3 injections are still the only ones', turn?.injections.length === 0 && readEvents(s.sessionId).filter(isInjection).length === 2)
-    check('S4 transcript: still TWO skill chips (the third message carries none)', (await chips(s).count()) === 2 && (await bubbleOf(s, T[2])) === T[2], `${String(await chips(s).count())} chips, bubble=${String(await bubbleOf(s, T[2]))}`)
-    check('S4 the cancel left the remembered answer alone ("on")', (await memory(s)) === 'on', await memory(s))
+    await dialog(s).waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('S4 Escape: the dialog closes', true), () => check('S4 Escape: the dialog closes', false))
+    const escaped = await absent(s, T[2])
+    const escapedBubble = await bubbleHolds(s, T[2])
+    check('S4 Escape: NOTHING was sent — no user/message for that text in the session log and no bubble in the transcript', escaped.ok && !escapedBubble.held, `log: ${escaped.detail} after ${String(escaped.ms)} ms; ${String(escapedBubble.bubbles)} bubble(s) on screen, holding it=${String(escapedBubble.held)}`)
+    check('S4 Escape: the composer still holds the typed text (the draft survived the cancel)', (await composerText(s)) === T[2], JSON.stringify(await composerText(s)))
     await shot(s, 'S4-after-escape')
 
-    // The NEXT dialog is unchanged; toggle it and close with the X: nothing of that toggle may stick.
+    // The NEXT dialog is unchanged; toggle it and close with the ✕: nothing of that toggle may stick.
     await ask(s, T[3])
     check('S4 the NEXT dialog is still CHECKED after the Escape-cancel', await skillBox(s).isChecked())
     await skillBox(s).uncheck()
     await dialog(s).getByRole('button', { name: 'Close', exact: true }).click()
     await dialog(s).waitFor({ state: 'hidden', timeout: 8_000 })
-    const second = await landed(s, T[3])
-    check('S4+ closing with the X after unchecking: no token, no injection', second.turn?.users[0]?.text === T[3] && second.turn?.injections.length === 0, JSON.stringify(second.turn?.users[0]?.text))
-    check('S4+ an unconfirmed toggle is not remembered (still "on")', (await memory(s)) === 'on', await memory(s))
+    const closed = await absent(s, T[3])
+    const closedBubble = await bubbleHolds(s, T[3])
+    check('S4 the ✕ (Close): NOTHING was sent — no user/message in the log and no bubble for the text, even with the box toggled off before closing', closed.ok && !closedBubble.held, `log: ${closed.detail}; ${String(closedBubble.bubbles)} bubble(s), holding it=${String(closedBubble.held)}`)
+    check('S4 the ✕ (Close): the composer still holds the typed text', (await composerText(s)) === T[3], JSON.stringify(await composerText(s)))
+    check('S4 the ✕ (Close): an unconfirmed toggle is not remembered (still "on")', (await memory(s)) === 'on', await memory(s))
 
-    await ask(s, T[4])
-    check('S4+ the next dialog is CHECKED again (the X-cancel changed nothing)', await skillBox(s).isChecked())
-    await dialog(s).getByRole('button', { name: 'Cancel', exact: true }).click()
-    await dialog(s).waitFor({ state: 'hidden', timeout: 8_000 })
-    const third = await landed(s, T[4])
-    check('S4+ the Cancel button: no token, no injection', third.turn?.users[0]?.text === T[4] && third.turn?.injections.length === 0, JSON.stringify(third.turn?.users[0]?.text))
+    await cancel('the Cancel button', T[4], async () => dialog(s).getByRole('button', { name: 'Cancel', exact: true }).click())
+    await cancel('a click on the mask', T[5], async () => { await s.page.mouse.click(30, 400) })
 
+    check('S4 the four cancel paths wrote NO configuration at all (not one POST reached the route: a cancel stores nothing)', posts() === postsBefore, `${String(postsBefore)} -> ${String(posts())} POSTs`)
+    check('S4 after four cancels the answer is still remembered as "on" and the S2+S3 injections are still the only ones', (await memory(s)) === 'on' && readEvents(s.sessionId).filter(isInjection).length === 2, `memory=${String(await memory(s))}, injections=${String(readEvents(s.sessionId).filter(isInjection).length)}`)
+    check('S4 the transcript still shows exactly TWO skill chips (no cancel added a message)', (await chips(s).count()) === 2, await chips(s).count())
+
+    // The draft the last cancel left is sent for REAL now: a cancel must leave the composer exactly as it was ("as if it
+    // had not been sent"), so the next send from it has to go out normally — the token, the injection and the bubble
+    // included. It is also the proof that the absence checks above were not vacuous.
     await ask(s, T[5])
-    check('S4+ the next dialog is still CHECKED', await skillBox(s).isChecked())
-    await s.page.mouse.click(30, 400)
-    await dialog(s).waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('S4+ a click on the mask closes the dialog', true), () => check('S4+ a click on the mask closes the dialog', false))
-    const fourth = await landed(s, T[5])
-    check('S4+ the mask click: no token, no injection', fourth.turn?.users[0]?.text === T[5] && fourth.turn?.injections.length === 0, JSON.stringify(fourth.turn?.users[0]?.text))
-    check('S4+ after four cancels the remembered answer is still "on" and exactly two chips are in the transcript', (await memory(s)) === 'on' && (await chips(s).count()) === 2, `${String(await memory(s))}, chips=${String(await chips(s).count())}`)
+    check('S4 the next dialog still works after four cancels (the same task raises it, checked, with the preview)', await skillBox(s).isChecked() && await dialog(s).getByText(T[5], { exact: true }).isVisible())
+    await sendWith(s)
+    const sentAtLast = await landed(s, withToken(T[5]))
+    check('S4 the NEXT send from that composer goes out normally (nothing was lost): the token is on the wire and DSH injected the skill', sentAtLast.turn?.users[0]?.text === withToken(T[5]) && sentAtLast.turn?.injections.length === 1, JSON.stringify(sentAtLast.turn?.users[0]?.text))
+    check('S4 ...and the message it was typed from is now in the transcript (exactly three chips: no cancel left one)', (await chips(s).count()) === 3 && (await bubbleOf(s, T[5])) === `${T[5]} ${TOKEN}`, `${String(await chips(s).count())} chips, bubble=${String(await bubbleOf(s, T[5]))}`)
+    await settleComposer(s)
   })
 
   // ---- S5: /orquestrar opens the configure dialog: nothing is being sent, so no skill section
   await section('S5', s, async () => {
     const before = turnsOf(readEvents(s.sessionId)).reduce((total, turn) => total + turn.users.length, 0)
+    const posts = () => s.t.wire.filter((entry) => entry.method === 'POST').length
+    const postsBefore = posts()
     const composer = s.page.getByRole('textbox', { name: COMPOSER })
     await composer.click()
     await s.page.keyboard.type('/orquestrar', { delay: 6 })
@@ -1089,12 +1348,12 @@ async function conversation() {
       await s.page.keyboard.press('Escape')
       await dlg.waitFor({ state: 'hidden', timeout: 8_000 })
     }
-    await composer.click()
-    await s.page.keyboard.press('Control+A')
-    await s.page.keyboard.press('Backspace')
+    await clearComposer(s)
     await s.page.waitForTimeout(1_500)
     const after = turnsOf(readEvents(s.sessionId)).reduce((total, turn) => total + turn.users.length, 0)
     check('S5 nothing was sent by the command or by closing its dialog', after === before, `${String(before)} -> ${String(after)} user messages`)
+    // Configure mode has no send at all, so closing it stores nothing (0.8.3 keeps this the way it was).
+    check('S5 closing the configure dialog stored nothing (no POST reached the configuration route)', posts() === postsBefore, `${String(postsBefore)} -> ${String(posts())} POSTs`)
 
     // The dock chip is the other way into the configure dialog.
     const chip = s.page.getByRole('button', { name: /Subagent orchestration in this conversation/ })
@@ -1157,8 +1416,18 @@ async function conversation() {
     await shot(s, 'S7-keyboard')
     await s.page.keyboard.press('Escape')
     await dlg.waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('S7 Escape closes the dialog', true), () => check('S7 Escape closes the dialog', false))
-    const result = await landed(s, T[6])
-    check('S7 Escape sent the message as stock (no token, no injection)', result.turn?.users[0]?.text === T[6] && result.turn?.injections.length === 0, JSON.stringify(result.turn?.users[0]?.text))
+    // 0.8.3: Escape from the keyboard is the same cancel as anywhere else — the message does NOT go out and the draft stays.
+    const escapedByKeyboard = await absent(s, T[6])
+    const bubble = await bubbleHolds(s, T[6])
+    check('S7 Escape cancels the send: no user/message in the log, no bubble in the transcript, no skill injected', escapedByKeyboard.ok && !bubble.held && readEvents(s.sessionId).filter(isInjection).length === 3, `log: ${escapedByKeyboard.detail}; ${String(bubble.bubbles)} bubble(s), holding it=${String(bubble.held)}`)
+    check('S7 the cancelled draft is still in the composer', (await composerText(s)) === T[6], JSON.stringify(await composerText(s)))
+    // ...and the next dialog still works after a keyboard cancel.
+    await ask(s, T[18])
+    check('S7 the next dialog still works after the Escape-cancel (checked, with the preview)', await skillBox(s).isChecked() && await dialog(s).getByText(T[18], { exact: true }).isVisible())
+    await s.page.keyboard.press('Escape')
+    await dlg.waitFor({ state: 'hidden', timeout: 8_000 })
+    const second = await absent(s, T[18])
+    check('S7 the second Escape cancels too (nothing sent, draft kept)', second.ok && (await composerText(s)) === T[18], `log: ${second.detail}; composer=${JSON.stringify(await composerText(s))}`)
   })
 
   // ---- X: Enter on the focused primary button confirms with the default (checked) answer
@@ -1242,6 +1511,16 @@ async function conversation() {
     await s.page.reload({ waitUntil: 'networkidle', timeout: 60_000 })
     await s.page.getByRole('textbox', { name: COMPOSER }).waitFor({ state: 'visible', timeout: 30_000 })
     check('X after a reload the remembered answer is still "on"', (await memory(s)) === 'on', await memory(s))
+    // 0.8.3: a cancel ABORTS the send, so the draft it was typed from survives — the observable every flipped cancel path
+    // shares, asserted here on the page the group reloaded (the composer is the host's own, freshly mounted).
+    await ask(s, T[19])
+    check('X-reload the draft raises the dialog (the box is CHECKED and ENABLED)', await skillBox(s).isChecked() && !(await skillBox(s).isDisabled()))
+    await s.page.keyboard.press('Escape')
+    await dialog(s).waitFor({ state: 'hidden', timeout: 8_000 })
+    const cancelled = await absent(s, T[19])
+    check('X-reload the cancelled draft was NOT sent (no user/message in the log, no bubble)', cancelled.ok && !(await bubbleHolds(s, T[19])).held, `log: ${cancelled.detail}`)
+    check('X-reload the composer still holds the cancelled draft, and it is exactly what was typed', (await composerText(s)) === T[19], JSON.stringify(await composerText(s)))
+    await settleComposer(s) // the draft must not ride along with the group's next message
     await newConversation(s)
     const fresh = s.sessionId
     await ask(s, T[9])
@@ -1449,11 +1728,14 @@ async function child() {
     await shot(s, 'S10-subagent-dialog')
     await s.page.keyboard.press('Escape')
     await dlg.waitFor({ state: 'hidden', timeout: 8_000 })
-    await waitSends(1)
-    check('S10 Escape: the message that goes out is exactly what was typed, with no token (and it goes to the subagent, not to the main agent)', toChild.length === 1 && toMain.length === 0 && outgoing(toChild[0]) === T[16], JSON.stringify(outgoing(toChild[0])))
+    await s.page.waitForTimeout(1_000)
+    // 0.8.3: Escape cancels the send in a child's conversation too — nothing reaches the subagent OR the main agent, and
+    // the draft waits in the composer (the capture routes below then witness the "Send with these options" half).
+    check('S10 Escape cancels the send: NOTHING goes out to the subagent or to the main agent', toChild.length === 0 && toMain.length === 0, `toChild=${String(toChild.length)}, toMain=${String(toMain.length)}`)
+    check('S10 the cancelled draft is still in the composer', (await composerText(s)) === T[16], JSON.stringify(await composerText(s)))
 
-    // The aborted send left its text in the composer (DSH gives a failed send back, asynchronously): wait until the composer
-    // stops changing, then empty it, or the restored text lands after the new task and travels out with it.
+    // The CANCEL left its draft in the composer: wait until the composer stops changing, then empty it, or the draft
+    // lands after the new task and travels out with it.
     const composer = s.page.getByRole('textbox', { name: COMPOSER })
     let previous = null
     for (let stable = 0; stable < 4;) {
@@ -1462,17 +1744,15 @@ async function child() {
       stable = now === previous ? stable + 1 : 0
       previous = now
     }
-    await composer.click()
-    await s.page.keyboard.press('Control+A')
-    await s.page.keyboard.press('Backspace')
+    await clearComposer(s)
     await ask(s, T[17])
     check('S10 the next dialog in the subagent conversation has no checkbox either', (await dialog(s).getByRole('checkbox').count()) === 0)
     await sendWith(s)
-    await waitSends(2)
-    // DSH's give-back of the aborted message can still land in the composer after the clear (measured on this home), so the
+    await waitSends(1) // only NOW does anything go out: the Escape above cancelled its send
+    // DSH's give-back of an aborted message can still land in the composer after the clear (measured on this home), so the
     // payload may be the typed task followed by that leftover. What S10 is about is that no token ever goes out to a child.
-    const second = outgoing(toChild[1]) ?? ''
-    check('S10 "Send with these options": the message that goes out has no token either', toChild.length === 2 && toMain.length === 0 && second.includes(T[17]) && !second.includes(TOKEN), JSON.stringify(second))
+    const sent = outgoing(toChild[0]) ?? ''
+    check('S10 "Send with these options": the message that goes out has no token either', toChild.length === 1 && toMain.length === 0 && sent.includes(T[17]) && !sent.includes(TOKEN), JSON.stringify(sent))
     await s.page.waitForTimeout(1_000)
     s.t.expecting = false
   })
@@ -1485,11 +1765,14 @@ async function child() {
 async function colorsOf(s) {
   return s.page.evaluate(() => {
     const root = document.querySelector('[role=dialog]')
+    const alphaOf = (value) => {
+      const parts = String(value).match(/[0-9.]+/g) ?? []
+      return String(value).startsWith('rgba') && parts.length >= 4 ? Number(parts[3]) : 1
+    }
     const backdrop = (start) => {
       for (let node = start; node !== null; node = node.parentElement) {
         const color = getComputedStyle(node).backgroundColor
-        const alpha = color.startsWith('rgba') ? Number(color.split(',')[3]) : 1
-        if (alpha > 0.5) return color
+        if (alphaOf(color) > 0.5) return color
       }
       return 'rgb(255, 255, 255)'
     }
@@ -1521,6 +1804,9 @@ async function themes() {
     const colors = await colorsOf(light)
     const ratio = (entry) => (entry === null ? 0 : contrast(entry.color, entry.background))
     check('S6 light theme: the checkbox row and the effort select are legible on the dialog (contrast >= 4.5 each)', ratio(colors.label) >= 4.5 && ratio(colors.select) >= 4.5, `label ${ratio(colors.label).toFixed(1)}, select ${ratio(colors.select).toFixed(1)}`)
+    // 0.8.3: the select must be legible on its OWN paint, not on whatever surface happens to sit behind it (the 0.8.2
+    // look was white-on-white in dark, its items readable only on hover). Computed styles, resting AND focused.
+    await selectLegibility(light, 'S6 light theme', { dark: false })
     advise('S6 light theme: the surrounding heading and hint stay legible too (>= 4.5 / >= 3, skipped when the redesigned dialog does not draw them)', (colors.heading === null || ratio(colors.heading) >= 4.5) && (colors.hint === null || ratio(colors.hint) >= 3), `heading ${colors.heading === null ? 'absent' : ratio(colors.heading).toFixed(1)}, hint ${colors.hint === null ? 'absent' : ratio(colors.hint).toFixed(1)}`)
     await shot(light, 'S6-light')
   })
@@ -1543,6 +1829,8 @@ async function themes() {
       check(`${label}: the dialog is not taller than the viewport and is inside it`, box !== null && box.height <= 600 && box.y >= 0 && box.y + box.height <= 600, JSON.stringify(box))
       check(`${label}: "${SEND}" is inside the viewport and the dialog`, sendBox !== null && box !== null && sendBox.y >= box.y && sendBox.y + sendBox.height <= Math.min(600, box.y + box.height), JSON.stringify(sendBox))
       check(`${label}: the skill box is present, CHECKED and ENABLED, with the effort select above it`, (await skillBox(small).count()) === 1 && await skillBox(small).isChecked() && !(await skillBox(small).isDisabled()) && (await effortSelect(small)) !== undefined)
+      // 0.8.3: the select's OWN computed paint, in this theme too (dark is where the white-on-white was reported).
+      await selectLegibility(small, label, { dark: scheme === 'dark' })
       const info = await skillBox(small).evaluate((element) => {
         for (let node = element.parentElement; node !== null && node !== document.body; node = node.parentElement) {
           const style = getComputedStyle(node)
@@ -1611,10 +1899,17 @@ async function wire() {
     check(`S8 ${name}: the dialog still asks (the subagent switch is there)`, (await dlg.getByRole('switch').count()) === 1)
     check(`S8 ${name}: NO skill section and NO checkbox`, (await dlg.getByRole('checkbox').count()) === 0 && (await dlg.getByRole('heading', { name: SKILL_TITLE }).count()) === 0 && (await dlg.getByText(TOKEN).count()) === 0, await dlg.getByRole('checkbox').count())
     await shot(s, `S8-${slug(name)}`)
-    if (how === 'confirm') await sendWith(s)
-    else { await s.page.keyboard.press('Escape'); await dlg.waitFor({ state: 'hidden', timeout: 8_000 }) }
-    const result = await landed(s, text)
-    check(`S8 ${name}: the message went out as typed, with no token and no injection`, result.turn?.users[0]?.text === text && result.turn?.injections.length === 0, JSON.stringify(result.turn?.users[0]?.text))
+    if (how === 'confirm') {
+      await sendWith(s)
+      const result = await landed(s, text)
+      check(`S8 ${name}: the message went out as typed, with no token and no injection`, result.turn?.users[0]?.text === text && result.turn?.injections.length === 0, JSON.stringify(result.turn?.users[0]?.text))
+    } else {
+      // 0.8.3: this path cancels the send instead — nothing goes out, and the draft comes back to the composer.
+      await s.page.keyboard.press('Escape')
+      await dlg.waitFor({ state: 'hidden', timeout: 8_000 })
+      const gone = await absent(s, text)
+      check(`S8 ${name}: Escape cancels the send (nothing in the log, no bubble) and the draft stays in the composer`, gone.ok && !(await bubbleHolds(s, text)).held && (await composerText(s)) === normal(text), `log: ${gone.detail}; composer=${JSON.stringify(await composerText(s))}`)
+    }
     s.t.expecting = false
   }
 
@@ -1785,10 +2080,69 @@ async function facts() {
     .filter((other) => other.id !== item.id && (declared.get(item.id) ?? '') !== (declared.get(other.id) ?? ''))
     .map((other) => [item, other]))
   check('F2 the ladder follows the MODEL: two models whose DECLARED ladders differ do not show the same option set', pairs.length === 0 || pairs.some(([left, right]) => left.options.join('|') !== right.options.join('|')), JSON.stringify({ compared: seen.map((item) => ({ model: item.id, declared: declared.get(item.id), options: item.options })), differingPairs: pairs.length }))
+
+  // ---- F5 (0.8.3): the score badge ACROSS THE EFFORT LADDER. Neither source of the headline varies with the effort for
+  // the models of this home: the intercepted catalog carries ONE intelligence index per model (OpenRouter has no
+  // per-effort intelligence at all) and the committed Terminal-Bench 4 snapshot keeps one row per model (GLM-5.3 =
+  // 41.82), so the documented rule — "the value at the model's MAX when the effort has none of its own" — makes the badge
+  // CONSTANT over the whole ladder, the neutral first option included. One arm per KIND of headline witnesses that; a
+  // value that really MOVES needs a multi-effort snapshot model this home's picker does not offer, and is a SKIP (the
+  // data layer's unit tests cover it with the real rows).
+  await section('F5', s, async () => {
+    skip('F5 the badge VALUE moving with the effort (low vs max)', 'every model of this home resolves to one number: GLM-5.3 has a single Terminal-Bench 4 row (41.82) and every Intelligence model one scalar; the only multi-effort rows (GPT-6 Astra: low 50.61 / medium 54.24 / max 58.18) belong to a model this home\'s picker does not offer — the data layer\'s unit tests cover that case with the real rows')
+    const cases = exercised.filter((scenario) => scenario.picker !== undefined && BADGE_FACTS[scenario.asset ?? ''] !== undefined)
+    if (cases.length === 0) {
+      skip('F5 the badge across the effort ladder', 'no exercised model resolves to a fixture asset whose badge value is known')
+      return
+    }
+    // One arm per KIND of headline (a Terminal-Bench 4 badge and an Intelligence badge): the first case of each kind.
+    const arms = cases.filter((scenario, index) => cases.findIndex((other) => BADGE_FACTS[other.asset].kind === BADGE_FACTS[scenario.asset].kind) === index)
+    if ((await dialog(s).count()) === 0) await dialogWithModel(s)
+    for (const scenario of arms) {
+      if (!(await pickModel(s, scenario.picker))) continue
+      const wanted = BADGE_FACTS[scenario.asset]
+      const options = filledOptions(await effortSelect(s))
+      if (options.length < 2) {
+        skip(`F5 ${scenario.label}: the badge across the effort ladder`, `this home's ladder for ${String(scenario.id)} offers fewer than two options (${JSON.stringify(options)})`)
+        continue
+      }
+      const top = options.length - 1
+      await (await effortSelect(s)).handle.selectOption({ index: top })
+      const strip = await stripWhenReady(s)
+      if (!strip.badge.some((text) => SCORE_LABEL.test(text))) {
+        skip(`F5 ${scenario.label}: the badge across the effort ladder`, 'this fixture model shows no score badge at all')
+        continue
+      }
+      const atTop = strip.badge
+      const kind = wanted.kind === 'terminal-bench' ? 'Terminal-Bench 4' : 'Intelligence'
+      check(`F5 ${scenario.label}: at the model's highest level the badge is well-formed (it names its benchmark) and shows ${String(wanted.value)} from its ${kind} headline`, atTop.some((text) => wanted.label.test(text)) && badgeHas(atTop, wanted.value), JSON.stringify({ ladder: options, badge: atTop, why: wanted.why }))
+      // Every OTHER option, the neutral first one included, one by one: the badge must still be there, still name its
+      // benchmark and still show the SAME number. That equality with the value at max IS the documented fallback, so a
+      // badge that dropped the strip or resolved to any other number fails here.
+      const walked = []
+      for (const index of options.map((_, at) => at).filter((at) => at !== top)) {
+        await (await effortSelect(s)).handle.selectOption({ index })
+        const here = await badgeWhen(s, (badge) => badgeHas(badge, wanted.value))
+        walked.push({ option: options[index], badge: here, named: here.some((text) => wanted.label.test(text)), same: badgeHas(here, wanted.value) })
+      }
+      check(`F5 ${scenario.label}: the badge keeps the SAME value ${String(wanted.value)} and its benchmark's name at EVERY other option of the ladder, the neutral first option (${JSON.stringify(options[0])}) included — ${walked.map((item) => `${item.option}=${item.badge.join('/')}`).join(' | ')}`, walked.every((item) => item.same && item.named), JSON.stringify(walked))
+      console.log(`DEBUG F5 ${scenario.label}: badge at ${JSON.stringify(options[top])} ${JSON.stringify(atTop)} / at the neutral option ${JSON.stringify(options[0])} ${JSON.stringify(walked[0]?.badge ?? [])}`)
+      await (await effortSelect(s)).handle.selectOption({ index: top })
+      const back = await badgeWhen(s, (badge) => badgeHas(badge, wanted.value))
+      check(`F5 ${scenario.label}: back at the highest level the badge shows ${String(wanted.value)} again`, badgeHas(back, wanted.value), JSON.stringify({ atTop, back }))
+      const after = await stripOf(s)
+      check(`F5 ${scenario.label}: the four modality icons are untouched by the whole effort round trip (highest -> every option -> highest)`, after.items.length === 4, JSON.stringify({ icons: after.items.length, items: stripSignals(after.items) }))
+      shapes[`F5_${slug(scenario.label)}`] = { fixture: scenario.asset, expects: { ...wanted, label: String(wanted.label) }, options, atTop, walked, back }
+      await shot(s, `F5-${slug(scenario.label)}`)
+    }
+  })
+
   if (await dialog(s).count() > 0) {
     await s.page.keyboard.press('Escape')
     await dialog(s).waitFor({ state: 'hidden', timeout: 8_000 }).catch(() => undefined)
-    await landed(s, T[0], 30_000)
+    // 0.8.3: Escape here cancels the ask; nothing goes out (the 0.6.0 check asserted the opposite and waited a minute).
+    const gone = await absent(s, T[0], 2_000)
+    check('F the cancel that closes the facts dialog sent NOTHING and left the draft in the composer', gone.ok && (await composerText(s)) === T[0], `log: ${gone.detail}; composer=${JSON.stringify(await composerText(s))}`)
   }
   await s.context.close()
 
@@ -1802,6 +2156,20 @@ async function facts() {
     const strip = await stripWhenReady(live)
     advise('F4 live catalog (no interception): the strip rendered what the live /models answered for DeepSeek V4.1 Flash', picked && strip.items.length === 4, `${String(strip.items.length)} icons: ${stripSignals(strip.items)} :: badge ${JSON.stringify(strip.badge)}`)
     advise('F4 live catalog: the score badge was there and named its benchmark', strip.badge.some((text) => SCORE_LABEL.test(text)), JSON.stringify(strip.badge))
+    // The live half, REPORTED here and never asserted: this page reads the real catalog, where the intelligence index is
+    // ONE scalar per model, so the badge is expected to show the same number at every level (the documented fallback).
+    // F5 asserts that value and its constancy against the fixture's own number; here it is only printed.
+    const liveSelect = await effortSelect(live)
+    if (liveSelect !== undefined && liveSelect.options.length > 2) {
+      await liveSelect.handle.selectOption({ index: 1 })
+      await live.page.waitForTimeout(800)
+      const moved = (await stripOf(live)).badge
+      advise('F4 live catalog: the badge at the ladder\'s lowest level (reported, never asserted: one scalar per model means the number is expected NOT to move)', moved.length > 0, `${JSON.stringify(strip.badge)} -> at ${JSON.stringify(liveSelect.options[1])} ${JSON.stringify(moved)}`)
+      await liveSelect.handle.selectOption({ index: liveSelect.options.length - 1 })
+      await live.page.waitForTimeout(400)
+    } else {
+      console.log(`DEBUG F4 live catalog: no level to move the effort select to (options: ${JSON.stringify(liveSelect?.options)})`)
+    }
     shapes.F4_live = { picked, items: strip.items.map((item) => ({ modality: item.modality, name: item.name, opacity: item.opacity })), badge: strip.badge }
     await shot(live, 'F4-live')
     await live.page.keyboard.press('Escape')

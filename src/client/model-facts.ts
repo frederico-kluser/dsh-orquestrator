@@ -11,6 +11,18 @@
  * CORS header and can never be fetched from a page. This module therefore adds
  * no runtime dependency to the browser bundle.
  *
+ * The score follows the reasoning effort the user picked, as far as the data
+ * allows:
+ *   - Terminal-Bench 4 publishes one row per (model, effort): the strip shows
+ *     the accuracy of the selected level, and falls back to the model's best
+ *     accuracy when the board never measured that level (the neutral "model
+ *     default" option always lands on that best value);
+ *   - OpenRouter's intelligence index is a single scalar per model — there is
+ *     no per-effort intelligence anywhere in the public API, and the plugin
+ *     holds no key for the endpoints that would need one — so that score is
+ *     literally the model's intelligence at its maximum effort and reads the
+ *     same at every level.
+ *
  * Matching is deliberately narrow — an id, never a guess:
  *   1. case-insensitive match on the full catalog id (`z-ai/glm-5.3`);
  *   2. for an id with no `/`, case-insensitive match on the slug part
@@ -30,7 +42,10 @@ import { TB4_SCORES, normalizeModelName, type TerminalBenchRow } from '../bench.
 export interface ModelFacts {
   /** Input modalities the model understands (OpenRouter). */
   readonly modalities: { readonly text: boolean; readonly image: boolean; readonly audio: boolean; readonly video: boolean }
-  /** Headline score: Terminal-Bench 4 when the leaderboard knows the model, else OpenRouter's intelligence index; null when none. */
+  /**
+   * Headline score at the effort the caller asked for: Terminal-Bench 4 when the leaderboard knows the model, else
+   * OpenRouter's intelligence index; null when none.
+   */
   readonly score: { readonly kind: 'terminal-bench-4' | 'intelligence'; readonly value: string } | null
 }
 
@@ -67,7 +82,7 @@ interface Catalog {
  * so a picker called `Constructor` can never read `Object.prototype.constructor`.
  */
 const terminalBench: Map<string, TerminalBenchRow> = new Map(
-  Object.entries(TB4_SCORES).filter(([key, row]) => key !== '' && Number.isFinite(row.accuracy)),
+  Object.entries(TB4_SCORES).filter(([key, row]) => key !== '' && Number.isFinite(row.max)),
 )
 
 /** One catalog fetch per page: the promise *is* the cache, and a failed fetch caches "unavailable". */
@@ -77,30 +92,34 @@ let catalogPromise: Promise<Catalog | null> | null = null
 let inFlight: AbortController | null = null
 
 /**
- * Facts already computed this session, keyed by model id and display name.
- * Negative results are cached too — a model the catalog does not list stays unknown — and a failed catalog call is
- * remembered by {@link catalogPromise}, so no keystroke of the picker's filter ever starts another request.
+ * Facts already computed this session, keyed by model id, display name and effort. Negative results are cached too — a
+ * model the catalog does not list stays unknown — and a failed catalog call is remembered by {@link catalogPromise}, so
+ * no keystroke of the picker's filter, and no move of the effort ladder, ever starts another request.
  */
 const factsCache = new Map<string, ModelFacts | null>()
 
 /**
- * Facts for a picker model id (e.g. `z-ai/glm-5.3`, `DeepSeek-V4.1-Flash`) and its display name. Resolves null when
- * nothing is known (no network, no match). Cached; never rejects.
+ * Facts for a picker model id (e.g. `z-ai/glm-5.3`, `DeepSeek-V4.1-Flash`), its display name and the reasoning effort
+ * the user picked. Resolves null when nothing is known (no network, no match). Cached per (model, display name, effort)
+ * trio; never rejects.
  * @param model - the model id the picker holds.
  * @param displayName - the model's display name, consulted only for Terminal-Bench 4 matching.
+ * @param effort - the DSH ladder effort id (`low`, `medium`, `high`, `max`, `xhigh`, …), or null/undefined/`''` for the
+ * neutral "model default" option; a level the leaderboard never measured falls back to the model's best accuracy.
  * @returns the facts, or null when nothing is known.
  */
-export async function modelFactsOf(model: string, displayName?: string): Promise<ModelFacts | null> {
+export async function modelFactsOf(model: string, displayName?: string, effort?: string | null): Promise<ModelFacts | null> {
   // A caller that is not TypeScript can pass anything at all; "never rejects" has to survive that too.
   const id = typeof model === 'string' ? model : ''
   const name = typeof displayName === 'string' ? displayName : undefined
-  const key = `${id}\u0000${normalizeModelName(name ?? '')}`
+  const level = effortKeyOf(effort)
+  const key = `${id}\u0000${normalizeModelName(name ?? '')}\u0000${level}`
   if (factsCache.has(key)) return factsCache.get(key) ?? null
   const catalog = await loadCatalog()
   // No catalog means "the network is not there", not "this model has nothing": leave it uncached at this level, the
   // catalog promise already keeps the picker from retrying.
   if (catalog === null) return null
-  const facts = factsOf(catalog, id, name)
+  const facts = factsOf(catalog, id, name, level)
   factsCache.set(key, facts)
   return facts
 }
@@ -114,11 +133,16 @@ export function resetModelFactsForTests(): void {
   pending?.abort()
 }
 
+/** The effort key a caller asked for: trimmed and lowercased, `''` for the neutral option or anything that is not a string. */
+function effortKeyOf(effort: string | null | undefined): string {
+  return typeof effort === 'string' ? effort.trim().toLowerCase() : ''
+}
+
 /** Facts for a model the catalog answered for; null when the catalog does not list it. */
-function factsOf(catalog: Catalog, model: string, displayName: string | undefined): ModelFacts | null {
+function factsOf(catalog: Catalog, model: string, displayName: string | undefined, effort: string): ModelFacts | null {
   const entry = matchCatalog(catalog, model)
   if (entry === null) return null
-  return { modalities: entry.modalities, score: scoreOf(entry, displayName) }
+  return { modalities: entry.modalities, score: scoreOf(entry, displayName, effort) }
 }
 
 /**
@@ -138,14 +162,35 @@ function matchCatalog(catalog: Catalog, model: string): CatalogEntry | null {
   return catalog.byId.get(entry.aliasTarget) ?? catalog.bySlug.get(entry.aliasTarget) ?? entry
 }
 
-/** Terminal-Bench 4 first (by normalized slug, then by display name), else the intelligence index, else nothing. */
-function scoreOf(entry: CatalogEntry, displayName: string | undefined): ModelFacts['score'] {
+/**
+ * Terminal-Bench 4 first (by normalized slug, then by display name), else the intelligence index, else nothing. The
+ * Terminal-Bench value follows the selected effort — the accuracy the board published for that level, or the model's
+ * best accuracy when the board never measured it, which is where the neutral option and an unknown level land.
+ * @param entry - the matched catalog entry.
+ * @param displayName - the picker's display name for the model, when it has one.
+ * @param effort - the normalized effort key (`''` for the neutral option).
+ * @returns the score, or null when neither source rates the model.
+ */
+function scoreOf(entry: CatalogEntry, displayName: string | undefined, effort: string): ModelFacts['score'] {
   for (const candidate of [entry.slug, displayName ?? '']) {
     const key = normalizeModelName(candidate)
     const row = key === '' ? undefined : terminalBench.get(key)
-    if (row !== undefined) return { kind: 'terminal-bench-4', value: `${row.accuracy.toFixed(1)}%` }
+    if (row !== undefined) return { kind: 'terminal-bench-4', value: `${(effortAccuracy(row, effort) ?? row.max).toFixed(1)}%` }
   }
   return entry.intelligence === null ? null : { kind: 'intelligence', value: entry.intelligence.toFixed(1) }
+}
+
+/**
+ * The accuracy the snapshot holds for one effort, when it holds a real number there.
+ * @param row - the model's Terminal-Bench 4 entry.
+ * @param effort - the normalized effort key (`''` for the neutral option, which is never looked up).
+ * @returns the accuracy in percent, or null when the board never measured that level.
+ */
+function effortAccuracy(row: TerminalBenchRow, effort: string): number | null {
+  // Own entries only: a picker level called `constructor` must not read `Object.prototype.constructor`.
+  if (effort === '' || !Object.hasOwn(row.efforts, effort)) return null
+  const value: number | undefined = row.efforts[effort]
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 /** The shared catalog promise: created once, resolved to null on any failure. */

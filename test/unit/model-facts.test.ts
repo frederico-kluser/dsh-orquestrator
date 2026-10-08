@@ -72,7 +72,26 @@ const CATALOG = {
       architecture: { input_modalities: ['text', 'video'] },
       benchmarks: { artificial_analysis: { intelligence_index: 20 } },
     },
-    { id: 'acme/opaque', name: 'Opaque', architecture: { input_modalities: [] }, benchmarks: {} },
+    {
+      id: 'openai/gpt-6-astra',
+      name: 'GPT-6 Astra',
+      architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+      benchmarks: { artificial_analysis: { intelligence_index: 52.4 } },
+    },
+    {
+      id: 'acme/astra-preview',
+      name: 'GPT-6 Astra',
+      architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+      benchmarks: { artificial_analysis: { intelligence_index: 30 } },
+    },
+    {
+      id: 'anthropic/opus-5',
+      name: 'Opus 5',
+      architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+      benchmarks: { artificial_analysis: { intelligence_index: 55.1 } },
+    },
+    {
+      id: 'acme/opaque', name: 'Opaque', architecture: { input_modalities: [] }, benchmarks: {} },
     { id: 'acme/no-architecture', name: 'Bare', benchmarks: { artificial_analysis: { intelligence_index: 3.8 } } },
     { id: 42, name: 'not a model' },
     { name: 'no id at all' },
@@ -97,11 +116,27 @@ describe('model-facts snapshot', () => {
     for (const key of keys) {
       assert.equal(key, normalizeModelName(key), `${key} is not normalized`)
       const row = TB4_SCORES[key]
-      assert.ok(row !== undefined && row.accuracy > 0 && row.accuracy <= 100, `${key} has an implausible accuracy`)
+      assert.ok(row !== undefined && row.max > 0 && row.max <= 100, `${key} has an implausible max`)
       assert.ok(typeof row.label === 'string' && row.label !== '')
+      // Every per-effort number the snapshot keeps is a real accuracy, and none exceeds the model's best.
+      for (const [effort, accuracy] of Object.entries(row.efforts)) {
+        assert.ok(Number.isFinite(accuracy) && accuracy > 0 && accuracy <= 100, `${key} has an implausible ${effort} accuracy`)
+        assert.ok(accuracy <= row.max, `${key} reports ${effort} above its own max`)
+      }
     }
     // The score-priority tests below are only meaningful while the board knows GLM.
     assert.ok(TB4_SCORES[normalizeModelName('GLM-5.3')] !== undefined, 'the snapshot lost GLM-5.3')
+  })
+
+  it('keeps the per-effort numbers the effort-aware score reads', () => {
+    // The board's real rows for GPT-6 Astra (captured 2026-10-08). If these numbers change the snapshot was
+    // regenerated: update this guard AND the expectations of the effort tests below.
+    assert.deepEqual(TB4_SCORES['gpt6astra']?.efforts, { max: 58.18, xhigh: 57.88, high: 57.88, medium: 54.24, low: 50.61 },
+      'the GPT-6 Astra rows moved: the effort tests below assert the numbers of the 2026-10-08 capture')
+    // A model measured at several levels is what makes an effort-aware score possible at all.
+    assert.ok(Object.keys(TB4_SCORES['gpt6astra']?.efforts ?? {}).length >= 3, 'the snapshot lost its multi-effort model')
+    // GLM-5.3 is the single-row control: one level, so every effort resolves to the same number.
+    assert.deepEqual(TB4_SCORES['glm53']?.efforts, { max: 41.82 })
   })
 
   it('normalizes punctuation, case and spacing away', () => {
@@ -119,7 +154,7 @@ describe('modelFactsOf matching', () => {
     stub(() => json(CATALOG))
     assert.deepEqual(await modelFactsOf('z-ai/glm-5.3', 'GLM 5.3'), {
       modalities: { text: true, image: true, audio: false, video: false },
-      score: { kind: 'terminal-bench-4', value: `${TB4_SCORES['glm53']?.accuracy.toFixed(1) ?? ''}%` },
+      score: { kind: 'terminal-bench-4', value: `${TB4_SCORES['glm53']?.max.toFixed(1) ?? ''}%` },
     })
     assert.equal(calls[0]?.url, 'https://openrouter.ai/api/v1/models')
     assert.ok(calls[0]?.init?.signal instanceof AbortSignal)
@@ -144,7 +179,7 @@ describe('modelFactsOf matching', () => {
     assert.deepEqual(await modelFactsOf('~z-ai/glm-latest'), {
       // The alias borrows the target's modalities and its Terminal-Bench 4 score, not its own empty ones.
       modalities: { text: true, image: true, audio: false, video: false },
-      score: { kind: 'terminal-bench-4', value: `${TB4_SCORES['glm53']?.accuracy.toFixed(1) ?? ''}%` },
+      score: { kind: 'terminal-bench-4', value: `${TB4_SCORES['glm53']?.max.toFixed(1) ?? ''}%` },
     })
   })
 
@@ -207,7 +242,7 @@ describe('modelFactsOf scores', () => {
     stub(() => json(CATALOG))
     const facts = await modelFactsOf('z-ai/glm-5.3', 'GLM 5.3')
     assert.equal(facts?.score?.kind, 'terminal-bench-4')
-    assert.equal(facts?.score?.value, `${TB4_SCORES['glm53']?.accuracy.toFixed(1) ?? ''}%`)
+    assert.equal(facts?.score?.value, `${TB4_SCORES['glm53']?.max.toFixed(1) ?? ''}%`)
     // One decimal and a percent sign, never the index the catalog also carries (44.8).
     assert.match(facts?.score?.value ?? '', /^\d+\.\d%$/)
   })
@@ -217,7 +252,7 @@ describe('modelFactsOf scores', () => {
     const facts = await modelFactsOf('z-ai/glm-5.3-20260101', 'GLM 5.3')
     assert.deepEqual(facts, {
       modalities: { text: true, image: false, audio: false, video: false },
-      score: { kind: 'terminal-bench-4', value: `${TB4_SCORES['glm53']?.accuracy.toFixed(1) ?? ''}%` },
+      score: { kind: 'terminal-bench-4', value: `${TB4_SCORES['glm53']?.max.toFixed(1) ?? ''}%` },
     })
   })
 
@@ -243,6 +278,93 @@ describe('modelFactsOf scores', () => {
     const facts = await modelFactsOf('acme/no-architecture')
     assert.deepEqual(facts?.score, { kind: 'intelligence', value: '3.8' })
     assert.deepEqual(facts?.modalities, { text: false, image: false, audio: false, video: false })
+  })
+})
+
+describe('modelFactsOf effort', () => {
+  /** The score value of one (model, effort) query; the effort is omitted entirely when the caller leaves it out. */
+  async function value(model: string, displayName: string | undefined, effort?: string | null): Promise<string | null | undefined> {
+    stub(() => json(CATALOG))
+    return (await modelFactsOf(model, displayName, effort))?.score?.value
+  }
+
+  it('resolves a multi-effort Terminal-Bench 4 model at the selected effort', async () => {
+    // GPT-6 Astra's real rows: max 58.18, xhigh/high 57.88, medium 54.24, low 50.61.
+    assert.equal(await value('openai/gpt-6-astra', 'GPT-6 Astra', 'low'), '50.6%')
+    assert.equal(await value('openai/gpt-6-astra', 'GPT-6 Astra', 'medium'), '54.2%')
+    assert.equal(await value('openai/gpt-6-astra', 'GPT-6 Astra', 'high'), '57.9%')
+    assert.equal(await value('openai/gpt-6-astra', 'GPT-6 Astra', 'xhigh'), '57.9%')
+    assert.equal(await value('openai/gpt-6-astra', 'GPT-6 Astra', 'max'), '58.2%')
+  })
+
+  it('falls back to the model\u2019s best accuracy for an effort the board never measured', async () => {
+    // Astra was not run at these levels: each one reads its max, 58.18. A level the board does know keeps its own row,
+    // whatever spelling and padding reaches us.
+    const unknown: [string, string][] = [['none', '58.2%'], ['minimal', '58.2%'], ['ultra', '58.2%'], ['reasoning-max', '58.2%'], ['MAX', '58.2%'], ['  low  ', '50.6%']]
+    for (const [effort, expected] of unknown) {
+      assert.equal(await value('openai/gpt-6-astra', 'GPT-6 Astra', effort), expected, `effort ${JSON.stringify(effort)}`)
+    }
+    // A level the snapshot has never heard of, including hostile ones, is not a lookup into Object.prototype.
+    for (const effort of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+      assert.equal(await value('openai/gpt-6-astra', 'GPT-6 Astra', effort), '58.2%', `effort ${effort}`)
+    }
+    assert.equal(({} as Record<string, unknown>)['polluted'], undefined)
+  })
+
+  it('reads a single-row model the same at every effort and at the neutral option', async () => {
+    // GLM-5.3 has exactly one row, at `max` (41.82): no level can change its number.
+    for (const effort of ['low', 'medium', 'high', 'max', 'xhigh', 'none', '']) {
+      assert.equal(await value('z-ai/glm-5.3', 'GLM 5.3', effort), '41.8%', `effort ${JSON.stringify(effort)}`)
+    }
+    assert.equal(await value('z-ai/glm-5.3', 'GLM 5.3', null), '41.8%')
+    assert.equal(await value('z-ai/glm-5.3', 'GLM 5.3', undefined), '41.8%')
+    assert.equal(await value('z-ai/glm-5.3', 'GLM 5.3'), '41.8%')
+  })
+
+  it('uses the best accuracy across rows as the fallback, not the row labelled max', async () => {
+    // Opus 5 is the real gap: xhigh (53.94) beats the row labelled `max` (51.82), so the neutral option shows 53.9.
+    assert.deepEqual(TB4_SCORES['opus5']?.efforts, { max: 51.82, xhigh: 53.94, high: 50.3, medium: 44.85, low: 34.85 })
+    assert.equal(await value('anthropic/opus-5', 'Opus 5', null), '53.9%')
+    assert.equal(await value('anthropic/opus-5', 'Opus 5', ''), '53.9%')
+    assert.equal(await value('anthropic/opus-5', 'Opus 5', 'none'), '53.9%')
+    assert.equal(await value('anthropic/opus-5', 'Opus 5', 'xhigh'), '53.9%')
+    assert.equal(await value('anthropic/opus-5', 'Opus 5', 'max'), '51.8%')
+    assert.equal(await value('anthropic/opus-5', 'Opus 5', 'low'), '34.9%')
+  })
+
+  it('keeps the intelligence index constant across every effort', async () => {
+    // OpenRouter publishes one scalar per model: it cannot move with the effort, and it IS the value at max effort.
+    assert.equal(TB4_SCORES[normalizeModelName('MiMo-V2.6-Pro')], undefined, 'the snapshot now knows MiMo: this proof is void')
+    for (const effort of [undefined, null, '', 'low', 'medium', 'high', 'max', 'xhigh', 'none', 'constructor']) {
+      assert.equal(await value('xiaomi/mimo-v2.6-pro', undefined, effort), '51.2', `effort ${String(effort)}`)
+    }
+    for (const effort of [undefined, null, '', 'low', 'max']) {
+      assert.equal(await value('deepseek/deepseek-v4.1-flash:free', undefined, effort), '12.3', `effort ${String(effort)}`)
+    }
+  })
+
+  it('never rejects, whatever the effort argument looks like', async () => {
+    stub(() => json(CATALOG))
+    for (const effort of [undefined, null, '', '   ', 7, {}, ['low'], true, Symbol('low')]) {
+      assert.doesNotThrow(() => modelFactsOf('z-ai/glm-5.3', 'GLM 5.3', effort as unknown as string))
+      assert.deepEqual(await modelFactsOf('z-ai/glm-5.3', 'GLM 5.3', effort as unknown as string), {
+        modalities: { text: true, image: true, audio: false, video: false },
+        score: { kind: 'terminal-bench-4', value: '41.8%' },
+      })
+    }
+  })
+
+  it('applies the effort to the Terminal-Bench row the display name supplies', async () => {
+    // `acme/astra-preview` is not Astra by slug: the display name is the only thing that finds the leaderboard row,
+    // and the selected effort is read from it like any other.
+    stub(() => json(CATALOG))
+    assert.equal((await modelFactsOf('acme/astra-preview', 'GPT-6 Astra', 'low'))?.score?.value, '50.6%')
+    assert.equal((await modelFactsOf('acme/astra-preview', 'GPT-6 Astra', 'max'))?.score?.value, '58.2%')
+    // Without the display name the same entry has no Terminal-Bench row: its own index, the same at every effort.
+    assert.equal((await modelFactsOf('acme/astra-preview', undefined, 'low'))?.score?.value, '30.0')
+    assert.equal((await modelFactsOf('acme/astra-preview', undefined, 'xhigh'))?.score?.value, '30.0')
+    // An alias resolves the target's rows, at the effort asked for.
+    assert.equal((await modelFactsOf('~z-ai/glm-latest', 'GLM 5.3', 'low'))?.score?.value, '41.8%')
   })
 })
 
@@ -325,7 +447,7 @@ describe('modelFactsOf resilience', () => {
       // A non-string display name is ignored, not fatal: the id still resolves on its own slug.
       assert.deepEqual(await modelFactsOf('z-ai/glm-5.3', model as unknown as string), {
         modalities: { text: true, image: true, audio: false, video: false },
-        score: { kind: 'terminal-bench-4', value: `${TB4_SCORES['glm53']?.accuracy.toFixed(1) ?? ''}%` },
+        score: { kind: 'terminal-bench-4', value: `${TB4_SCORES['glm53']?.max.toFixed(1) ?? ''}%` },
       })
     }
   })
@@ -368,6 +490,34 @@ describe('modelFactsOf cache', () => {
     assert.equal(await modelFactsOf('z-ai/glm-5.3'), null)
     assert.equal(await modelFactsOf('xiaomi/mimo-v2.6-pro'), null)
     assert.equal(calls.length, 1)
+  })
+
+  it('keys the cache by (model, effort) while the catalog stays one fetch', async () => {
+    stub(() => json(CATALOG))
+    const neutral = await modelFactsOf('openai/gpt-6-astra', 'GPT-6 Astra')
+    const low = await modelFactsOf('openai/gpt-6-astra', 'GPT-6 Astra', 'low')
+    const lowAgain = await modelFactsOf('openai/gpt-6-astra', 'GPT-6 Astra', 'low')
+    const high = await modelFactsOf('openai/gpt-6-astra', 'GPT-6 Astra', 'high')
+    assert.equal(calls.length, 1)
+    assert.equal(neutral?.score?.value, '58.2%')
+    assert.equal(low?.score?.value, '50.6%')
+    assert.equal(high?.score?.value, '57.9%')
+    assert.notEqual(neutral, low)
+    assert.notEqual(low, high)
+    assert.equal(low, lowAgain)
+  })
+
+  it('keys the neutral option, null and an empty effort to the same entry', async () => {
+    stub(() => json(CATALOG))
+    const missing = await modelFactsOf('openai/gpt-6-astra', 'GPT-6 Astra')
+    const empty = await modelFactsOf('openai/gpt-6-astra', 'GPT-6 Astra', '')
+    const blank = await modelFactsOf('openai/gpt-6-astra', 'GPT-6 Astra', '   ')
+    const nulled = await modelFactsOf('openai/gpt-6-astra', 'GPT-6 Astra', null)
+    assert.equal(calls.length, 1)
+    assert.equal(missing, empty)
+    assert.equal(empty, blank)
+    assert.equal(blank, nulled)
+    assert.equal(missing?.score?.value, '58.2%')
   })
 
   it('fetches again after the test hook drops the cache', async () => {

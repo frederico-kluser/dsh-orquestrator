@@ -4,6 +4,16 @@
  * unchanged; the plugin ships no colors, fonts or radii of its own beyond
  * mirroring the host's own component geometry (r12 fields, r16 sections).
  * Injected once as a `<style>` element and removed on plugin dispose.
+ *
+ * One control needs more than the tokens: the native `<select>` of the effort
+ * picker. Its control chrome AND its option rows carry explicit
+ * `background-color`/`color`/`border` from the same tokens, because a native
+ * select paints its closed box and its popup list from the platform scheme
+ * unless the page says otherwise (`color-scheme`), and DSH sets no
+ * `color-scheme` anywhere: in the dark theme the near-white label token landed
+ * on the platform's white popup and every row but the hovered one was
+ * invisible. The rows now follow the app's theme (`body[data-ds-dark-theme]`,
+ * the host's own dark marker), whatever the operating system says.
  * @module dsh-orquestrator/client/styles
  */
 
@@ -39,10 +49,12 @@ export const CSS = `
 .dsh-orq-picker-placeholder { color: var(--dsw-alias-label-dimmed); }
 .dsh-orq-picker-chevron { flex: none; display: inline-flex; color: var(--dsw-alias-label-secondary); }
 .dsh-orq-status { display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }
-.dsh-orq-select { box-sizing: border-box; width: 100%; height: 36px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; }
-.dsh-orq-select:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
-.dsh-orq-select:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
-.dsh-orq-select:disabled { cursor: not-allowed; opacity: 0.5; }
+.dsh-orq-select { box-sizing: border-box; width: 100%; height: 36px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 12px; background-color: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; color-scheme: light; }
+.dsh-orq-select option { background-color: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); }
+.dsh-orq-select:hover:not(:disabled) { background-color: var(--dsw-alias-interactive-bg-hover); }
+.dsh-orq-select:focus-visible { border-color: var(--dsw-alias-brand-primary); outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+.dsh-orq-select:disabled { border-color: var(--dsw-alias-border-l2); background-color: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); cursor: not-allowed; }
+body[data-ds-dark-theme] .dsh-orq-select { color-scheme: dark; }
 .dsh-orq-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .dsh-orq-fact { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 24px; height: 24px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-dimmed); }
 .dsh-orq-fact svg { display: block; flex: none; }

@@ -15,6 +15,10 @@
  * not even while the catalog is still loading. Under the select, a capability
  * strip says what the effective model understands (audio, images, text, video)
  * and, when it is known, its benchmark score; an unknown model shows no strip.
+ * The strip follows the effort as well: the facts are asked for the pair (model,
+ * chosen level), so picking a level re-resolves the badge, and the neutral row
+ * asks for the model itself (the data layer answers with its ceiling). A late
+ * answer for a pair the user has already left never lands on the strip.
  *
  * When the host offers the global orchestration skill (gate mode), the last
  * section holds one checkbox that applies the skill to the message being sent: a
@@ -26,9 +30,11 @@
  * the box then shows ticked and locked, the hint says so, and the gate never
  * removes that token.
  *
- * "Cancel" (button, Escape, mask click) never blocks the task: in gate mode it
- * clears any stored choice and lets the task go out exactly as stock DSH, with
- * no skill token.
+ * "Cancel" (button, the ✕, Escape, a mask click) sends nothing: the task is
+ * aborted, so no prompt goes out, no message appears, the composer keeps what
+ * the user typed, and neither the configuration nor the skill answer is stored
+ * (that is the gate's `abort` decision, not a prompt). Configure mode has
+ * nothing to send: there a cancel simply stores nothing, as it always did.
  * @module dsh-orquestrator/client/OrchestratorDialog
  */
 
@@ -61,9 +67,6 @@ export interface OrchestratorDialogProps {
 
 /** Window after a menu closed during which Escape/mask must not also close the dialog. */
 const MENU_CLOSE_GUARD_MS = 300
-
-/** How long a gate-mode cancel waits for the host to clear the stored choice. */
-const CANCEL_CLEAR_WAIT_MS = 1_500
 
 /** One input modality of the capability strip, in the order the strip shows them. */
 const MODALITIES = [
@@ -112,6 +115,17 @@ function CapabilityStrip({ facts, t }: { readonly facts: ModelFacts; readonly t:
         : <span className="dsh-orq-facts-score">{t(SCORE_LABELS[score.kind], { value: score.value })}</span>}
     </div>
   )
+}
+
+/**
+ * The identity of one facts question: the effective model and the level the strip follows. Two answers for
+ * different pairs answer different questions, so a late one can never stand in for the current one.
+ * @param model - the effective model id, or undefined while there is no model at all.
+ * @param effort - the chosen level, or null for the neutral row.
+ * @returns a key equal for the same question and different for any other.
+ */
+function factsKey(model: string | undefined, effort: string | null): string {
+  return JSON.stringify([model ?? null, effort])
 }
 
 /**
@@ -170,45 +184,41 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
     setWorkerEffort(highestEffortOf(route === null ? undefined : ladderOf(catalog.groups, route)))
   }, [catalog.groups])
 
-  // The facts of the effective model, fetched as the selection changes. Keyed by the model id: a slow
-  // answer for a model the user has already left never lands on the strip. Unknown models resolve null
-  // and show no strip at all; the request itself never blocks the dialog.
+  // The facts of the effective model AT the chosen effort, fetched as either changes. Keyed by the pair: a slow
+  // answer for a pair the user has already left never lands on the strip. A null effort is the neutral row, which
+  // the data layer resolves to the model's own ceiling. Unknown models resolve null and show no strip at all.
   const factsModel = effectiveRoute?.model
   const factsName = effectiveRoute === null ? undefined : modelName(catalog.groups, effectiveRoute)
-  const factsKey = useRef<string | undefined>(undefined)
+  const factsEffort = workerChosen
+  const factsPair = useRef('')
   useEffect(() => {
-    factsKey.current = factsModel
+    const pair = factsKey(factsModel, factsEffort)
+    factsPair.current = pair
     setFacts(null)
     if (factsModel === undefined) return
     let live = true
-    void modelFactsOf(factsModel, factsName).then((next) => {
-      if (!live || factsKey.current !== factsModel) return
+    void modelFactsOf(factsModel, factsName, factsEffort).then((next) => {
+      if (!live || factsPair.current !== pair) return
       setFacts(next)
     })
     return () => { live = false }
-  }, [factsModel, factsName])
+  }, [factsModel, factsName, factsEffort])
 
   const noteTexts = (route: ModelRoute | null): string[] => (
     route === null ? [] : notesFor(route).slice(0, 2).map(note => t(`note.${note}` as OrchestratorKey))
   )
 
-  const cancel = useCallback(async (): Promise<void> => {
+  // Cancel aborts the send: nothing is written here (no configuration, no skill answer) and the gate turns this
+  // answer into a prompt that never happens, so the composer keeps the text as a draft. Configure mode has nothing
+  // to send, so its cancel only means "store nothing" — which it already did by writing nothing.
+  const cancel = useCallback((): void => {
     if (busy) return
-    if (mode === 'gate') {
-      // The stock behavior must win for this task: drop any stored choice, but
-      // never let a slow host hold the send hostage.
-      setBusy(true)
-      await Promise.race([
-        request.save(null).catch(() => undefined),
-        new Promise<void>((resolve) => { setTimeout(resolve, CANCEL_CLEAR_WAIT_MS) }),
-      ])
-    }
     request.resolve({ kind: 'cancel' })
-  }, [busy, mode, request])
+  }, [busy, request])
 
   const onClose = useCallback(() => {
     if (menuOpen.current || Date.now() - menuClosedAt.current < MENU_CLOSE_GUARD_MS) return
-    void cancel()
+    cancel()
   }, [cancel])
 
   const confirm = useCallback(async (): Promise<void> => {
@@ -245,7 +255,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
       className="dsh-orq-dialog"
       footer={(
         <>
-          <Button variant="outline" disabled={busy} title={mode === 'gate' ? t('button.cancelHint') : undefined} onClick={() => { void cancel() }}>
+          <Button variant="outline" disabled={busy} title={mode === 'gate' ? t('button.cancelHint') : undefined} onClick={cancel}>
             {t('button.cancel')}
           </Button>
           <Button

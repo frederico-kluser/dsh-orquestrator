@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.8.3
+
+**Three fixes to the model area** (asked right after 0.8.2): the score follows the effort select, the effort
+select is legible in both themes, and Cancel/✕/Esc abort the send.
+
+- **The score follows the effort.** The badge re-resolves whenever the effort select changes. What the data
+  supports (verified across all 469 models of OpenRouter's public catalog): the intelligence index is ONE
+  scalar per model and does not vary with effort — so an Intelligence badge is constant across levels, which
+  is exactly the "show the intelligence at max" fallback asked for. Terminal-Bench 4 IS per effort: a model
+  whose leaderboard rows have the chosen level shows that accuracy (GPT-6 Astra: low 50.6 → medium 54.2 →
+  high/xhigh 57.9 → max 58.2), otherwise the value at the model's best level (GLM 5.3 has a single `max` row:
+  41.8% at every level). The snapshot keeps the per-effort rows now (`scripts/gen-bench.mjs` regenerates it).
+- **The select is legible.** The effort select no longer renders white-on-white: explicit background, text,
+  border and option-list colors from DSH's tokens and a `color-scheme` that follows the app theme — contrast
+  15.0:1 dark / 18.9:1 light (5.8:1 disabled), focused and unfocused alike.
+- **Cancel means cancel.** Cancel, the ✕, Escape and a mask click now ABORT the send: nothing goes out, no
+  bubble appears (the optimistic echo is abandoned), the typed text stays in the composer as a draft, and
+  nothing is stored. Only "Send with these options" sends. (Those paths used to send the message with stock
+  behavior — the 0.6.0 rule.)
+- **Tests:** 900 on the Mac mini (39 data-layer, 108 dialog/gate). In the browser: the skill script 202/203
+  (the single miss is S10 in a reused home — a test-state artifact, not the product) and every legacy phase
+  green (cancel 29/29, effort 25/25, light 7/7, small 10/10, confirm 14/14, workflow 11/11). The three
+  behaviors were re-verified independently against the DOM, the POSTed configs, the session logs and
+  screenshots — including a live badge that moved 58.2/50.6/54.2/57.9/57.9/58.2 through the picker on a
+  temporary multi-effort model.
+
+Compatibility: none on the wire — 0.8.0 through 0.8.3 halves mix fine.
+
 ## 0.8.2
 
 **The dialog's model area, rebuilt** (asked right after 0.8.1): the skill checkbox is always toggleable again,

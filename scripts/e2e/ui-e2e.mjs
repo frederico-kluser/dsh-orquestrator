@@ -7,12 +7,21 @@
  *   PHASE=<name> scripts/e2e/with-server.sh node scripts/e2e/ui-e2e.mjs    starts that isolated server (and DSH_URL) for you
  *
  * PHASE:
- *   cancel    a new task raises the modal (one switch, no "do not ask again"); Escape/Cancel sends it as stock DSH
- *   small     a short laptop screen with the model chosen and the effort select on screen: the actions stay reachable
- *   light     light theme, keyboard focus trap, Esc handling while a menu is open
+ *   cancel    a new task raises the modal (one switch, no "do not ask again"); EVERY way out of it — Escape, the ✕, the
+ *             Cancel button, a click on the mask — ABORTS the send (0.8.3): the transcript shows no message, the session
+ *             log gains no user message, nothing is stored and the composer keeps the text (needs ORQ_SESSIONS_DIR: the
+ *             log is the witness that nothing was sent)
+ *   small     a short laptop screen with the model chosen and the effort select on screen: the actions stay reachable,
+ *             and the select is legible on its OWN computed paint (dark theme)
+ *   light     light theme, keyboard focus trap, Esc handling while a menu is open, and the same legibility assertion for
+ *             the effort select (light theme)
  *   command   /orquestrar opens the configure dialog, Save persists, and the next send asks again (pre-filled)
  *   effort    the native reasoning-effort select (always visible, a first neutral option, the model's own ladder,
- *             auto-max on a model pick) and the model notes; it only clicks through the dialog and sends one-word tasks
+ *             auto-max on a model pick) and the model notes; it only clicks through the dialog and sends one-word tasks.
+ *             The badge's VALUE and its constancy across the ladder are asserted in scripts/e2e/ui-e2e-skill.mjs (its
+ *             fixture knows the numbers); this phase reads the LIVE catalog, where the intelligence index is one scalar
+ *             per model, so all it asserts is that the strip survives an effort change with the same numbers — a change
+ *             of value is never expected here. See the DEBUG line it prints with both badge texts.
  *   confirm   choose the subagent model, send, and read the child back from the DSH session logs (needs ORQ_SESSIONS_DIR)
  *   readme    README screenshots: a realistic task, the dialog empty and then with a model chosen. The browser is closed
  *             without answering the dialog, so the task is never sent to a model (`readme` is dark, `readme-light` light)
@@ -211,15 +220,43 @@ const clearedOnWire = (sessionId) => wire.some((item) => {
 })
 
 /**
+ * Clear one session's stored choice through the host's OWN configuration route (the write the plugin's gate made on a
+ * cancel before 0.8.3). A cancel cannot do it any more: since 0.8.3 Escape/✕/Cancel/mask ABORT the send and store
+ * nothing, so `askClean` needs the route itself. The write is a `fetch` from the PAGE's own document — same origin, same
+ * cookies and the same Origin/Referer the plugin's own client sends, which is what the host's trust fence reads — and it
+ * is recorded on `wire`, so the report shows it like any other write.
+ */
+async function clearStored(session) {
+  try {
+    const answer = await page.evaluate(async (id) => {
+      const response = await fetch('/dsh-orquestrator/config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: id, config: null }),
+      })
+      return { status: response.status, text: (await response.text()).slice(0, 4000) }
+    }, session)
+    if (answer.status !== 200) console.log(`DEBUG clearStored(${String(session).slice(0, 12)}) -> ${String(answer.status)} ${String(answer.text).slice(0, 200)}`)
+  } catch (error) {
+    console.log(`DEBUG clearStored(${String(session).slice(0, 12)}) threw: ${String(error).slice(0, 200)}`)
+  }
+  // The request is recorded by the page's own listener (no synthetic entry: the same write must not appear twice in the
+  // report). `clearedOnWire` is what `askClean` waits on before it asks again.
+  const entry = [...wire].reverse().find((item) => item.method === 'POST' && bodySession(item) === session)
+  if (entry !== undefined) entry.injected = true
+  return entry
+}
+
+/**
  * Ask a task whose dialog opens on the INERT configuration, whatever the page landed on.
  *
  * A shared validation home keeps one choice per conversation — the plugin stores it per session, `New session` reuses
  * an abandoned session, and the server restores the last conversation on load — so a dialog can arrive with the switch
  * already on and a level already picked, which is the opposite of what the phases that witness the dialog's INITIAL
- * state (the switch off, the neutral effort row, "confirm waits for a model") need. Cancelling the first dialog IS the
- * clear: a gate-mode cancel stores null for that session (`save(null)`), and the message goes out as stock DSH. The
- * same task is then asked again, and that dialog opens inert — nothing is remembered by a cancel, and the browser
- * context is new, so the plugin's fallback is its OFF configuration.
+ * state (the switch off, the neutral effort row, "confirm waits for a model") need. 0.8.3 removed the cancel-clears-it
+ * path (a cancel now aborts the send and stores nothing), so the stored choice is cleared through the host's own route
+ * (`clearStored`) — after closing the dialog WITHOUT answering it, which sends nothing and leaves the draft in the
+ * composer where `typeTask` clears it. The same task is then asked again and that dialog opens inert.
  * @param task - the task text to ask with.
  * @returns the session the dialog belongs to and whether a stored choice had to be cleared first.
  */
@@ -231,12 +268,12 @@ async function askClean(task) {
   const stored = hostAnswer(session)?.config ?? null
   if (stored === null) return { session, cleaned: false }
   await trace(`clean-ask: ${String(session).slice(0, 12)} arrived with a stored choice`)
+  // Close it WITHOUT answering: since 0.8.3 that cancels the send (nothing is stored, no message goes out) and the draft
+  // is still in the composer when the next `typeTask` settles it.
   await page.keyboard.press('Escape')
   await dialog().waitFor({ state: 'hidden', timeout: 8_000 })
-  // The clear is its own request: wait for it to be on the wire before asking again, or the second dialog reads the
-  // choice the cancel is still clearing. The cancelled task runs as stock DSH meanwhile, so let its turn finish too.
+  await clearStored(session)
   for (let waited = 0; waited < 8_000 && !clearedOnWire(session); waited += 200) await page.waitForTimeout(200)
-  await turnDown()
   await typeTask(task)
   await page.keyboard.press('Enter')
   await dialog().waitFor({ state: 'visible', timeout: 15_000 })
@@ -288,6 +325,35 @@ const composerText = () => composer().evaluate((element) => ('value' in element 
   .then(cleanText).catch(() => '<no composer>')
 
 /**
+ * Select-all in the composer: the PLATFORM's own accelerator. `Control+A` is not select-all on macOS (Chrome moves the
+ * caret), so `Control+A` + `Backspace` deleted a character per round and the drafts accumulated — which the cancel phase
+ * hits head-on, because since 0.8.3 a cancel LEAVES the draft in the composer (found by the 0.8.3 verifier on the Mac
+ * mini: `Control+A` left `alpha bravo charlie` untouched, `Meta+A` emptied it).
+ */
+const SELECT_ALL = process.platform === 'darwin' ? 'Meta+A' : 'Control+A'
+
+/**
+ * Empty the composer: select-all + Backspace first, then — when the text is still there — erase that text character by
+ * character from the caret outwards in both directions. Returns whether the composer really ended up empty.
+ */
+async function clearComposer() {
+  for (let round = 0; round < 4; round += 1) {
+    const held = await composerText()
+    if (held === '') return true
+    await composer().click()
+    await page.keyboard.press(SELECT_ALL)
+    await page.keyboard.press('Backspace')
+    if ((await composerText()) === '') return true
+    for (let index = 0; index < held.length + 2; index += 1) await page.keyboard.press('Backspace')
+    for (let index = 0; index < held.length + 2; index += 1) await page.keyboard.press('Delete')
+    await page.waitForTimeout(200)
+  }
+  const left = await composerText()
+  if (left !== '') console.log(`DEBUG the composer could not be emptied: ${JSON.stringify(left)}`)
+  return left === ''
+}
+
+/**
  * The composer a send is typed into: on screen, EMPTY (a draft left by an earlier step would ride along with the next
  * message) and past the pane swap that a "New session" click starts. The mount is followed by effects — the gate
  * attaches to the session face and the overlay registers as the presenter — and a send that beats them raises no
@@ -295,13 +361,7 @@ const composerText = () => composer().evaluate((element) => ('value' in element 
  */
 async function settleComposer() {
   await composer().waitFor({ state: 'visible', timeout: 15_000 })
-  for (let round = 0; round < 6; round += 1) {
-    if ((await composerText()) === '') break
-    await composer().click()
-    await page.keyboard.press('Control+A')
-    await page.keyboard.press('Backspace')
-    await page.waitForTimeout(300)
-  }
+  await clearComposer()
   await page.waitForTimeout(600)
 }
 
@@ -314,15 +374,13 @@ async function typeTask(text) {
   await settleComposer()
   const wanted = cleanText(text)
   let held = ''
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     await composer().click()
     await page.keyboard.type(text, { delay: 5 })
     await page.waitForTimeout(200)
     held = await composerText()
     if (held === wanted) break
-    await page.keyboard.press('Control+A')
-    await page.keyboard.press('Backspace')
-    await page.waitForTimeout(300)
+    await clearComposer()
   }
   if (held !== wanted) console.log(`DEBUG the composer holds ${JSON.stringify(held)} for the task ${JSON.stringify(wanted)}`)
 }
@@ -353,8 +411,9 @@ async function crash(where, error) {
   const sessions = (() => {
     try { return sessionSnapshot(process.env.ORQ_SESSIONS_DIR) } catch { return [] }
   })()
-  const detail = { phase, where, error: String(error).slice(0, 1200), shape: await shape().catch(() => null), dom: await domNow().catch(() => null), timeline: await page.evaluate(() => window.__orqTimeline ?? []).catch(() => []), wire, pageErrors, failedResponses: failedUrls, checks, sessions }
-  console.log(`\nCRASH ${phase} at ${where}: ${String(error).split('\n')[0]}`)
+  // The STACK, not just the message: a crash outside the awaited chain (uncaughtException) has no other trace.
+  const detail = { phase, where, error: String(error?.stack ?? error).slice(0, 4000), shape: await shape().catch(() => null), dom: await domNow().catch(() => null), timeline: await page.evaluate(() => window.__orqTimeline ?? []).catch(() => []), wire, pageErrors, failedResponses: failedUrls, checks, sessions }
+  console.log(`\nCRASH ${phase} at ${where}: ${String(error?.stack ?? error).split('\n').slice(0, 6).join(' | ')}`)
   console.log(`CRASH shape=${JSON.stringify(detail.shape)} sessions=${JSON.stringify(sessions)}`)
   try { writeFileSync(`${stamp}.json`, JSON.stringify(detail, null, 2)) } catch { /* the console lines above already carry the essentials */ }
   try { writeFileSync(`${out}/${phase}.report.json`, JSON.stringify({ phase, crashed: where, checks, wire, pageErrors, failedResponses: failedUrls }, null, 2)) } catch { /* ditto */ }
@@ -369,6 +428,8 @@ process.on('uncaughtException', (error) => { void crash('uncaughtException', err
 const TASK_CANCEL = 'Reply with exactly the word: stock'
 
 if (phase === 'cancel') {
+  const sessionsDir = process.env.ORQ_SESSIONS_DIR
+  if (sessionsDir === undefined) throw new Error('ORQ_SESSIONS_DIR is required for the cancel phase: the session log is the witness that nothing was sent')
   await open()
   await shot('01-home')
   // The switch must START off for this phase, so the question is asked on a session with no stored choice (see `askClean`).
@@ -378,7 +439,12 @@ if (phase === 'cancel') {
   check('modal appears when a new task is sent from the composer', visible)
   await shot('02-modal')
   if (visible) {
-    check('title and gate description shown', await dialog().getByText('Cancel sends the task as usual.').isVisible())
+    // 0.8.3: the modal's own words. Its copy is the product's (never pinned here) — but the 0.8.2 sentence that promised
+    // "Cancel sends the task as usual." is the exact claim the change reverses, so its ABSENCE is asserted, while the
+    // description itself is only required to say something of its own beyond the task it previews.
+    const dialogText = (await dialog().innerText()).replace(/\s+/g, ' ')
+    const explanation = dialogText.split(TASK_CANCEL).join(' ').replace(/\s+/g, ' ').trim()
+    check('the dialog explains itself in its own words (a description beyond the task preview) and no longer promises that a cancel sends the task', explanation.length >= 20 && !/cancel sends the task as usual/i.test(dialogText), `${String(explanation.length)} chars of own copy; the 0.8.2 promise still there=${String(/cancel sends the task as usual/i.test(dialogText))}`)
     check('task preview shows what is being sent', await dialog().getByText(TASK_CANCEL).isVisible())
     const switches = dialog().getByRole('switch')
     check('one switch (the subagent model); there is no reviewer', (await switches.count()) === 1 && (await dialog().getByText(/reviewer/i).count()) === 0, await switches.count())
@@ -388,16 +454,57 @@ if (phase === 'cancel') {
     check('there is no "do not ask again" checkbox: the modal always asks', (await dialog().getByRole('checkbox', { name: /ask again|remember|do not ask/i }).count()) === 0 && (await boxes.count()) <= 1, await boxes.count())
     check('primary action is focused', await dialog().getByRole('button', { name: 'Send with these options' }).evaluate((element) => element === document.activeElement))
 
-    await page.keyboard.press('Escape')
-    await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('Escape closes the modal', true), () => check('Escape closes the modal', false))
+    // 0.8.3 (a REVERSAL of the 0.6.0 behavior these checks used to assert): EVERY way out of the modal ABORTS the send.
+    // The paths are walked one at a time, and each of them is judged on the same four observables — the transcript draws
+    // no message, the session log gains NO user message, no configuration write goes out, and the draft stays in the
+    // composer. The log is read through `userMessagesIn`, so a message that really went out is named in the failure.
+    const session = lastReadSession()
+    const baseline = (userMessagesIn(sessionsDir, session) ?? []).length
+    const postsBefore = wire.filter((item) => item.method === 'POST').length
+    const paths = [
+      ['Escape', TASK_CANCEL, async () => page.keyboard.press('Escape')],
+      ['the ✕ (Close)', 'Reply with exactly the word: closed', async () => dialog().getByRole('button', { name: 'Close', exact: true }).click()],
+      ['the Cancel button', 'Reply with exactly the word: cancelled', async () => dialog().getByRole('button', { name: 'Cancel', exact: true }).click()],
+      ['a click on the mask', 'Reply with exactly the word: masked', async () => { await page.mouse.click(30, 400) }],
+    ]
+    for (const [how, task, close] of paths) {
+      // The Escape path answers the modal `askClean` already raised; the others type a fresh draft (the previous cancel
+      // left its own in the composer, and `typeTask` settles it away first).
+      if (how !== 'Escape') {
+        await typeTask(task)
+        await page.keyboard.press('Enter')
+      }
+      const raised = await dialog().waitFor({ state: 'visible', timeout: 15_000 }).then(() => true, () => false)
+      await close()
+      await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check(`${how}: the draft raises the modal and the path closes it`, raised), () => check(`${how}: the draft raises the modal and the path closes it`, false))
+      await page.waitForTimeout(1_500) // a send (or its optimistic echo) would have landed by now
+      const bubble = await transcriptHas(task)
+      check(`${how}: NOTHING was sent — the transcript draws no message for the task`, !bubble.held, `${String(bubble.bubbles)} bubble(s) on screen, holding it=${String(bubble.held)}`)
+      const logged = userMessagesIn(sessionsDir, session)
+      const gained = logged === undefined ? undefined : logged.length - baseline
+      check(`${how}: the session log gained NO user message (the host never saw the task)`, gained === 0, `${String(baseline)} -> ${logged === undefined ? 'no log' : String(logged.length)}${gained !== undefined && gained > 0 ? ` (${JSON.stringify(logged.slice(baseline))})` : ''}`)
+      check(`${how}: the composer still holds the typed text (the draft survived the cancel)`, (await composerText()) === cleanText(task), JSON.stringify(await composerText()))
+    }
+    check('not one of the four cancel paths stored anything (no configuration write went out, cleared or otherwise)', wire.filter((item) => item.method === 'POST').length === postsBefore, `${String(postsBefore)} -> ${String(wire.filter((item) => item.method === 'POST').length)} POSTs`)
+    // ...and the composer is left exactly as it was ("as if it had not been sent"): the same draft raises the modal again,
+    // unchanged, and answering it for real this time must send the task normally — the message reaches the session log and
+    // the transcript. That is also the proof that the four "nothing was sent" checks above were not vacuous.
+    await typeTask(TASK_CANCEL)
+    await page.keyboard.press('Enter')
+    const again = await dialog().waitFor({ state: 'visible', timeout: 15_000 }).then(() => true, () => false)
+    check('the next dialog still works after four cancels (the switch off, the preview intact)', again && (await dialog().getByRole('switch').nth(0).getAttribute('aria-checked')) === 'false' && await dialog().getByText(TASK_CANCEL).isVisible())
+    await shot('03-after-cancel')
+    await dialog().getByRole('button', { name: 'Send with these options' }).click()
+    await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('the confirmed dialog closes', true), () => check('the confirmed dialog closes', false))
+    let sent = userMessagesIn(sessionsDir, session) ?? []
+    for (let waited = 0; waited < 20_000 && sent.length <= baseline; waited += 500) {
+      await page.waitForTimeout(500)
+      sent = userMessagesIn(sessionsDir, session) ?? []
+    }
+    check('the NEXT send from that composer goes out normally (the session log gains the task, and nothing was lost by the cancels)', sent.length === baseline + 1 && sent.at(-1).startsWith(cleanText(TASK_CANCEL)), `${String(baseline)} -> ${String(sent.length)}: ${JSON.stringify(sent.slice(baseline))}`)
+    const drawn = await transcriptHas(TASK_CANCEL)
+    check('...and the task is drawn in the transcript (the cancels did not break the composer)', drawn.held, `${String(drawn.bubbles)} bubble(s), holding it=${String(drawn.held)}`)
   }
-  // The task must have been sent anyway (stock behavior): the user message shows in the transcript.
-  const sent = await page.getByText(TASK_CANCEL).first().isVisible().catch(() => false)
-  await page.waitForTimeout(2500)
-  check('after Cancel/Escape the task is sent as stock DSH', sent || (await page.getByText(TASK_CANCEL).count()) > 0)
-  await shot('03-after-cancel')
-  const config = wire.filter((item) => item.method === 'POST')
-  check('cancel wrote null (no orchestration stored)', config.length >= 1 && config.every((item) => JSON.parse(item.body ?? '{}').config === null), JSON.stringify(config.map((item) => ({ s: item.status, b: item.body?.slice(0, 80) }))))
   check('no page errors', relevantErrors().length === 0, relevantErrors().join(' | '))
   await finish()
 }
@@ -461,6 +568,98 @@ async function effortSelect() {
 
 /** The option the select shows right now. */
 const shownEffort = (select) => (select === undefined ? { value: null, text: null } : { value: select.values[select.selected] ?? null, text: select.options[select.selected] ?? null })
+
+/** Contrast ratio of two `rgb(a)` strings (WCAG 2.x relative luminance). */
+function contrast(foreground, background) {
+  const parse = (value) => (String(value).match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)
+  const luminance = (rgb) => {
+    const [r, g, b] = rgb.map((v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4 })
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+  }
+  const [a, b] = [luminance(parse(foreground)), luminance(parse(background))]
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+}
+
+/** The alpha of a computed `rgb(a)` colour (1 when it carries none). The closing parenthesis is never part of the
+ * number: `Number('rgba(38, 49, 72, 0.06)'.split(',')[3])` is NaN, which made a translucent DSH hover token read as
+ * "not painted" and the legibility check that measured it fail (found by the 0.8.3 verifier on the Mac mini). */
+const alphaOf = (value) => {
+  const parts = String(value).match(/[0-9.]+/g) ?? []
+  return String(value).startsWith('rgba') && parts.length >= 4 ? Number(parts[3]) : 1
+}
+
+/** `foreground` composited over `background`: what the eye really sees through a translucent paint. */
+function over(foreground, background) {
+  const parts = (value) => (String(value).match(/[\d.]+/g) ?? []).slice(0, 4).map(Number)
+  const [r, g, b, a = 1] = parts(foreground)
+  const [br, bg, bb] = parts(background)
+  const mix = (front, back) => Math.round(front * a + back * (1 - a))
+  return `rgb(${String(mix(r, br))}, ${String(mix(g, bg))}, ${String(mix(b, bb))})`
+}
+
+/** Whether a computed colour is (near) pure white: the paint the 0.8.2 select fell back to in the dark theme. */
+const isWhite = (value) => (String(value).match(/[\d.]+/g) ?? []).slice(0, 3).map(Number).every((channel) => channel >= 250)
+
+/**
+ * The 0.8.3 legibility assertion for the effort select: its OWN computed background must be PAINTED (never transparent)
+ * and its text must contrast with what is really behind that paint (>= 4.5) — resting AND focused. In the dark theme the
+ * background must not be white either: white-on-white with its items readable only on hover is what 0.8.2 shipped. The
+ * check reads COMPUTED styles (and composites a translucent paint over the dialog's surface); the stylesheet is never
+ * consulted, so a `--dsw-alias-*` token that resolves to nothing is caught like any other.
+ */
+async function checkSelectLegibility(where) {
+  // `effortSelect` is ASYNC: without the await, `select` was a Promise, `select.handle` was undefined and the whole
+  // light phase died on `Cannot read properties of undefined (reading 'evaluate')` before it measured anything
+  // (found by the 0.8.3 verifier on the Mac mini: the writers' own light/small phases crashed on this line).
+  const select = await effortSelect()
+  if (select === undefined) {
+    check(`${where}: the effort select is on screen and its computed paint can be read`, false, 'no <select> in the dialog')
+    return
+  }
+  const read = async () => select.handle.evaluate((element) => {
+    const style = getComputedStyle(element)
+    return { background: style.backgroundColor, color: style.color, focused: document.activeElement === element }
+  })
+  const resting = await read()
+  await select.handle.focus({ timeout: 4_000 }).catch(() => undefined)
+  await page.waitForTimeout(150)
+  const focused = await read()
+  await select.handle.blur({ timeout: 4_000 }).catch(() => undefined)
+  // The surface behind the select, walked up from the SELECT ITSELF: starting at the dialog's first `<select>` would stop
+  // at the model picker's own background on a home whose picker is a native select.
+  const surface = await select.handle.evaluate((element) => {
+    // Browser context: this parser cannot come from the Node side.
+    const alpha = (value) => {
+      const parts = String(value).match(/[0-9.]+/g) ?? []
+      return String(value).startsWith('rgba') && parts.length >= 4 ? Number(parts[3]) : 1
+    }
+    for (let node = element; node !== null; node = node.parentElement) {
+      const value = getComputedStyle(node).backgroundColor
+      if (alpha(value) > 0.5) return value
+    }
+    return 'rgb(255, 255, 255)'
+  })
+  for (const [state, value] of [['unfocused', resting], ['focused', focused]]) {
+    const alpha = alphaOf(value.background)
+    const seen = alpha >= 1 ? value.background : over(value.background, surface)
+    const ratio = contrast(value.color, seen)
+    check(`${where}: the effort select paints its OWN background (computed, never transparent) and its text contrasts with it (>= 4.5) — ${state}`, alpha > 0 && ratio >= 4.5, `background ${value.background} (alpha ${String(alpha)}) over ${surface} = ${seen}; text ${value.color}; contrast ${ratio.toFixed(2)}; focus observed=${String(value.focused)}`)
+    if (scheme === 'dark') check(`${where}: its background is not WHITE in the dark theme (the 0.8.2 white-on-white) — ${state}`, !isWhite(seen), `${seen} from ${value.background} over ${surface}`)
+  }
+}
+
+/**
+ * Whether the transcript draws a user bubble holding that text right now — the composer's own draft is NOT a message,
+ * which is exactly what has to be told apart after a cancel (the text is still on the page, in the composer).
+ */
+async function transcriptHas(text) {
+  const wanted = cleanText(text)
+  const [held, bubbles] = await page.evaluate((needle) => [
+    [...document.querySelectorAll('[class*="bubble"]')].some((node) => (node.textContent ?? '').replace(/\s+/g, ' ').includes(needle)),
+    document.querySelectorAll('[class*="bubble"]').length,
+  ], wanted)
+  return { held, bubbles }
+}
 
 /**
  * The reasoning levels the isolated home declares for one model id: the witness for "the model's own ladder plus ONE
@@ -575,6 +774,22 @@ function sessionSnapshot(sessionsDir) {
   }).sort((left, right) => (left.createdAt ?? 0) - (right.createdAt ?? 0))
 }
 
+/**
+ * Every user message one session's log holds right now, read from the home's own logs: the ground truth for "the send
+ * never happened". The cancel phase compares the count before and after each path (a message that WAS sent shows up
+ * here even when the transcript is too short to tell), and names the texts so a failure reports what really went out.
+ */
+function userMessagesIn(sessionsDir, sessionId) {
+  if (sessionsDir === undefined || sessionId === undefined) return undefined
+  for (const file of sessionLogFiles(sessionsDir)) {
+    if (basename(dirname(file)) !== sessionId) continue
+    return readEventsAt(file)
+      .filter((event) => event.type === 'user/message' && event.data?.source?.kind === 'user')
+      .map((event) => (event.data.content ?? []).map((part) => part.text ?? '').join('').replace(/\s+/g, ' ').trim())
+  }
+  return undefined
+}
+
 if (phase === 'workflow') {
   const sessionsDir = process.env.ORQ_SESSIONS_DIR
   if (sessionsDir === undefined) throw new Error('ORQ_SESSIONS_DIR is required for the workflow phase')
@@ -687,6 +902,9 @@ if (phase === 'light') {
   }
   check('Tab never leaves the dialog (focus trap)', escaped === 0, `${String(escaped)} of 14 tabs escaped`)
   console.log('DEBUG dialog visible after tabs:', await dialog().isVisible(), '| text:', (await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 160))
+  // 0.8.3: the effort select must be legible on its OWN computed paint in the light theme too (never transparent, text at
+  // contrast >= 4.5), resting and focused. The dialog is still untouched here: the switch comes on below.
+  await checkSelectLegibility('light theme')
 
   // Escape belongs to an open menu first; the dialog survives and closes on the next Escape.
   await switchOn().catch((error) => console.log('DEBUG switch click failed:', String(error).slice(0, 200)))
@@ -812,6 +1030,37 @@ if (phase === 'effort') {
   await pick(TRIO.mimo, TRIO.worker)
   const auto = await effortSelect()
   const autoShown = shownEffort(auto)
+  // 0.8.3: the score badge across the EFFORT ladder. OpenRouter carries ONE intelligence index per model (no per-effort
+  // intelligence anywhere in it), so the documented fallback — "no per-effort number: the intelligence at the model's MAX"
+  // — means the value does NOT move between levels. The exact value is asserted in scripts/e2e/ui-e2e-skill.mjs, whose
+  // fixture knows the numbers; here the badge is REPORTED at two levels and its two invariants are asserted: it survives
+  // the change with its benchmark named, and it still shows the SAME numbers. The level is then put back to the model's
+  // highest, so the confirm below still stores the auto-max level.
+  const numbersIn = (badge) => badge.flatMap((text) => (text.match(/-?\d+(?:[.,]\d+)?/g) ?? []).map((raw) => raw.replace(',', '.'))).sort()
+  const badgeNow = async () => (await dialog().evaluate((root) => [...root.querySelectorAll('*')]
+    .filter((element) => element.children.length === 0 && /Terminal-Bench 4|Intelligence|Inteligência|智能/i.test(element.textContent ?? ''))
+    .map((leaf) => {
+      // The label and its number can be two separate leaves: walk up to the SMALLEST box that carries both.
+      let node = leaf
+      for (let up = 0; up < 4 && node.parentElement !== null && !/\d/.test(node.textContent ?? ''); up += 1) node = node.parentElement
+      return (node.textContent ?? '').replace(/\s+/g, ' ').trim()
+    }))).filter((text) => text !== '')
+  const badgeAtMax = await badgeNow()
+  const numbersAtMax = numbersIn(badgeAtMax)
+  if (auto !== undefined && auto.options.length > 2) {
+    await auto.handle.selectOption({ index: 1 })
+    await page.waitForTimeout(800)
+    const badgeAtLow = await badgeNow()
+    const numbersAtLow = numbersIn(badgeAtLow)
+    console.log(`DEBUG badge at the highest effort ${JSON.stringify(badgeAtMax)} ${JSON.stringify(numbersAtMax)} / at ${JSON.stringify(auto.options[1])} ${JSON.stringify(badgeAtLow)} ${JSON.stringify(numbersAtLow)}`)
+    // An empty `badgeAtMax` means this page drew no strip at all (the live catalog answered nothing for the model, which
+    // the phase tolerates as foreign): there is nothing to assert then, and the DEBUG line above says as much.
+    check('the score badge survives an effort change, still names its benchmark and shows the SAME numbers (the live intelligence index is one scalar per model, so its value at any level equals its value at max; the fixture-driven VALUE check lives in scripts/e2e/ui-e2e-skill.mjs)', badgeAtMax.length === 0 || (badgeAtLow.length > 0 && numbersAtLow.join('|') === numbersAtMax.join('|')), `${JSON.stringify(badgeAtMax)} -> ${JSON.stringify(badgeAtLow)}`)
+    await auto.handle.selectOption({ index: auto.options.length - 1 })
+    await page.waitForTimeout(500)
+  } else {
+    console.log(`DEBUG no level below the model's highest to move the effort select to (options: ${JSON.stringify(auto?.options)}); the badge was ${JSON.stringify(badgeAtMax)}`)
+  }
   await dialog().getByRole('button', { name: 'Send with these options' }).click()
   await dialog().waitFor({ state: 'hidden', timeout: 8_000 }).then(() => check('modal closes after confirm', true), () => check('modal closes after confirm', false))
   const posts = wire.filter((item) => item.method === 'POST')
@@ -914,6 +1163,9 @@ if (phase === 'small') {
   const afterPick = await effortSelect()
   check('...and it stays on screen, enabled and auto-maxed, once the model is picked', afterPick !== undefined && afterPick.disabled === false && afterPick.selected > 0 && afterPick.selected === afterPick.options.length - 1, JSON.stringify({ options: afterPick?.options, selected: afterPick?.selected }))
   check('no Show/Hide control anywhere in the dialog', (await dialog().getByRole('button', { name: /^(show|hide|mostrar|ocultar)$/i }).count()) === 0)
+  // 0.8.3: the effort select must be legible in the DARK theme, on its own computed paint (the 0.8.2 look was
+  // white-on-white there: a white background with white text, readable only on hover in the popup).
+  await checkSelectLegibility('dark theme, 1024x600')
   await page.waitForTimeout(600)
   await shot('01-open-600px')
   const box = await dialog().boundingBox()

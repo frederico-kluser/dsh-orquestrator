@@ -21,8 +21,8 @@ effort (`max` on the deployments this targets) with the route's full output ceil
 plugin asks once, when a new task is sent, and then enforces the answer in code on every one of
 those paths.
 
-Cancel, Escape and the close button all mean the same thing: **send the task
-exactly as stock DSH would**. Nothing else changes.
+Cancel, Escape and the close button all mean the same thing: **abort the send** —
+nothing goes out and the typed text stays in the composer. Only the confirm button sends.
 
 ## Architecture
 
@@ -33,8 +33,8 @@ exactly as stock DSH would**. Nothing else changes.
  │        (class prototype, wrapped)    │        │  /dsh-orquestrator/config  (GET / POST)  │
  │   PromptGate ─ new task? ─▶ modal    │◀──────▶│   trust fence ─▶ validate ─▶ ConfigStore │
  │   confirm ─ POST config ─────────────┼───────▶│                            (sessions.json)│
- │   cancel  ─ POST null   ─────────────┼───────▶│                                          │
- │   then the ORIGINAL prompt is sent   │        │  SubagentRuntime.start / startContinuable│
+ │   cancel  ─ aborts, nothing sent ────┼─ ─ ─▶│                                          │
+ │   confirm: the ORIGINAL prompt runs │        │  SubagentRuntime.start / startContinuable│
  └─────────────────────────────────────┘        │   (the start guard: own wrappers on the  │
                                                  │    service instance)                     │
                                                  │   any child: subagent tools, workflow,   │

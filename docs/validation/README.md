@@ -2,7 +2,7 @@
 
 Everything in this plugin was validated against a real DeepSeek Harness, not only against
 mocks. This page states what was run, what it proved, what it found and what it did not
-cover: first the **0.8.2** rebuild of the dialog's model area (effort select, capability strip, the checkbox un-gated), then the **0.8.1** follow-up (the skill checkbox coupled to the subagent-model switch), then the **0.8.0**
+cover: first the **0.8.3** fixes (the score per effort, a legible select, Cancel that aborts), then the **0.8.2** rebuild of the dialog's model area (effort select, capability strip, the checkbox un-gated), then the **0.8.1** follow-up (the skill checkbox coupled to the subagent-model switch), then the **0.8.0**
 validation (the orchestration skill, its dialog checkbox and the model/state marks on the subagent list; every run on
 the project's Mac mini test host), then the **0.5.1** fix (the dialog could not save when the host and the page were
 different versions), then the
@@ -10,6 +10,16 @@ different versions), then the
 on the same three models, then the **0.1.0** validation on a Mac mini. The 0.4.0 and older sections
 describe versions that still had the independent reviewer, which 0.5.0 removed
 ([D16](../estudos/decisoes.md)); they are kept as the record of what was run.
+
+## 0.8.3: the score per effort, a legible select, and Cancel that aborts (2026-10-08)
+
+**What changed.** (a) The score badge re-resolves when the effort select changes: Terminal-Bench 4 shows the accuracy of the chosen level when the leaderboard has it, else the value at the model's best level; the OpenRouter intelligence index is one scalar per model (verified across all 469 catalog models), so an Intelligence badge is constant — the "intelligence at max" fallback the user asked for. (b) The effort select paints its own background/text/border/option colors from DSH tokens (it used to render white-on-white) with `color-scheme` following the app theme. (c) Cancel/✕/Esc/mask-click abort the send: no message, no bubble (the optimistic echo is abandoned via `SubmissionHandle.abandon()`), the typed text stays in the composer, nothing stored; only the confirm button sends.
+
+**Where it ran.** Mac mini battery: typecheck clean, **900/900** tests (39 data-layer with the real per-effort rows — GPT-6 Astra 50.6/54.2/57.9/57.9/58.2, Opus 5 with the `max`-field fallback; 108 dialog/gate). Browser, independently re-verified: the badge constant across every level for GLM 5.3 (`Terminal-Bench 4 · 41.8%`), MiMo and Kimi (`Intelligence · …`) INCLUDING the neutral option, and MOVING in the real picker on a temporary multi-effort model added to the isolated home (58.2/50.6/54.2/57.9/57.9/58.2, settings restored byte-identical); the select's computed paint in both themes (dark rgb(35,35,36) α=1, contrast 15.03:1; light #fff on rgb(15,17,21) 18.90:1; borders, `color-scheme`, option rows; focused and unfocused); and the four cancel paths on fresh composers (no bubble and no ghost, composer verbatim immediately and after 1.5 s, 0 user messages in the session log, 0 config POSTs, and a later send from the same composer landing as exactly one message). Battery: skill 202/203 (run 4, final scripts) and every legacy phase green — cancel 29/29, command 7/7, effort 25/25, light 7/7, small 10/10, confirm 14/14, workflow 11/11, readme 2/2, readme-light 1/1.
+
+**Where the defects of this round were.** All in the two test scripts (never the product) and fixed there: the composer-clearing helper used `Control+A`, which is not select-all on macOS (drafts accumulated once cancel started preserving them); a translucent hover token parsed as "not painted" (NaN alpha) producing a false legibility failure; a missing `await` that crashed the light/small phases; and a crash report without a stack. The data layer also gained one deliberate, tested nuance: the "value at max" fallback is the snapshot's best-accuracy field, not the row labelled `max` (for Opus 5 the xhigh row is the best).
+
+**Not covered.** The OS-drawn select popup is not painted into headless screenshots (legibility there rests on the computed option paint and `color-scheme`). S10 ("a subagent's own conversation") could not open its row in this reused home (its continuable parent sits behind "Show more sessions") — a test-state artifact; the behavior was verified in its own earlier runs.
 
 ## 0.8.2: the dialog's model area rebuilt (2026-10-08)
 

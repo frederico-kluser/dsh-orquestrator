@@ -14,10 +14,13 @@
  *
  * Rows are the dehydrated react-query payload of Board 4-0-0, shaped as
  *   { leaderboard_id, metadata: { model_display: { label }, agent_display: { label }, reasoning_effort }, metrics: { accuracy } }
- * and, as a second accepted shape, a plain `{ model, agent, effort, accuracy }`. A model's score is the MAX accuracy
- * across its rows — every harness and every reasoning effort (the rule). Only the rows of Board 4-0-0 are kept
- * (by `leaderboard_id`, when the stream names the board); rows whose normalized names collide collapse into one entry
- * holding the highest accuracy, and rows with no usable name are dropped.
+ * and, as a second accepted shape, a plain `{ model, agent, effort, accuracy }`. A model collapses into ONE entry per
+ * normalized name holding two numbers: its accuracy AT EACH reasoning-effort label it was measured at (the highest
+ * across harnesses when several ran the same level, keyed as the board writes the label — `max`, `xhigh`, `high`,
+ * `medium`, `low`, `none`), and `max`, the best accuracy across all of its rows. The strip reads `efforts[selected]`,
+ * and falls back to `max` for an effort the board never measured — so the entry carries every number the board
+ * publishes about that model. Only the rows of Board 4-0-0 are kept (by `leaderboard_id`, when the stream names the
+ * board); rows with no usable model name are dropped, and a row with no effort label contributes to `max` alone.
  *
  * `--payload <file>` skips the network and parses a saved stream, for reproducing a snapshot from a `curl` capture:
  *   curl -sL -H 'RSC: 1' https://www.tbench.ai/leaderboard -o tb4.txt && node scripts/gen-bench.mjs --payload tb4.txt
@@ -75,7 +78,12 @@ if (args.check) {
 
 writeFileSync(outPath, module)
 console.log(`gen-bench: wrote ${relative(repoRoot, outPath)} — ${String(models.length)} models from ${String(parsed.rows.length)} rows (${source.origin}, ${String(args.date ?? new Date().toISOString().slice(0, 10))})`)
-if (args.verbose) for (const model of models) console.log(`  ${String(model.accuracy).padStart(6)}  ${model.label}  (${model.agent}, effort ${model.effort})`)
+if (args.verbose) for (const model of models) {
+  const levels = effortOrder([...model.efforts.keys()])
+    .map((effort) => `${effort} ${String(model.efforts.get(effort)?.accuracy)}`)
+    .join(', ')
+  console.log(`  ${String(model.max).padStart(6)}  ${model.label}  (${[...model.agents].join('/')}: ${levels})`)
+}
 
 /**
  * Parse the command line.
@@ -310,21 +318,52 @@ function toAccuracy(value) {
 }
 
 /**
- * Collapse rows to one entry per model: the MAX accuracy wins, and its harness/effort are the ones reported.
+ * Collapse rows to one entry per model: the accuracy of every reasoning effort it was measured at (highest wins when
+ * several harnesses ran the same level) plus `max`, the best accuracy across its rows. The label comes from the row
+ * that set `max`, and ties keep the first row seen, so the render is byte-stable.
  * @param {{ model: string, agent: string, effort: string, accuracy: number }[]} rows - the parsed rows.
- * @returns {{ key: string, label: string, accuracy: number, agent: string, effort: string }[]} entries sorted by key.
+ * @returns {{ key: string, label: string, max: number, efforts: Map<string, { accuracy: number, agent: string }>, agents: Set<string> }[]} entries sorted by key.
  */
 function groupModels(rows) {
   const byKey = new Map()
   for (const row of rows) {
     const key = normalizeModelName(row.model)
     if (key === '') continue
-    const current = byKey.get(key)
-    if (current === undefined || row.accuracy > current.accuracy) {
-      byKey.set(key, { key, label: row.model, accuracy: row.accuracy, agent: row.agent, effort: row.effort })
+    let entry = byKey.get(key)
+    if (entry === undefined) {
+      entry = { key, label: row.model, max: Number.NEGATIVE_INFINITY, efforts: new Map(), agents: new Set() }
+      byKey.set(key, entry)
+    }
+    if (row.agent !== '') entry.agents.add(row.agent)
+    // A row with no effort label still counts for `max`: the board publishes the number, we just cannot attribute it.
+    const effort = row.effort.trim().toLowerCase()
+    const level = entry.efforts.get(effort)
+    if (effort !== '' && (level === undefined || row.accuracy > level.accuracy)) {
+      entry.efforts.set(effort, { accuracy: row.accuracy, agent: row.agent })
+    }
+    if (row.accuracy > entry.max) {
+      entry.max = row.accuracy
+      entry.label = row.model
     }
   }
-  return [...byKey.values()].sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0))
+  const models = [...byKey.values()]
+  for (const model of models) if (!Number.isFinite(model.max)) model.max = 0
+  return models.sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0))
+}
+
+/**
+ * The effort labels in the order the module renders them: the board's ladder from the top down, then anything the board
+ * invents later, alphabetically, so a new label never reshuffles the committed file.
+ * @param {string[]} labels - every label an entry holds.
+ * @returns {string[]} the labels, ordered.
+ */
+function effortOrder(labels) {
+  const ladder = ['max', 'xhigh', 'high', 'medium', 'low', 'none']
+  const rank = (label) => {
+    const index = ladder.indexOf(label)
+    return index === -1 ? ladder.length : index
+  }
+  return [...labels].sort((left, right) => (rank(left) - rank(right)) || (left < right ? -1 : left > right ? 1 : 0))
 }
 
 /**
@@ -349,18 +388,25 @@ function quote(value) {
 
 /**
  * Render the TypeScript module, byte-for-byte deterministically.
- * @param {{ key: string, label: string, accuracy: number, agent: string, effort: string }[]} models - the grouped entries.
+ * @param {{ key: string, label: string, max: number, efforts: Map<string, { accuracy: number, agent: string }>, agents: Set<string> }[]} models - the grouped entries.
  * @param {{ rows: number, date: string }} provenance - rows parsed and the snapshot date.
  * @returns {string} the module text.
  */
 function renderModule(models, provenance) {
-  const entries = models.map((model) => `  ${quote(model.key)}: { label: ${quote(model.label)}, accuracy: ${String(model.accuracy)} },`)
+  const entries = models.map((model) => {
+    const levels = effortOrder([...model.efforts.keys()])
+      .map((effort) => `${quote(effort)}: ${String(model.efforts.get(effort)?.accuracy)}`)
+      .join(', ')
+    const efforts = levels === '' ? '{}' : `{ ${levels} }`
+    return `  ${quote(model.key)}: { label: ${quote(model.label)}, efforts: ${efforts}, max: ${String(model.max)} },`
+  })
   return `/**
  * Generated by \`node scripts/gen-bench.mjs\` — do not edit by hand.
  *
- * Terminal-Bench 4 headline scores, one entry per model, keyed by {@link normalizeModelName}: the maximum accuracy the
- * official leaderboard reports for that model across every harness and reasoning effort. The browser cannot fetch the
- * leaderboard (no CORS header), so this file is committed data, regenerated by the script alone — never by a build.
+ * Terminal-Bench 4 scores, one entry per model, keyed by {@link normalizeModelName}: the accuracy the official
+ * leaderboard reports for that model AT EACH reasoning effort it was measured at, plus \`max\`, its best accuracy. The
+ * browser cannot fetch the leaderboard (no CORS header), so this file is committed data, regenerated by the script
+ * alone — never by a build.
  *
  * Board:     ${BOARD_TITLE} (${BOARD_NAME})
  * Source:    ${LEADERBOARD_URL}
@@ -369,12 +415,14 @@ function renderModule(models, provenance) {
  * @module dsh-orquestrator/bench.generated
  */
 
-/** One Terminal-Bench 4 score: the model's published name and its best accuracy (%). */
+/** One Terminal-Bench 4 model: its published name, its accuracy per reasoning effort, and its best accuracy. */
 export interface TerminalBenchRow {
   /** The model name exactly as the leaderboard publishes it. */
   readonly label: string
-  /** Best accuracy in percent (0-100). */
-  readonly accuracy: number
+  /** Accuracy in percent (0-100) per leaderboard effort label (\`max\`, \`xhigh\`, \`high\`, \`medium\`, \`low\`, \`none\`). */
+  readonly efforts: Readonly<Record<string, number>>
+  /** Best accuracy in percent (0-100) across every row of this model — the fallback for an effort the board never measured. */
+  readonly max: number
 }
 
 /** Where the committed Terminal-Bench 4 snapshot came from. */
@@ -403,7 +451,10 @@ export const TB4_SNAPSHOT: TerminalBenchSnapshot = {
   models: ${String(models.length)},
 }
 
-/** Terminal-Bench 4 scores by normalized model name, taken as the MAX accuracy per model. */
+/**
+ * Terminal-Bench 4 scores by normalized model name: the accuracy per reasoning effort, and the best accuracy across
+ * rows. Read \`efforts[effort]\` first, then \`max\` — an effort the board never measured has no entry of its own.
+ */
 export const TB4_SCORES: Readonly<Record<string, TerminalBenchRow>> = {
 ${entries.join('\n')}
 }

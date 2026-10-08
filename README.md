@@ -28,8 +28,9 @@ instead of reading it itself, and check every result with verifier subagents. Se
 model each subagent runs on and a status icon (running, done, failed). See
 [Subagent list: model and state](#subagent-list-model-and-state).
 
-**Cancel, Escape and the close button send the task exactly as DSH always did.**
-Nothing else about DSH changes.
+**Cancel, Escape and the close button all mean the same thing now: abort the send** —
+nothing goes out, no bubble appears, and the typed text stays in the composer as a draft.
+Only "Send with these options" sends. Nothing else about DSH changes.
 
 | Dark | Light |
 | --- | --- |
@@ -98,7 +99,8 @@ a turn is running:
 - **There is no "do not ask again"**: the modal is raised for every message you send and
   nothing can silence it. One answer never hides it from a later message or from
   another conversation. The last confirmed choice only pre-fills the dialog.
-- **Cancel / Esc / ✕**: send the message with stock behavior and forget any stored choice.
+- **Cancel / Esc / ✕**: abort the send — nothing goes out, no bubble appears, and the typed text stays in
+  the composer as a draft; nothing is stored. Only "Send with these options" sends.
 
 `/orquestrar` opens the same dialog on demand (to change or clear the stored choice).
 

@@ -75,14 +75,24 @@ a turn is running:
   workflow starts. Off means subagents keep the main agent's model. The dialog shows short,
   dated notes for models that need them (for example: MiMo-V2.6-Pro can take minutes per
   turn at high effort; GLM 5.3 is text only).
-- **Reasoning effort** (collapsed, shown once a model is picked): how hard the model may
-  think. It defaults to the recommended level for the model; open it to see or change it.
+- **Reasoning effort** (a select right under the model picker, always visible — there is no section to open
+  any more): only the effort levels the chosen model really offers, low to high, plus a neutral `Model default`.
+  Picking or changing a model jumps the select to that model's **highest** level at once; change it if you want
+  less. The last level you confirmed pre-fills the next dialog (and survives a model whose ladder is still
+  loading). With the switch off the select still works: a level picked there is an effort-only choice (children
+  keep the main agent's model, under that ceiling).
+- **What the model understands** (a small strip under the effort select): four marks — audio, photo, text,
+  video — lit when the selected model takes that kind of input, and its headline score, `Terminal-Bench 4 · 41.8%`
+  when the official Terminal-Bench 4.0 leaderboard knows the model (a snapshot baked into the build) or
+  `Intelligence · 39.5`, OpenRouter's intelligence index. The data comes live from OpenRouter's public model
+  catalog (no key, no proxy); a model it cannot resolve shows no strip.
+
+  ![What the model understands: audio, photo, text, video — and the Terminal-Bench 4 score](docs/img/model-facts.png)
 - **Orchestration skill** (a checkbox, checked by default; shown when the plugin's host half has registered the
   skill): applies the global skill `orchestrate-subagents` to this message. The message goes out with the
   `/orchestrate-subagents` token and DSH injects the skill's instructions into that step. Uncheck it to send
-  the message without the skill; the dialog remembers your last answer for the next message. The box is coupled
-  to the subagent-model switch above: with the switch off it is off and disabled (a hint points at the switch),
-  and turning the switch back on restores its last state. If the message already contains the token (you typed
+  the message without the skill; the dialog remembers your last answer for the next message. It is always
+  visible and toggleable, whatever the subagent-model switch says. If the message already contains the token (you typed
   it), the box is shown ticked and locked, because DSH loads the skill anyway. See
   [The orchestration skill](#the-orchestration-skill).
 - **There is no "do not ask again"**: the modal is raised for every message you send and

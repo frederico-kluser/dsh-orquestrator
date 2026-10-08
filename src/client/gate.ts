@@ -252,13 +252,13 @@ export class PromptGate {
 
   /**
    * Remember an answer for the next dialog. Each memory is written on its own and a failure only costs the
-   * convenience: what is sent never depends on it. The subagent-model choice is a real answer even with the
-   * switch off (an off choice is what the user chose); the skill question is answered only while its checkbox
-   * is interactive.
+   * convenience: what is sent never depends on it. Both choices are real answers: the subagent-model one even
+   * with the switch off (an off choice is what the user chose), and the skill one whatever the switch says,
+   * because the checkbox is interactive either way.
    * @param answer - how the dialog ended.
-   * @param skillAsked - whether the skill question was offered and not forced by a typed token. The answer
-   * itself says whether the box was interactive: with the subagent-model switch off the dialog shows it
-   * unchecked and disabled, and there is then no skill answer to remember.
+   * @param skillAsked - whether the skill question was offered and not forced by a typed token. Only then is
+   * there an answer to remember: a box locked by a token in the message, or no box at all, was not a question,
+   * and writing its forced `applySkill` would reset the user's preference.
    */
   private remember(answer: DialogResult, skillAsked: boolean): void {
     if (answer.kind !== 'confirm') return
@@ -267,10 +267,7 @@ export class PromptGate {
     } catch (error: unknown) {
       this.deps.warn('could not remember the choice', error)
     }
-    // No skill answer without an interactive box (switch off or a typed token): writing the forced
-    // `applySkill: false` would reset the user's preference. The config shape is a sound signal because the
-    // dialog refuses to confirm with the switch on and no model picked (pinned in the dialog-render tests).
-    if (!skillAsked || answer.config.subagentModel === null) return
+    if (!skillAsked) return
     try {
       this.deps.skillMemory.write(answer.applySkill)
     } catch (error: unknown) {

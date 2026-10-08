@@ -2,7 +2,7 @@
 
 Everything in this plugin was validated against a real DeepSeek Harness, not only against
 mocks. This page states what was run, what it proved, what it found and what it did not
-cover: first the **0.8.1** follow-up (the skill checkbox coupled to the subagent-model switch), then the **0.8.0**
+cover: first the **0.8.2** rebuild of the dialog's model area (effort select, capability strip, the checkbox un-gated), then the **0.8.1** follow-up (the skill checkbox coupled to the subagent-model switch), then the **0.8.0**
 validation (the orchestration skill, its dialog checkbox and the model/state marks on the subagent list; every run on
 the project's Mac mini test host), then the **0.5.1** fix (the dialog could not save when the host and the page were
 different versions), then the
@@ -10,6 +10,16 @@ different versions), then the
 on the same three models, then the **0.1.0** validation on a Mac mini. The 0.4.0 and older sections
 describe versions that still had the independent reviewer, which 0.5.0 removed
 ([D16](../estudos/decisoes.md)); they are kept as the record of what was run.
+
+## 0.8.2: the dialog's model area rebuilt (2026-10-08)
+
+**What changed.** (a) The skill checkbox is un-gated again — always visible and toggleable (the 0.8.1 coupling left it inert in the default state). (b) The collapsible "Reasoning effort" section becomes a plain select, always visible right under the model picker, listing only the effective model's effort levels plus a neutral `Model default`; picking or changing a model selects its HIGHEST level at once (a stored level pre-fills at open). (c) A strip under the select marks the four input modalities (audio, photo, text, video) of the selected model and shows its headline score: Terminal-Bench 4.0 when the official leaderboard knows it (a build-time snapshot; `scripts/gen-bench.mjs` regenerates it), else OpenRouter's intelligence index. The data comes from OpenRouter's public `/models` (keyless, CORS) via the new `src/client/model-facts.ts`; nothing renders for an unresolvable model or an unreachable catalog.
+
+**Where it ran.** The same Mac mini battery. Static: typecheck clean, **884/884** tests (29 new data-layer, 81 dialog/gate), the TB4 snapshot regeneration byte-identical (`gen-bench.mjs --check`). Browser, independently re-verified against the DOM, the POSTed configs and screenshots (not by the scripts' own assertions): the checkbox ticked+enabled with the switch off; zero Show/Hide controls and one `<select>` with ladder+neutral options positioned right under the model select; picking GLM 5.3 set "Max" and the POST carried `workerEffort:"max"`; the strip showed 4 named icons (marked/dimmed per fixture, hit-tested) and the badges `Terminal-Bench 4 · 41.8%` (TB4 beating the fixture's intelligence 44.8) and `Intelligence · 39.5` (the Azure-style DeepSeek id matched by slug on the live catalog); unknown model or broken catalog → no strip, no page error. Then the repaired battery: skill script **179/179 twice in a row** (a new facts group; the old X-group flakiness gone), legacy green without retries (cancel 11/11, command 7/7, light 5/5, small 6/6, effort 24/24 twice, confirm 14/14, workflow 11/11 — the child logs confirm the auto-max level and the 64 000-token cap reached the children), readme figures re-shot with the new dialog.
+
+**Where the defects of this round were.** All in the test scripts, never in the plugin: the skill script's turn parser (an off-by-one that could not see the `turn/end`), its message-location helpers (DSH's "New session" switches sessions asynchronously and a phase could type into the composer left behind), and `ui-e2e.mjs`'s session-log reader (the wrong nesting depth — the product's auto-max was provably in the child logs all along). Fixed and re-run.
+
+**Not covered / known.** The Terminal-Bench snapshot is dated 2026-10-08 and matches models by normalized name: the Claude family falls back to the intelligence index (its leaderboard labels do not match the OpenRouter slugs). The `file` modality has no mark (the strip shows the four the user asked for). A first failed catalog fetch yields no strip until the next page load. The S10 step of the skill script drifts in a shared home whose sessions grew titles from earlier runs (a run-ordering artifact; it passed 10/10 in its own runs).
 
 ## 0.8.1: the skill checkbox coupled to the subagent-model switch (2026-10-08)
 

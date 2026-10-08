@@ -39,6 +39,15 @@ export const CSS = `
 .dsh-orq-picker-placeholder { color: var(--dsw-alias-label-dimmed); }
 .dsh-orq-picker-chevron { flex: none; display: inline-flex; color: var(--dsw-alias-label-secondary); }
 .dsh-orq-status { display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }
+.dsh-orq-select { box-sizing: border-box; width: 100%; height: 36px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; }
+.dsh-orq-select:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.dsh-orq-select:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+.dsh-orq-select:disabled { cursor: not-allowed; opacity: 0.5; }
+.dsh-orq-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dsh-orq-fact { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 24px; height: 24px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-dimmed); }
+.dsh-orq-fact svg { display: block; flex: none; }
+.dsh-orq-fact[data-orq-on='true'] { color: var(--dsw-alias-label-primary); }
+.dsh-orq-facts-score { display: inline-flex; align-items: center; box-sizing: border-box; height: 24px; margin-left: 2px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 999px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 16px; white-space: nowrap; }
 .dsh-orq-status-error { color: var(--dsw-alias-state-error-primary); }
 .dsh-orq-link { padding: 0; border: 0; background: none; font: inherit; color: var(--dsw-alias-brand-text); text-decoration: underline; cursor: pointer; }
 .dsh-orq-error { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-error-primary); }

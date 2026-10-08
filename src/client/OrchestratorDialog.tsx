@@ -1,27 +1,30 @@
 /**
- * The orchestration dialog, built only from DSH primitives (Modal, Switch,
- * Button, Menu) and DSH tokens so it is indistinguishable from the
- * host's own dialogs in light and dark themes. It is raised for every new task:
- * there is no "do not ask again", so no answer can hide it from a later task or
- * from another conversation.
+ * The orchestration dialog, built from DSH primitives (Modal, Switch, Checkbox,
+ * Button, Menu) plus one native `<select>`, and from the host's tokens only, so
+ * it is indistinguishable from the host's own dialogs in light and dark themes.
+ * It is raised for every new task: there is no "do not ask again", so no answer
+ * can hide it from a later task or from another conversation.
  *
- * One question, answered with a switch (progressive disclosure: the model
- * picker only appears when the switch is on): should subagents run on a
- * different model than the main agent? A second, collapsed block, shown once
- * a model is chosen, says how hard subagents may think (reasoning effort). It
- * defaults to the recommended level for the model, so most people never open
- * it, and it says in one line why it exists.
+ * One question, answered with a switch: should subagents run on a different
+ * model than the main agent? With the switch on, the picker under it chooses
+ * that model. Under the picker, always visible, the reasoning-effort select
+ * offers the levels of the model that will actually run the subagents (the main
+ * agent's model while the switch is off) plus a first neutral row that leaves
+ * the level to the model itself. A model change answers the effort question with
+ * that model's highest level; a stored level, though, is never dropped at open,
+ * not even while the catalog is still loading. Under the select, a capability
+ * strip says what the effective model understands (audio, images, text, video)
+ * and, when it is known, its benchmark score; an unknown model shows no strip.
  *
- * When the host offers the global orchestration skill (gate mode only), a third
- * block holds one checkbox that applies the skill to the message being sent: a
+ * When the host offers the global orchestration skill (gate mode), the last
+ * section holds one checkbox that applies the skill to the message being sent: a
  * confirm answers `applySkill` and the gate then puts the skill's `/name` token
- * in the prompt. Without an offer the block is not there. The box follows the
- * subagent-model switch: the skill orchestrates subagents, so with the switch
- * off it shows unchecked and disabled whatever the memory or a typed token
- * says, and the answer is then `applySkill: false`. Toggling the switch off and
- * back on keeps the box state the user left (only the shown value is gated).
- * A message that already carries the token gets the skill whatever the box
- * says: the hint says so, and the gate never removes that token.
+ * in the prompt. Without an offer the section is not there. The box is always
+ * visible and always toggleable, whatever the subagent-model switch says: the
+ * skill token may go out on a message whose subagents stay on the main model. A
+ * message that already carries the token gets the skill whatever the box says:
+ * the box then shows ticked and locked, the hint says so, and the gate never
+ * removes that token.
  *
  * "Cancel" (button, Escape, mask click) never blocks the task: in gate mode it
  * clears any stored choice and lets the task go out exactly as stock DSH, with
@@ -35,12 +38,14 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { notesFor } from '../models.ts'
 import { buildConfig, type ModelRoute } from '../shared.ts'
-import { adviseEffort, modelName, type CatalogState } from './catalog.ts'
+import { ladderOf, modelName, type CatalogState } from './catalog.ts'
 import type { DialogRequest } from './dialogs.ts'
+import { EffortPicker, highestEffortOf } from './EffortPicker.tsx'
+import { FactsAudioIcon, FactsPhotoIcon, FactsTextIcon, FactsVideoIcon } from './facts-icons.tsx'
 import { installFocusTrap } from './focus-trap.ts'
-import { EffortPicker } from './EffortPicker.tsx'
 import type { OrchestratorKey } from './locales.ts'
 import { ModelPicker } from './ModelPicker.tsx'
+import { modelFactsOf, type ModelFacts } from './model-facts.ts'
 
 /** The bound translate function of this plugin's namespace. */
 export type Translate = (key: OrchestratorKey, params?: Record<string, unknown>) => string
@@ -60,6 +65,55 @@ const MENU_CLOSE_GUARD_MS = 300
 /** How long a gate-mode cancel waits for the host to clear the stored choice. */
 const CANCEL_CLEAR_WAIT_MS = 1_500
 
+/** One input modality of the capability strip, in the order the strip shows them. */
+const MODALITIES = [
+  { id: 'audio', icon: FactsAudioIcon },
+  { id: 'image', icon: FactsPhotoIcon },
+  { id: 'text', icon: FactsTextIcon },
+  { id: 'video', icon: FactsVideoIcon },
+] as const satisfies readonly { readonly id: keyof ModelFacts['modalities']; readonly icon: (props: { size?: number }) => JSX.Element }[]
+
+/** Accessible label of each modality, marked and dimmed. */
+const MODALITY_LABELS: Record<keyof ModelFacts['modalities'], { readonly on: OrchestratorKey; readonly off: OrchestratorKey }> = {
+  audio: { on: 'facts.audio', off: 'facts.audio.off' },
+  image: { on: 'facts.photo', off: 'facts.photo.off' },
+  text: { on: 'facts.text', off: 'facts.text.off' },
+  video: { on: 'facts.video', off: 'facts.video.off' },
+}
+
+/** Label of each score kind. */
+const SCORE_LABELS: Record<'terminal-bench-4' | 'intelligence', OrchestratorKey> = {
+  'terminal-bench-4': 'facts.tb4',
+  intelligence: 'facts.intelligence',
+}
+
+/**
+ * The capability strip of one model: four modality glyphs, marked when the model
+ * understands that input and dimmed when it does not, plus the benchmark score
+ * when the facts carry one.
+ * @param props - the facts and the translate function.
+ * @returns the strip.
+ */
+function CapabilityStrip({ facts, t }: { readonly facts: ModelFacts; readonly t: Translate }): JSX.Element {
+  const score = facts.score
+  return (
+    <div className="dsh-orq-facts">
+      {MODALITIES.map(({ id, icon: Icon }) => {
+        const on = facts.modalities[id]
+        const label = t(on ? MODALITY_LABELS[id].on : MODALITY_LABELS[id].off)
+        return (
+          <span key={id} className="dsh-orq-fact" data-orq-on={on ? 'true' : 'false'} role="img" aria-label={label} title={label}>
+            <Icon size={15} />
+          </span>
+        )
+      })}
+      {score === null
+        ? undefined
+        : <span className="dsh-orq-facts-score">{t(SCORE_LABELS[score.kind], { value: score.value })}</span>}
+    </div>
+  )
+}
+
 /**
  * The dialog.
  * @param props - the request, the catalog state and the translate function.
@@ -77,9 +131,9 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
   const [subagentsOn, setSubagentsOn] = useState(initial.subagentModel !== null)
   const [subagentRoute, setSubagentRoute] = useState<ModelRoute | null>(initial.subagentModel)
   const [workerEffort, setWorkerEffort] = useState<string | null>(initial.workerEffort)
-  const [effortOpen, setEffortOpen] = useState(initial.workerEffort !== null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [facts, setFacts] = useState<ModelFacts | null>(null)
 
   // Escape belongs to an open menu first (the Menu primitive listens on
   // `document` like the Modal does, so both would otherwise fire).
@@ -97,19 +151,43 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
   const mainName = mainRoute === null ? undefined : modelName(catalog.groups, mainRoute)
   const needsModel = subagentsOn && subagentRoute === null
 
-  // Reasoning effort: what "recommended" means for the chosen model.
-  const effortActive = subagentsOn && subagentRoute !== null
-  const workerAdvice = effortActive ? adviseEffort(catalog.groups, subagentRoute) : undefined
+  // The model the effort ladder and the capability strip follow: the picked subagent model, and the main
+  // agent's model while the switch is off (the subagents then run on it).
+  const effectiveRoute: { readonly provider: string; readonly model: string } | null = subagentsOn ? subagentRoute : mainRoute
+  const effectiveLadder = effectiveRoute === null ? undefined : ladderOf(catalog.groups, effectiveRoute)
+  const hasLadder = effectiveLadder !== undefined && effectiveLadder.efforts.length > 0
   // A stored level stays chosen until the model's ladder says otherwise: while the catalog is loading or
   // unreachable the ladder is unknown, and dropping the level would silently reset a confirmed choice to
-  // "recommended". Only a ladder that is known and lacks the level falls back to it.
-  const workerLadder = workerAdvice?.ladder
-  const workerChosen = workerLadder === undefined
+  // the neutral row. Only a ladder that is known and lacks the level falls back to it.
+  const workerChosen = effectiveLadder === undefined
     ? workerEffort
-    : (workerLadder.efforts.some(effort => effort.id === workerEffort) ? workerEffort : null)
-  const recommendedText = workerAdvice?.level === undefined
-    ? t('effort.recommended.default')
-    : t('effort.recommended', { level: workerAdvice.level.name })
+    : (effectiveLadder.efforts.some(effort => effort.id === workerEffort) ? workerEffort : null)
+
+  // AUTO-MAX: choosing a model answers the effort question with that model's highest level right away.
+  // Opening the dialog is not a model change, so a stored level keeps its stored level until the user picks.
+  const onModelChange = useCallback((route: ModelRoute | null) => {
+    setSubagentRoute(route)
+    setWorkerEffort(highestEffortOf(route === null ? undefined : ladderOf(catalog.groups, route)))
+  }, [catalog.groups])
+
+  // The facts of the effective model, fetched as the selection changes. Keyed by the model id: a slow
+  // answer for a model the user has already left never lands on the strip. Unknown models resolve null
+  // and show no strip at all; the request itself never blocks the dialog.
+  const factsModel = effectiveRoute?.model
+  const factsName = effectiveRoute === null ? undefined : modelName(catalog.groups, effectiveRoute)
+  const factsKey = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    factsKey.current = factsModel
+    setFacts(null)
+    if (factsModel === undefined) return
+    let live = true
+    void modelFactsOf(factsModel, factsName).then((next) => {
+      if (!live || factsKey.current !== factsModel) return
+      setFacts(next)
+    })
+    return () => { live = false }
+  }, [factsModel, factsName])
+
   const noteTexts = (route: ModelRoute | null): string[] => (
     route === null ? [] : notesFor(route).slice(0, 2).map(note => t(`note.${note}` as OrchestratorKey))
   )
@@ -135,9 +213,10 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
 
   const confirm = useCallback(async (): Promise<void> => {
     if (busy || needsModel) return
+    // The effort travels on its own: with the switch off it is an effort-only choice, which the host honors.
     const config = buildConfig({
       subagentModel: subagentsOn ? subagentRoute : null,
-      workerEffort: subagentsOn ? workerChosen : null,
+      workerEffort: workerChosen,
     })
     setBusy(true)
     setError(null)
@@ -148,7 +227,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
       setError(t('error.save', { message: cause instanceof Error ? cause.message : String(cause) }))
       return
     }
-    request.resolve({ kind: 'confirm', config, applySkill: skillOffered && subagentsOn && (skillLocked || skillOn) })
+    request.resolve({ kind: 'confirm', config, applySkill: skillOffered && (skillLocked || skillOn) })
   }, [busy, needsModel, subagentsOn, subagentRoute, workerChosen, skillOffered, skillLocked, skillOn, request, t])
 
   const sameText = useMemo(
@@ -209,7 +288,7 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                   label={t('subagents.modelLabel')}
                   groups={catalog.groups}
                   value={subagentRoute}
-                  onChange={setSubagentRoute}
+                  onChange={onModelChange}
                   placeholder={t('picker.placeholder')}
                   status={catalog.status}
                   loadingLabel={t('picker.loading')}
@@ -221,55 +300,20 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                 />
               )
             : undefined}
+          <EffortPicker
+            id={`${uid}-effort`}
+            label={t('effort.label')}
+            efforts={effectiveLadder?.efforts ?? []}
+            value={workerChosen}
+            neutralLabel={t('effort.defaultOption')}
+            disabled={busy || !hasLadder}
+            onChange={setWorkerEffort}
+          />
+          {facts === null ? undefined : <CapabilityStrip facts={facts} t={t} />}
           {subagentsOn ? <p className="dsh-orq-hint">{t('subagents.scope')}</p> : undefined}
           {subagentsOn ? noteTexts(subagentRoute).map(text => <p key={text} className="dsh-orq-hint dsh-orq-note">{text}</p>) : undefined}
           {needsModel && catalog.status === 'ready' ? <p className="dsh-orq-hint" role="status">{t('subagents.needModel')}</p> : undefined}
         </section>
-
-        {effortActive
-          ? (
-              <section className="dsh-orq-section dsh-orq-section-quiet" aria-labelledby={`${uid}-effort`}>
-                <div className="dsh-orq-row">
-                  <div className="dsh-orq-heading">
-                    <h3 className="dsh-orq-title" id={`${uid}-effort`}>{t('effort.title')}</h3>
-                    <p className="dsh-orq-hint">{workerChosen === null ? t('effort.summary.recommended') : t('effort.summary.custom')}</p>
-                  </div>
-                  <button
-                    type="button"
-                    className="dsh-orq-link"
-                    aria-expanded={effortOpen}
-                    aria-controls={`${uid}-effort-body`}
-                    disabled={busy}
-                    onClick={() => { setEffortOpen(!effortOpen) }}
-                  >
-                    {effortOpen ? t('effort.hide') : t('effort.show')}
-                  </button>
-                </div>
-                {effortOpen
-                  ? (
-                      <div className="dsh-orq-stack-tight" id={`${uid}-effort-body`}>
-                        <p className="dsh-orq-hint">{t('effort.hint')}</p>
-                        {workerAdvice?.ladder !== undefined
-                          ? (
-                              <EffortPicker
-                                id={`${uid}-worker-effort`}
-                                label={t('effort.subagent')}
-                                ladder={workerAdvice.ladder}
-                                value={workerChosen}
-                                onChange={setWorkerEffort}
-                                recommendedLabel={recommendedText}
-                                defaultSuffix={t('effort.defaultSuffix')}
-                                disabled={busy}
-                                onMenuOpenChange={onMenuOpenChange}
-                              />
-                            )
-                          : <p className="dsh-orq-hint">{t('effort.subagent')}: {workerChosen ?? t('effort.none')}</p>}
-                      </div>
-                    )
-                  : undefined}
-              </section>
-            )
-          : undefined}
 
         {skill !== null
           ? (
@@ -279,13 +323,13 @@ export function OrchestratorDialog({ request, catalog, reloadCatalog, t }: Orche
                   {t('skill.title')}
                 </h3>
                 <Checkbox
-                  checked={subagentsOn && (skillLocked || skillOn)}
+                  checked={skillLocked || skillOn}
                   onChange={setSkillOn}
                   label={t('skill.checkbox')}
-                  disabled={busy || skillLocked || !subagentsOn}
+                  disabled={busy || skillLocked}
                 />
                 <p className="dsh-orq-hint dsh-orq-skill-hint">
-                  {t(skillLocked ? 'skill.typed' : (subagentsOn ? 'skill.hint' : 'skill.needsModel'), { token: `/${skill.name}` })}
+                  {t(skillLocked ? 'skill.typed' : 'skill.hint', { token: `/${skill.name}` })}
                 </p>
               </section>
             )

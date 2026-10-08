@@ -75,14 +75,24 @@ mesmo com um turno a correr:
   agentes que um workflow inicia. Desligado, os subagentes mantêm o modelo do agente principal. O
   diálogo mostra notas curtas e datadas para os modelos que precisam delas (por exemplo: o
   MiMo-V2.6-Pro pode levar minutos por turno em esforço alto; o GLM 5.3 é só texto).
-- **Esforço de raciocínio** (recolhido, aparece depois de escolher um modelo): quanto o modelo pode
-  pensar. O padrão é o nível recomendado para o modelo; abra para ver ou mudar.
+- **Esforço de raciocínio** (um select logo abaixo do seletor de modelo, sempre visível — não existe mais
+  uma secção para abrir): só os níveis que o modelo escolhido realmente oferece, do menor ao maior, mais um
+  neutro `Model default`. Escolher ou trocar de modelo faz o select saltar de imediato para o **maior** nível
+  daquele modelo; mude se quiser menos. O último nível que confirmou pré-preenche o próximo diálogo (e sobrevive
+  a um modelo cuja escada ainda está a carregar). Com o switch desligado o select continua a funcionar: um nível
+  escolhido aí é uma escolha só de esforço (os filhos ficam no modelo do agente principal, sob esse teto).
+- **O que o modelo entende** (uma faixa pequena sob o select de esforço): quatro marcas — áudio, foto, texto,
+  vídeo — acesas quando o modelo escolhido aceita esse tipo de entrada, e o seu score de topo,
+  `Terminal-Bench 4 · 41.8%` quando a classificação oficial Terminal-Bench 4.0 conhece o modelo (um snapshot
+  embutido no build) ou `Intelligence · 39.5`, o índice de inteligência do OpenRouter. Os dados vêm ao vivo do
+  catálogo público de modelos do OpenRouter (sem chave, sem proxy); um modelo que não resolve não mostra faixa.
+
+  ![O que o modelo entende: áudio, foto, texto, vídeo — e o score do Terminal-Bench 4](docs/img/model-facts.png)
 - **Skill de orquestração** (um checkbox, marcado por padrão; aparece quando a metade do host do plugin
   registrou a skill): aplica a skill global `orchestrate-subagents` a esta mensagem. A mensagem sai com o
   token `/orchestrate-subagents` e o DSH injeta as instruções da skill nesse passo. Desmarque para enviar a
-  mensagem sem a skill; o diálogo lembra a sua última resposta para a próxima mensagem. O checkbox é acoplado
-  ao switch do modelo de subagentes acima: com o switch desligado ele fica desmarcado e desabilitado (uma dica
-  aponta para o switch), e ao ligar o switch de novo ele volta ao último estado. Se a mensagem já contém o
+  mensagem sem a skill; o diálogo lembra a sua última resposta para a próxima mensagem. Ele está sempre visível
+  e pode ser ligado/desligado, seja o que for que o switch do modelo de subagentes diga. Se a mensagem já contém o
   token (você o digitou), o checkbox aparece marcado e travado, porque o DSH carrega a skill de qualquer jeito.
   Veja [A skill de orquestração](#a-skill-de-orquestração).
 - **Não existe "não perguntar de novo"**: o modal aparece em toda mensagem que você envia e nada

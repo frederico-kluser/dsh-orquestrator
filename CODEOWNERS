@@ -1,0 +1,15 @@
+# CODEOWNERS — dsh-orquestrator
+#
+# While the project has a single maintainer, every path is owned by it. The last
+# matching pattern wins; keep the most specific rules at the bottom.
+#
+# When a second maintainer joins: split the paths below by owner and turn
+# `require_code_owner_review` (and the required approvals) on in
+# .github/rulesets/regras-main.json — CODEOWNERS is what makes that review
+# obligation meaningful.
+#
+# Keep large binaries out of git. `lib/` is committed on purpose (git installs
+# need no build); its source maps and intermediate output are ignored.
+
+# Default owner for everything in the repository.
+*   @frederico-kluser

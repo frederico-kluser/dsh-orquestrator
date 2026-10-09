@@ -2,6 +2,17 @@
 
 [![ci](https://github.com/frederico-kluser/dsh-orquestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/frederico-kluser/dsh-orquestrator/actions/workflows/ci.yml)
 [![licença: MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-blue.svg)](LICENSE)
+[![DSH: 0.1.6-alpha.2](https://img.shields.io/badge/DSH-0.1.6--alpha.2-tested-blue.svg)](https://github.com/deepseek-ai/deepseek-harness)
+
+**Escolha o modelo em que seus subagentes rodam — com um teto de esforço de raciocínio e um limite de
+tokens de saída — imposto em código em todo filho que o DSH inicia, qualquer que seja a ferramenta que
+o inicia.**
+
+```sh
+dsh plugin --profile web add github:frederico-kluser/dsh-orquestrator
+```
+
+[English](README.md) · Português (Brasil) · [中文](README.zh-CN.md)
 
 Plugin para o [DeepSeek Harness](https://github.com/deepseek-ai) (DSH). Quando você envia
 uma nova tarefa, um diálogo no visual padrão do DSH faz uma pergunta:
@@ -38,8 +49,6 @@ Nada mais no DSH muda.
 Com um modelo escolhido na lista do próprio compositor:
 
 ![Diálogo com um modelo de subagente escolhido](docs/img/modal-filled.png)
-
-> English: [README.md](README.md)
 
 > **A 0.5.0 removeu o revisor independente** que as versões 0.2 a 0.4 ofereciam ao lado da escolha
 > de modelo. O que governa os modelos ficou, e agora é o único mecanismo do plugin. Escolhas
@@ -396,6 +405,46 @@ faz: não oferece sandbox, não filtra rede e não controla o ambiente dos proce
 podem fazer é decidido pelo preset de permissão da sessão, exatamente como sem o plugin. A skill acrescenta
 instruções a uma mensagem; não concede permissão nenhuma.
 
+### Costuras alegadas, exaustivamente
+
+Cada parte do DSH em execução que este plugin toca, e o que o limita lá:
+
+| Costura alegada | O que o plugin faz lá | O que o limita |
+| --- | --- | --- |
+| `SubagentRuntime.start()` / `startContinuable()` (embrulhadas na instância do serviço, antes de o filho existir) | reescreve as opções do filho: modelo, teto de esforço de raciocínio, limite de tokens de saída | só esses três campos; só enquanto há uma escolha confirmada; `children: false` remove o guarda por completo |
+| Eventos de ciclo de vida dos subagentes do DSH | ouvinte só de leitura: registra estado e motivo de parada no livro-razão | só leitura; escreve apenas nos seus próprios arquivos de estado |
+| Servidor web do DSH — duas rotas exatas (`GET`/`POST /dsh-orquestrator/config`, `GET /dsh-orquestrator/subagents`) | lê e guarda a escolha por sessão; serve o livro-razão de subagentes somente leitura | atrás da cerca Host/Origin e da autenticação do navegador do DSH; validação estrita do formato; nenhuma rota executa qualquer coisa |
+| Registro de skills do DSH | registra um texto de skill estático (`orchestrate-subagents`) | só texto; não concede permissão |
+| Dropdown de subagentes da página da tarefa (metade do navegador) | acrescenta duas marcas pequenas (modelo, estado) às linhas do próprio DSH | fail-open: qualquer surpresa deixa as linhas do DSH intactas; lê papéis e estrutura, nunca nomes de classes; tudo o que é adicionado é removido no unload |
+| Sistema de arquivos — `$DSH_HOME/dsh-orquestrator/` (`stateDir` para mover) | `sessions.json` (escolhas), `subagents.json` (livro-razão) | arquivos só do dono; ids de provedor e modelo, estados e motivos de parada; nunca credenciais, nunca o seu código |
+| Rede — só a metade do navegador | um pedido: `GET https://openrouter.ai/api/v1/models` (catálogo público) para a faixa "O que o modelo entende" | sem chave, sem proxy, sem telemetria, sem verificação de atualização, e nenhum pedido de saída da metade do hospedeiro |
+| Credenciais (chaves de API) | **nada.** Nunca lidas, gravadas ou repassadas | — |
+| Processos e código de subagentes | **nada.** Nenhum processo é iniciado, nenhum código de subagente roda aqui | o que os subagentes podem fazer é o preset de permissão da sessão, exatamente como sem o plugin |
+
+(Os números do Terminal-Bench 4 não precisam de rede: são um snapshot embutido no build no momento da
+release, vindo da leaderboard oficial.)
+
+## Cadeia de suprimentos
+
+O que você instala é o que está no repositório, e há muito pouco dele:
+
+- **Nenhuma dependência de runtime.** O único peer é o `@deepseek-ai/cordis` (`>=4.0.0 <5`); o próprio
+  harness nunca é dependência — o plugin se liga ao que o DSH em execução fornece. O peer é uma faixa
+  estável de propósito: faixas de peer em prerelease são uma armadilha conhecida de ERESOLVE neste
+  ecossistema.
+- **O output do build está commitado.** O `lib/` vem no repositório, então instalar não roda compilador,
+  nem bundler, nem download. O único script de ciclo de vida do repositório (`prepare`) instala os git
+  hooks dos mantenedores via husky e não toca em nada fora da working tree; a política padrão de scripts
+  de build do pnpm simplesmente o ignora na instalação.
+- **O tarball tem allowlist** (`files` no `package.json`): os dois entrypoints compilados, o texto da
+  skill, o `cordis.patch.yml`, os três READMEs, as capturas de tela, a licença e o changelog.
+- **Tudo está fixado (pin)**: as ferramentas de dev por `pnpm-lock.yaml` (o CI instala com
+  `--frozen-lockfile`) e cada GitHub Action por commit SHA.
+- **Fixe o que você instala.** Instalar a partir de uma git-ref em vez do `main` em movimento é a
+  disciplina do `--save-exact` para plugins:
+  `dsh plugin --profile web add github:frederico-kluser/dsh-orquestrator#<commit-sha>` (uma git-ref
+  spec; sem ref, a resolução é a ponta do `main`).
+
 ## Por que o revisor foi removido
 
 As versões 0.2 a 0.4 também ofereciam um revisor independente: um segundo modelo que conferia o
@@ -429,7 +478,7 @@ que a skill muda (o agente principal orquestrando dois escritores e um verificad
 o trabalho ele mesmo, a 39x o tempo e 12x os tokens numa tarefa de três arquivos). O texto da skill foi testado
 sob pressão em quatro tarefas imaginadas e verificado afirmação a afirmação contra o código do DSH antes de sair,
 e três revisões independentes de código corrigiram um bloqueio pré-existente do diálogo e diversos defeitos de
-casamento, temporização e ficheiros hostis achados por experiências adversariais. Evidências e achados, inclusive
+casamento, temporização e arquivos hostis achados por experiências adversariais. Evidências e achados, inclusive
 o que não foi coberto: [docs/validation/README.md](docs/validation/README.md) (em inglês).
 
 ## Desenvolvimento

@@ -2,6 +2,16 @@
 
 [![ci](https://github.com/frederico-kluser/dsh-orquestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/frederico-kluser/dsh-orquestrator/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![DSH: 0.1.6-alpha.2](https://img.shields.io/badge/DSH-0.1.6--alpha.2-tested-blue.svg)](https://github.com/deepseek-ai/deepseek-harness)
+
+**Pick the model your subagents run on — with a reasoning-effort ceiling and an output-token cap —
+enforced in code on every child DSH starts, whichever tool starts it.**
+
+```sh
+dsh plugin --profile web add github:frederico-kluser/dsh-orquestrator
+```
+
+English · [Português (Brasil)](README.pt-BR.md) · [中文](README.zh-CN.md)
 
 A plugin for [DeepSeek Harness](https://github.com/deepseek-ai) (DSH). When you send a
 new task, a dialog in the stock DSH look asks one question:
@@ -39,8 +49,6 @@ Only "Send with these options" sends. Nothing else about DSH changes.
 With a model picked from the composer's own list:
 
 ![Dialog with a subagent model chosen](docs/img/modal-filled.png)
-
-> Português: [README.pt-BR.md](README.pt-BR.md)
 
 > **0.5.0 removed the independent reviewer** that 0.2 to 0.4 offered next to the model
 > choice. What governs the models stayed, and it now is the plugin's only mechanism.
@@ -388,6 +396,45 @@ and never reads, writes or forwards API keys. What it does **not** do: it provid
 network and controls no process environment. What subagents may do is decided by the permission preset of
 the session, exactly as without the plugin. The skill adds instructions to a message; it grants no
 permission.
+
+### Claimed seams, exhaustively
+
+Every part of the running DSH this plugin touches, and what bounds it there:
+
+| Seam claimed | What the plugin does there | What bounds it |
+| --- | --- | --- |
+| `SubagentRuntime.start()` / `startContinuable()` (wrapped on the service instance, before the child exists) | rewrites the child's options: model, reasoning-effort ceiling, output-token cap | only these three fields; only while a choice is confirmed; `children: false` removes the guard entirely |
+| DSH subagent lifecycle events | read-only listener: records state and stop reason in the ledger | read-only; writes only its own state files |
+| DSH web server — two exact routes (`GET`/`POST /dsh-orquestrator/config`, `GET /dsh-orquestrator/subagents`) | reads and stores the per-session choice; serves the read-only subagent ledger | behind DSH's Host/Origin fence and browser authentication; strict wire validation; no route executes anything |
+| DSH skill registry | registers one static skill text (`orchestrate-subagents`) | text only; it grants no permission |
+| The task page's subagent dropdown (browser half) | adds two small marks (model, state) to DSH's own rows | fail-open: any surprise leaves DSH's rows untouched; reads roles and structure, never class names; everything added is removed on unload |
+| Filesystem — `$DSH_HOME/dsh-orquestrator/` (`stateDir` to move) | `sessions.json` (choices), `subagents.json` (ledger) | owner-only files; provider/model ids, states and stop reasons; never credentials, never your code |
+| Network — browser half only | one request: `GET https://openrouter.ai/api/v1/models` (public catalog) for the "What the model understands" strip | no key, no proxy, no telemetry, no update check, and no outbound request from the host half at all |
+| Credentials (API keys) | **nothing.** Never read, written or forwarded | — |
+| Processes and subagent code | **nothing.** No process is started, no subagent code runs here | what subagents may do is the session's permission preset, exactly as without the plugin |
+
+(The Terminal-Bench 4 numbers need no network: they are a snapshot baked into the build at release
+time, from the official leaderboard.)
+
+## Supply chain
+
+What you install is what is in the repository, and there is very little of it:
+
+- **No runtime dependencies.** The only peer is `@deepseek-ai/cordis` (`>=4.0.0 <5`); the harness
+  itself is never a dependency — the plugin binds to whatever the running DSH provides. The peer is
+  a stable range on purpose: prerelease peer ranges are a known ERESOLVE trap in this ecosystem.
+- **The build output is committed.** `lib/` ships in the repository, so installing runs no compiler,
+  no bundler and no download step. The repository's only lifecycle script (`prepare`) installs the
+  maintainers' git hooks via husky and touches nothing outside the working tree; pnpm's default
+  build-script policy simply ignores it at install time.
+- **The tarball is allowlisted** (`files` in `package.json`): the two built entrypoints, the skill
+  text, `cordis.patch.yml`, the three READMEs, the screenshots, the license and the changelog.
+- **Everything is pinned**: dev tooling by `pnpm-lock.yaml` (CI installs with `--frozen-lockfile`)
+  and every GitHub Action by commit SHA.
+- **Pin what you install.** Installing from a git ref instead of the moving `main` branch is the
+  `--save-exact` discipline for plugins:
+  `dsh plugin --profile web add github:frederico-kluser/dsh-orquestrator#<commit-sha>` (a git-ref
+  spec; with no ref, the resolution is the tip of `main`).
 
 ## Why the reviewer was removed
 

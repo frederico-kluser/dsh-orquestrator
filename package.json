@@ -46,7 +46,7 @@
     "@deepseek-ai/cordis": ">=4.0.0 <5"
   },
   "devDependencies": {
-    "@commitlint/cli": "^19.6.1",
+    "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^19.6.0",
     "@deepseek-ai/cordis": "^4.0.2",
     "@types/jsdom": "^30.0.0",

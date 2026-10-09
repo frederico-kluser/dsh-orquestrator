@@ -44,28 +44,28 @@ Discovery (GitHub):
 - [x] `dsh-plugin` + `deepseek-harness` topics (recognition signal for every crawler)
 - [x] Extra topics: `cordis-plugin`, `ai-agents`, `coding-agent`, `agent-skills`
 - [x] Repo description aligned with the one-line value
-- [ ] Release tags (one per version, CHANGELOG section as the release notes)
+- [x] Release tags (one per version, CHANGELOG section as the release notes) — `v0.8.3` published
 - [x] Trust README: one-line value, install command in the header, claimed-seams matrix, supply-chain section, EN + pt-BR + zh-CN
 
 Directories:
 
 - [ ] [deepseekplugin.org /submit](https://deepseekplugin.org/en/submit) — paste the Package URL (instant publish, no account)
-- [ ] [dsh-plugin.org /submit](https://dsh-plugin.org/submit) — issue form (Package URL, Primary Category, Description, Install Command)
-- [ ] [alexchenzl/dsh-plugin-directory](https://github.com/alexchenzl/dsh-plugin-directory) — submission issue
+- [x] [dsh-plugin.org /submit](https://dsh-plugin.org/submit) — issue filed: [dshplugin/dsh-plugin-hub#137](https://github.com/dshplugin/dsh-plugin-hub/issues/137)
+- [x] [alexchenzl/dsh-plugin-directory](https://github.com/alexchenzl/dsh-plugin-directory) — submission issue: [#346](https://github.com/alexchenzl/dsh-plugin-directory/issues/346)
 
 Awesome lists:
 
-- [ ] [kejixiaoliang/awesome-dsh-plugins](https://github.com/kejixiaoliang/awesome-dsh-plugins)
-- [ ] [dshworks/awesome-dsh-plugins](https://github.com/dshworks/awesome-dsh-plugins)
-- [ ] [walkinglabs/awesome-deepseek-harness-plugins](https://github.com/walkinglabs/awesome-deepseek-harness-plugins)
-- [ ] [imsai-sh/awesome-deepseek-harness-plugins](https://github.com/imsai-sh/awesome-deepseek-harness-plugins)
-- [ ] [awesome-dsh-plugin/awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
+- [x] [imsai-sh/awesome-deepseek-harness-plugins](https://github.com/imsai-sh/awesome-deepseek-harness-plugins) — merged: [PR #583](https://github.com/imsai-sh/awesome-deepseek-harness-plugins/pull/583) (catalog entry, category `model`)
+- [x] [dshworks/awesome-dsh-plugins](https://github.com/dshworks/awesome-dsh-plugins) — already listed since 2026-10-05 (`data/plugins.json`); optional correction PR: tags `capabilities` → `models`/`agents`
+- [ ] [walkinglabs/awesome-deepseek-harness-plugins](https://github.com/walkinglabs/awesome-deepseek-harness-plugins) — [PR #97](https://github.com/walkinglabs/awesome-deepseek-harness-plugins/pull/97) open
+- [ ] [kejixiaoliang/awesome-dsh-plugins](https://github.com/kejixiaoliang/awesome-dsh-plugins) — [PR #129](https://github.com/kejixiaoliang/awesome-dsh-plugins/pull/129) open (Agent 编排 section)
+- [ ] [awesome-dsh-plugin/awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) — [PR #6960](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/6960) open (Models & Providers, CI green)
 
 Registry (optional):
 
 - [ ] npm publish (`dsh-orquestrator` name is free) — enables jsDelivr CDN and registry search
 
-Growth (drafts prepared; posts are manual):
+Growth (drafts ready, kept out of git; posts are manual):
 
 - [ ] Juejin (掘金) — technical essay, 降本增效 angle: subagents on a cheap model + effort/token ceilings
 - [ ] V2EX — technical dissection: the start guard, the seams, what the plugin does not do

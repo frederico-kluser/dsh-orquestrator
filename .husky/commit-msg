@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+# .husky/commit-msg — Gate 1: Conventional Commits.
+# Rejects messages outside `type(scope)!: subject` (see CONTRIBUTING.md).
+# git runs hooks from the repository root; needs devDependencies installed —
+# `pnpm install` wires this hook through the prepare script.
+./node_modules/.bin/commitlint --edit "$1"

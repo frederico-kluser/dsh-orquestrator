@@ -445,6 +445,14 @@ Layout: `src/` (host), `src/client/` (browser), `test/` (unit, integration,
 contract), `scripts/e2e/` (headless and browser runs against a real DSH),
 `docs/` (design, validation, and `estudos/`: the studies, their digest and the decision log).
 
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow (fork →
+ephemeral branch → pull request against `main`; Conventional Commits, enforced at commit time;
+`pnpm run check` green before review) and the [Code of Conduct](CODE_OF_CONDUCT.md) everyone
+follows. Vulnerabilities are different: never file them as public issues — follow the private
+process in [SECURITY.md](SECURITY.md).
+
 ## License
 
 MIT

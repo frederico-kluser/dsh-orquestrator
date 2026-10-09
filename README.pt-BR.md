@@ -452,6 +452,14 @@ Estrutura: `src/` (host), `src/client/` (navegador), `test/` (unitário, integra
 contrato), `scripts/e2e/` (execuções por linha de comando e no navegador contra um DSH real),
 `docs/` (projeto, validação e `estudos/`: os estudos, a síntese deles e o registro de decisões).
 
+## Contribuindo
+
+Contribuições são bem-vindas — veja o [CONTRIBUTING.md](CONTRIBUTING.md) para o fluxo (fork →
+branch efémera → pull request contra `main`; Commits Convencionais, impostos no momento do commit;
+`pnpm run check` verde antes da revisão) e o [Código de Conduta](CODE_OF_CONDUCT.md) que todos
+seguem. Vulnerabilidades são diferentes: nunca as registre como issues públicas — siga o processo
+privado do [SECURITY.md](SECURITY.md).
+
 ## Licença
 
 MIT

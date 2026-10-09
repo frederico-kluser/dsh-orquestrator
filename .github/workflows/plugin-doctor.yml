@@ -1,0 +1,26 @@
+name: plugin-doctor
+
+# Pre-publish health checks from the community doctor (manifest structure,
+# cordis.patch.yml validity, entry points, files allowlist) — the same scrutiny
+# plugin directories apply before listing. Complements ci.yml, which runs the
+# project's own typecheck, build and test suite.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: zoahdev/dsh-plugin-doctor-action@66889bfb73e1e186c83ab938a2855ad5229e9cfc # v1
+        with:
+          path: .
+          # full: 'true'   # also build + pack + fresh-profile install smoke

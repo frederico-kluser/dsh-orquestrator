@@ -23,12 +23,14 @@
  *
  * The seam. DSH offers no hook around a child start (`subagent/start` is a
  * notification that fires after the child exists), so the guard installs an own
- * `start` and `startContinuable` on the service instance. A Cordis service is
- * reached through a per-context proxy; the instance behind it is what every
- * proxy reads, and the proxy hands it out under the registered symbol
- * `Symbol.for('cordis.original')`. Where there is no proxy (a plain object, as in
- * unit tests) the object itself is wrapped. The wrapper is removed with the
- * plugin and turns inert, in place, if something else wrapped on top of it.
+ * `start` and `startContinuable` on the service instance, or — on the 0.2.x
+ * line, where the two doors were merged — the single `startActivation` every
+ * child of every caller enters. A Cordis service is reached through a
+ * per-context proxy; the instance behind it is what every proxy reads, and the
+ * proxy hands it out under the registered symbol `Symbol.for('cordis.original')`.
+ * Where there is no proxy (a plain object, as in unit tests) the object itself
+ * is wrapped. The wrapper is removed with the plugin and turns inert, in place,
+ * if something else wrapped on top of it.
  *
  * Failure policy. The guard never breaks a delegation because of its own
  * trouble: when it cannot plan a child it says so in the log and lets DSH start
@@ -47,7 +49,7 @@ import type { PluginConfig } from './config.ts'
 import { ChoiceUnusableError, assertChoiceUsable, childPolicyOf, parentOptionsOf, planChild } from './effort.ts'
 import type {
   AgentLike, AgentOptionsLike, ContinuableStartLike, ContinuableStartSpecLike, LoggerLike,
-  ModelInfoSourceLike, SubagentRunLike, SubagentStartRequestLike, SubagentsLike,
+  ModelInfoSourceLike, SubagentActivationSpecLike, SubagentRunLike, SubagentStartRequestLike, SubagentsLike,
 } from './host-services.ts'
 import { isActive, type ModelRoute, type OrchestratorConfig } from './shared.ts'
 import type { ConfigStore } from './store.ts'
@@ -244,7 +246,7 @@ type Method = (this: unknown, ...args: never[]) => unknown
  */
 function wrapMethod(
   target: Record<string, unknown>,
-  name: 'start' | 'startContinuable',
+  name: 'startActivation' | 'start' | 'startContinuable',
   make: (original: Method, live: () => boolean) => Method,
 ): () => void {
   const original = target[name]
@@ -274,35 +276,74 @@ function serviceInstance(service: object): object {
 
 /**
  * Stand the guard in the doors of the delegation service.
+ *
+ * Which doors exist is a property of the DSH line, not of this plugin: 0.2.x
+ * funnels one-shot, continuable and external children through a single
+ * `startActivation`, so the guard stands in that one and covers every caller
+ * the same way; 0.1.x splits them across `start` and `startContinuable` and
+ * both are wrapped. A service with none of them fails the plugin at load —
+ * a half-working guard is how the workflow bypass went unnoticed.
  * @param deps - host services and configuration.
  * @returns the disposer that takes the guard out (idempotent).
- * @throws {Error} when the service has no `start()` or `startContinuable()` or refuses an own property.
+ * @throws {Error} when the service offers no start door at all, or refuses an own property.
  */
 export function installGuard(given: GuardDeps): () => void {
   const deps: GuardDeps = given.warned === undefined ? { ...given, warned: new Set<string>() } : given
   const target = serviceInstance(deps.subagents) as unknown as Record<string, unknown>
   const restorers: (() => void)[] = []
+  const doors: string[] = []
   const restoreAll = (): void => {
     for (const restore of [...restorers].reverse()) restore()
     restorers.length = 0
   }
   try {
-    restorers.push(wrapMethod(target, 'start', (original, live) => async function start(this: unknown, providerName: string, request: SubagentStartRequestLike) {
-      if (!live() || !isRequestLike(request) || isGoverned(request)) return Reflect.apply(original, this, [providerName, request]) as Promise<SubagentRunLike>
-      const governed = await governRequest(deps, providerName, request, request.signal)
-      return Reflect.apply(original, this, [providerName, governed ?? request]) as Promise<SubagentRunLike>
-    } as Method))
-    restorers.push(wrapMethod(target, 'startContinuable', (original, live) => async function startContinuable(this: unknown, spec: ContinuableStartSpecLike) {
-      if (!live() || !isRequestLike(spec) || !isRequestLike(spec.request) || isGoverned(spec) || isGoverned(spec.request)) {
-        return Reflect.apply(original, this, [spec]) as Promise<ContinuableStartLike>
-      }
-      const governed = await governRequest(deps, spec.provider, spec.request, spec.signal)
-      return Reflect.apply(original, this, [governed === undefined ? spec : { ...spec, request: governed }]) as Promise<ContinuableStartLike>
-    } as Method))
+    // A complete door set is what makes the guard total: 0.2.x merged every kind
+    // into `startActivation`, so that one door covers all children; 0.1.x needs
+    // both `start` and `startContinuable`. One door of a two-door line is a
+    // partial guard, and a partial guard is how the workflow bypass went unnoticed.
+    const hasActivation = typeof target['startActivation'] === 'function'
+    const hasStart = typeof target['start'] === 'function'
+    const hasContinuable = typeof target['startContinuable'] === 'function'
+    if (!hasActivation && !(hasStart && hasContinuable)) {
+      throw new Error(hasStart || hasContinuable
+        ? `dsh-orquestrator: the subagents service exposes only ${hasStart ? 'start()' : 'startContinuable()'}; a partial guard would leave the other door bypassing the confirmed choice`
+        : 'dsh-orquestrator: the subagents service has no startActivation(), start() or startContinuable() to guard')
+    }
+    // 0.2.x: every child — one-shot, continuable, external backend — enters here.
+    if (hasActivation) {
+      restorers.push(wrapMethod(target, 'startActivation', (original, live) => async function startActivation(this: unknown, spec: SubagentActivationSpecLike) {
+        if (!live() || !isRequestLike(spec) || !isRequestLike(spec.request) || isGoverned(spec) || isGoverned(spec.request)) {
+          return Reflect.apply(original, this, [spec])
+        }
+        const governed = await governRequest(deps, spec.provider, spec.request, spec.signal)
+        return Reflect.apply(original, this, [governed === undefined ? spec : { ...spec, request: governed }])
+      } as Method))
+      doors.push('startActivation')
+    }
+    // 0.1.x: the one-shot door.
+    if (hasStart) {
+      restorers.push(wrapMethod(target, 'start', (original, live) => async function start(this: unknown, providerName: string, request: SubagentStartRequestLike) {
+        if (!live() || !isRequestLike(request) || isGoverned(request)) return Reflect.apply(original, this, [providerName, request]) as Promise<SubagentRunLike>
+        const governed = await governRequest(deps, providerName, request, request.signal)
+        return Reflect.apply(original, this, [providerName, governed ?? request]) as Promise<SubagentRunLike>
+      } as Method))
+      doors.push('start')
+    }
+    // 0.1.x: the durable-child door.
+    if (hasContinuable) {
+      restorers.push(wrapMethod(target, 'startContinuable', (original, live) => async function startContinuable(this: unknown, spec: ContinuableStartSpecLike) {
+        if (!live() || !isRequestLike(spec) || !isRequestLike(spec.request) || isGoverned(spec) || isGoverned(spec.request)) {
+          return Reflect.apply(original, this, [spec]) as Promise<ContinuableStartLike>
+        }
+        const governed = await governRequest(deps, spec.provider, spec.request, spec.signal)
+        return Reflect.apply(original, this, [governed === undefined ? spec : { ...spec, request: governed }]) as Promise<ContinuableStartLike>
+      } as Method))
+      doors.push('startContinuable')
+    }
   } catch (error: unknown) {
     restoreAll()
     throw error
   }
-  deps.logger.info(`dsh-orquestrator: start guard on (every child of a session with a confirmed choice; a model the caller names itself: ${deps.config.guard.explicitModel})`)
+  deps.logger.info(`dsh-orquestrator: start guard on (${doors.join(' + ')}); every child of a session with a confirmed choice, a model the caller names itself: ${deps.config.guard.explicitModel}`)
   return restoreAll
 }

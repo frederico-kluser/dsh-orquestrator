@@ -1,4 +1,4 @@
-import type { AgentLike, ContentBlockLike, SubagentRunLike, SubagentStartRequestLike, SubagentsLike } from '../src/host-services.ts'
+import type { AgentLike, ContentBlockLike, SubagentActivationSpecLike, SubagentRunLike, SubagentStartRequestLike, SubagentsLike } from '../src/host-services.ts'
 
 /** A minimal agent double. */
 export function fakeAgent(id = 'parent-1', parentSession?: string): AgentLike {
@@ -102,4 +102,35 @@ export class FakeSubagents implements SubagentsLike {
 /** Collect the text of a request prompt. */
 export function promptText(blocks: readonly ContentBlockLike[]): string {
   return blocks.map(block => block.text ?? '').join('')
+}
+
+/**
+ * A delegation-service double shaped like DSH 0.2.x: one `startActivation` door
+ * for every child kind and no legacy `start`/`startContinuable` pair, which is
+ * what the guard must stand in on that line.
+ */
+export class FakeActivationSubagents implements SubagentsLike {
+  /** Every spec the service was asked to activate, in order. */
+  readonly activations: SubagentActivationSpecLike[] = []
+  private readonly options: FakeSubagentsOptions
+
+  constructor(options: FakeSubagentsOptions = { results: [] }) {
+    this.options = options
+  }
+
+  startActivation(spec: SubagentActivationSpecLike): Promise<unknown> {
+    this.activations.push(spec)
+    return Promise.resolve({ childId: `child-${String(this.activations.length)}` })
+  }
+
+  getProvider(name: string): { capabilities: { agentOptions: boolean; persona: boolean; outputSchema?: boolean }; agentRouteDefaults?: { provider: string; model: string } } | undefined {
+    const configured = this.options.capabilities
+    const routeDefaults = this.options.routeDefaults?.[name]
+    const route = routeDefaults === undefined ? {} : { agentRouteDefaults: routeDefaults }
+    if (configured !== undefined && name in configured) {
+      const capabilities = configured[name]
+      return capabilities === undefined ? undefined : { capabilities, ...route }
+    }
+    return { capabilities: { agentOptions: true, persona: true }, ...route }
+  }
 }

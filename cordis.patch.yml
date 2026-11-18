@@ -1,30 +1,26 @@
 # dsh-orquestrator bundle layer. Applied automatically to any composition that
 # installs this package as a bundle (`dsh plugin --profile web add <path>`).
 #
-# Row order carries no load semantics: activation is service-availability
-# driven (the row injects subagents and, where there is a web server,
-# webServer/connection). The id is this plugin's own; it never targets another
-# package's row.
+# The plugin ships INERT until the user confirms the modal on a task: no session
+# is governed by default and cancelling the modal keeps the stock DSH behavior.
 #
-# The plugin ships INERT until the user confirms the modal on a task: no
-# session is governed by default and cancelling the modal keeps the stock DSH
-# behavior. To pre-configure headless runs or change deployment defaults,
-# restate this whole entry (whole-entry replace, not deep merge) in
-# $DSH_HOME/profiles/<profile>/cordis.patch.yml, e.g.:
+# Deployment defaults (headless runs, a server-wide default choice) ride in
+# through DSH_ORQUESTRATOR_CONFIG: a JSON object validated by the plugin's own
+# Config schema, e.g.
 #
-#   - id: orquestrator
-#     name: 'dsh-orquestrator'
-#     config:
-#       defaults:
-#         subagentModel: { provider: openrouter, model: google/gemini-3.8-flash }
-#         workerEffort: medium            # optional; omit for the model's recommended level
-#       # The confirmed choice governs every child DSH starts, whichever tool
-#       # started it (the `subagent` tools, the agents a `workflow` starts,
-#       # ralph, one-shot jobs, agent teams): the subagent model plus the
-#       # effort ceiling and the token cap. Options (README, "Which delegations
-#       # are covered"):
-#       #   children: { explicitModel: keep }   # a model a workflow script names itself stands
-#       #   children: false                     # switch the enforcement off
+#   export DSH_ORQUESTRATOR_CONFIG='{"defaults":{"subagentModel":{"provider":"openrouter","model":"google/gemini-3.8-flash"},"workerEffort":"medium"}}'
+#
+# The variable exists because a profile patch layer cannot reach this row on DSH
+# 0.2.x: the row is inserted by this bundle patch, and an id-targeted patch in
+# $DSH_HOME/profiles/<profile>/cordis.patch.yml resolves to nothing (verified on
+# dsh 0.2.1-rc.2), so the documented "restate the whole entry" recipe cannot
+# carry `config` there. Without the variable the row stays exactly as inert as
+# before.
+#
+# Options (README, "Which delegations are covered"):
+#   children: { explicitModel: keep }   # a model a workflow script names itself stands
+#   children: false                     # switch the enforcement off
 - insert:
     - id: orquestrator
-      name: './lib/index.js'
+      name: "./lib/index.js"
+      config: !!js JSON.parse(process.env.DSH_ORQUESTRATOR_CONFIG ?? "{}")

@@ -32,10 +32,21 @@ const libs = checkout === undefined ? undefined : {
 }
 const skip = libs === undefined || !Object.values(libs).every(path => existsSync(path))
 
+/**
+ * The two-door shape this contract test drives against a DSH 0.2.x checkout:
+ * `start`/`startContinuable` are pinned here as required because the test's own
+ * calls go through them, while the plugin treats them as optional (the 0.2.x
+ * line replaced both with `startActivation`, covered by the unit fake).
+ */
+type LegacyDoors = {
+  start(provider: string, request: SubagentStartRequestLike): Promise<{ readonly id: string; readonly result: Promise<unknown>; dispose(): Promise<void> }>
+  startContinuable(spec: ContinuableStartSpecLike): Promise<{ readonly childId: string }>
+}
+
 interface CordisLike {
   plugin(plugin: unknown, config?: unknown): Promise<unknown>
   get(name: string): unknown
-  subagents: SubagentsLike & { registerProvider(provider: unknown): () => void }
+  subagents: SubagentsLike & LegacyDoors & { registerProvider(provider: unknown): () => void }
 }
 
 const DEEPSEEK = { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash' }
@@ -91,8 +102,8 @@ describe('the start guard and the subagent tracker on the real SubagentRuntime',
     const { ctx, received } = await runtime()
     let dispose: (() => void) | undefined
     await ctx.plugin(function orquestrator(pluginCtx: CordisLike) { dispose = installGuard(deps(pluginCtx.get('subagents') as SubagentsLike)) })
-    let engine: SubagentsLike | undefined
-    await ctx.plugin(function workflowEngine(engineCtx: CordisLike) { engine = engineCtx.get('subagents') as SubagentsLike })
+    let engine: (SubagentsLike & LegacyDoors) | undefined
+    await ctx.plugin(function workflowEngine(engineCtx: CordisLike) { engine = engineCtx.get('subagents') as SubagentsLike & LegacyDoors })
     assert.ok(engine && dispose)
 
     const run = await engine.start('spawn', startRequest())
@@ -127,8 +138,8 @@ describe('the start guard and the subagent tracker on the real SubagentRuntime',
       configurable: true, writable: true,
     })
     await ctx.plugin(function orquestrator(pluginCtx: CordisLike) { installGuard(deps(pluginCtx.get('subagents') as SubagentsLike)) })
-    let other: SubagentsLike | undefined
-    await ctx.plugin(function teams(teamCtx: CordisLike) { other = teamCtx.get('subagents') as SubagentsLike })
+    let other: (SubagentsLike & LegacyDoors) | undefined
+    await ctx.plugin(function teams(teamCtx: CordisLike) { other = teamCtx.get('subagents') as SubagentsLike & LegacyDoors })
     assert.ok(other)
     const spec: ContinuableStartSpecLike = { provider: 'spawn', label: 'a task', request: { prompt: [{ type: 'text', text: 'x' }], parent }, signal: new AbortController().signal }
     await other.startContinuable(spec)
@@ -215,8 +226,8 @@ describe('the start guard and the subagent tracker on the real SubagentRuntime',
 
     // Through the root context, and through another plugin's own proxy of the service (the workflow engine path).
     await (await ctx.subagents.start('local', startRequest())).result
-    let engine: SubagentsLike | undefined
-    await ctx.plugin(function workflowEngine(engineCtx: CordisLike) { engine = engineCtx.get('subagents') as SubagentsLike })
+    let engine: (SubagentsLike & LegacyDoors) | undefined
+    await ctx.plugin(function workflowEngine(engineCtx: CordisLike) { engine = engineCtx.get('subagents') as SubagentsLike & LegacyDoors })
     assert.ok(engine)
     await (await engine.start('local', startRequest())).result
     await (await ctx.subagents.start('local', startRequest())).result

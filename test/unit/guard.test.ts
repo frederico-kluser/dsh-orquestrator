@@ -5,7 +5,7 @@ import { ChoiceUnusableError, governedOptions, installGuard, isGoverned, type Gu
 import type { AgentLike, ModelInfoLike, ModelInfoSourceLike, SubagentStartRequestLike } from '../../src/host-services.ts'
 import { OFF_CONFIG, buildConfig, type OrchestratorConfig } from '../../src/shared.ts'
 import { ConfigStore } from '../../src/store.ts'
-import { FakeSubagents, fakeAgent, textResult } from '../helpers.ts'
+import { FakeActivationSubagents, FakeSubagents, fakeAgent, textResult } from '../helpers.ts'
 
 const DEEPSEEK = { provider: 'azure-opencode', model: 'DeepSeek-V4.1-Flash' }
 const MIMO = { provider: 'openrouter-extra', model: 'xiaomi/mimo-v2.6-pro' }
@@ -94,12 +94,33 @@ describe('installGuard', () => {
   it('fails loud when the service cannot be wrapped, and leaves nothing half wrapped', () => {
     const logger = { info: () => undefined, warn: () => undefined }
     const base = { store: new ConfigStore({ maxSessions: 1 }), defaults: null, parentOf: () => undefined, config: parsePluginConfig(undefined), models: () => llm, logger }
-    assert.throws(() => installGuard({ ...base, subagents: {} as never }), /no start\(\) to guard/)
+    assert.throws(() => installGuard({ ...base, subagents: {} as never }), /no startActivation\(\), start\(\) or startContinuable\(\) to guard/)
     const originalStart = () => Promise.resolve(undefined)
     const onlyStart = { start: originalStart }
-    assert.throws(() => installGuard({ ...base, subagents: onlyStart as never }), /no startContinuable\(\) to guard/)
+    assert.throws(() => installGuard({ ...base, subagents: onlyStart as never }), /exposes only start\(\); a partial guard/)
     assert.equal(onlyStart.start, originalStart, 'the first wrapper was rolled back')
     assert.throws(() => installGuard({ ...base, subagents: Object.freeze(new FakeSubagents({ results: [] })) }), TypeError)
+  })
+
+  it('governs every child through the single startActivation door of DSH 0.2.x', async () => {
+    const subagents = new FakeActivationSubagents()
+    const store = new ConfigStore({ maxSessions: 4 })
+    store.set('main', picked())
+    const logs: string[] = []
+    const dispose = installGuard({
+      subagents, store, defaults: null, parentOf: () => undefined, config: parsePluginConfig(undefined),
+      models: () => llm, logger: { info: message => logs.push(message), warn: message => logs.push(message) },
+    })
+    assert.equal(Object.hasOwn(subagents, 'startActivation'), true, 'the guard stands in the 0.2.x door')
+    assert.match(logs.join('\n'), /start guard on \(startActivation\)/)
+    await subagents.startActivation({ provider: 'spawn', label: 'kid', request: request(), signal: new AbortController().signal })
+    assert.equal(subagents.activations[0]?.request.agentOptions?.provider, DEEPSEEK.provider)
+    assert.equal(subagents.activations[0]?.request.agentOptions?.model, DEEPSEEK.model)
+    assert.equal(subagents.activations[0]?.label, 'kid', 'the rest of the spec travels untouched')
+    dispose()
+    assert.equal(Object.hasOwn(subagents, 'startActivation'), false)
+    await subagents.startActivation({ provider: 'spawn', label: 'kid', request: request(), signal: new AbortController().signal })
+    assert.equal(subagents.activations[1]?.request.agentOptions, undefined, 'disposed: stock behavior')
   })
 
   it('wraps the instance behind a Cordis service proxy, whichever proxy a caller reads it through', async () => {
@@ -232,7 +253,7 @@ describe('installGuard', () => {
   it('refuses a start that is not callable the way it refuses a missing one', () => {
     const base = { store: new ConfigStore({ maxSessions: 1 }), defaults: null, parentOf: () => undefined, config: parsePluginConfig(undefined), models: () => llm, logger: { info: () => undefined, warn: () => undefined } }
     const odd = { start: 'not a function', startContinuable: () => Promise.resolve(undefined) }
-    assert.throws(() => installGuard({ ...base, subagents: odd as never }), /no start\(\) to guard/)
+    assert.throws(() => installGuard({ ...base, subagents: odd as never }), /exposes only startContinuable\(\); a partial guard/)
     assert.equal(odd.start, 'not a function')
   })
 

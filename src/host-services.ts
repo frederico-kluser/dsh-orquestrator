@@ -78,21 +78,51 @@ export interface ContinuableStartSpecLike {
   readonly signal: AbortSignal
 }
 
-/** The `ctx.subagents` service slice (`SubagentRuntime`). */
+/** What a caller asks for when starting a child on DSH 0.2.x, where one door starts every kind (`SubagentActivationSpec`). */
+export interface SubagentActivationSpecLike {
+  /** Registered backend to use (`spawn`, `fork`, ...). */
+  readonly provider: string
+  /** Short task label retained in cataloged child membership. */
+  readonly label?: string
+  /** Optional reserved identity for a local child. */
+  readonly childId?: string
+  /** Task, parent and backend-supported execution options. */
+  readonly request: SubagentStartRequestLike
+  /** Cancellation before publication. */
+  readonly signal?: AbortSignal
+  /** Parent delivery notifies the model; caller delivery only returns the result. */
+  readonly delivery?: 'parent' | 'caller'
+}
+
+/**
+ * The `ctx.subagents` service slice (`SubagentRuntime`).
+ *
+ * The doors changed shape between DSH lines: 0.1.x exposed `start` (one-shot) and
+ * `startContinuable` (durable child), while 0.2.x funnelled every kind — one-shot,
+ * continuable and external — through a single `startActivation`. All three are
+ * optional here because a given composition has one line or the other; the guard
+ * stands in whichever exists and refuses the plugin only when none does.
+ */
 export interface SubagentsLike {
   /**
-   * Establish a published one-shot child on the named provider.
+   * Establish any child (0.2.x door: one-shot, continuable or external backend).
+   * @param spec - provider, delegation request, optional reserved id and delivery.
+   * @returns the activation DSH hands the caller.
+   */
+  startActivation?(spec: SubagentActivationSpecLike): Promise<unknown>
+  /**
+   * Establish a published one-shot child on the named provider (0.1.x door).
    * @param provider - registered provider name (`spawn`, `fork`, ...).
    * @param request - label, prompt, parent, signal and optional capabilities.
    * @returns the holder-owned run; the caller must dispose it.
    */
-  start(provider: string, request: SubagentStartRequestLike): Promise<SubagentRunLike>
+  start?(provider: string, request: SubagentStartRequestLike): Promise<SubagentRunLike>
   /**
-   * Establish a durable continuable child and deliver its first prompt.
+   * Establish a durable continuable child and deliver its first prompt (0.1.x door).
    * @param spec - provider, label, delegation request and caller cancellation.
    * @returns the child id once the child's inbox accepted the prompt.
    */
-  startContinuable(spec: ContinuableStartSpecLike): Promise<ContinuableStartLike>
+  startContinuable?(spec: ContinuableStartSpecLike): Promise<ContinuableStartLike>
   /**
    * Look up a provider by name.
    * @param name - provider name.
